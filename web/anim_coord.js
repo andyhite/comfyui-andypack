@@ -2,7 +2,7 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
 const TAG = "[andypack]";
-console.warn(`${TAG} anim_coord.js loaded`);
+console.debug(`${TAG} anim_coord.js loaded`);
 
 // The two selector nodes whose pose/animation + direction widgets become combos
 // driven by the connected manifest.
@@ -115,7 +115,7 @@ function refreshDirections(node, cfg) {
 async function refreshCombos(node, cfg) {
   const manifestName = manifestNameFor(node);
   if (!manifestName) {
-    console.warn(`${TAG} ${node.comfyClass}: no manifest connected yet`);
+    console.debug(`${TAG} ${node.comfyClass}: no manifest connected yet`);
     return;
   }
   const data = await fetchManifestOptions(manifestName);
@@ -127,9 +127,8 @@ async function refreshCombos(node, cfg) {
   applyCombo(node, cfg.idWidget, ids, () => refreshDirections(node, cfg));
   refreshDirections(node, cfg);
   node.setDirtyCanvas(true, true);
-  console.warn(
-    `${TAG} ${node.comfyClass}: ${cfg.idWidget} combo set (${ids.length}); ` +
-      `type now '${widget(node, cfg.idWidget)?.type}'`
+  console.debug(
+    `${TAG} ${node.comfyClass}: ${cfg.idWidget} combo set (${ids.length})`
   );
 }
 
@@ -150,7 +149,7 @@ function wire(node) {
 app.registerExtension({
   name: "andypack.animCoord",
   async setup() {
-    console.warn(`${TAG} extension registered (setup)`);
+    console.debug(`${TAG} extension registered (setup)`);
   },
   async nodeCreated(node) {
     wire(node);
