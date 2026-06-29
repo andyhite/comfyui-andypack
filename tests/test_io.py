@@ -67,3 +67,17 @@ def test_safe_path_rejects_symlink_escape(tmp_path):
     outside.mkdir()
     (tmp_path / "link").symlink_to(outside)
     assert io.safe_path(str(tmp_path), "link/secret.txt") is None
+
+
+def test_resolve_under_joins_relative_to_base():
+    assert io.resolve_under("/comfy/user/default", "animations.json") == (
+        os.path.join("/comfy/user/default", "animations.json")
+    )
+
+
+def test_resolve_under_absolute_passes_through():
+    assert io.resolve_under("/comfy/user/default", "/abs/animations.json") == "/abs/animations.json"
+
+
+def test_resolve_under_no_base_passes_through():
+    assert io.resolve_under(None, "animations.json") == "animations.json"

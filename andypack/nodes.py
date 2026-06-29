@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 
-from andypack import images, io
+from andypack import api, images, io
 from andypack.manifest import load_manifest
 from andypack.resolve import resolve_animation, resolve_pose
 
@@ -27,12 +27,12 @@ class AnimationManifestLoader:
     @classmethod
     def IS_CHANGED(cls, manifest_path):
         try:
-            return os.path.getmtime(manifest_path)
+            return os.path.getmtime(api.resolve_manifest_path(manifest_path))
         except OSError:
             return float("nan")
 
     def load(self, manifest_path):
-        return (load_manifest(manifest_path),)
+        return (load_manifest(api.resolve_manifest_path(manifest_path)),)
 
 
 class ConceptImageWriter:

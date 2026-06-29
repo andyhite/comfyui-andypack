@@ -66,6 +66,19 @@ def build_animation_meta(
     return full
 
 
+def resolve_under(base: Optional[str], candidate: str) -> str:
+    """Resolve a possibly-relative path against `base`.
+
+    Absolute `candidate` passes through unchanged. A relative `candidate` is
+    joined onto `base`; if `base` is falsy (e.g. ComfyUI's user dir is
+    unavailable outside ComfyUI), `candidate` passes through as-is so it falls
+    back to the process CWD.
+    """
+    if os.path.isabs(candidate) or not base:
+        return candidate
+    return os.path.join(base, candidate)
+
+
 def safe_path(root: str, candidate: str) -> Optional[str]:
     """Resolve `candidate` under `root`, rejecting `..`, absolute, and symlink escapes.
 

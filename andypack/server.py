@@ -16,7 +16,7 @@ except Exception:  # pragma: no cover - import-time guard outside ComfyUI
 
 def _manifest_from_request(request):
     path = request.query.get("manifest", "")
-    return load_manifest(path)
+    return load_manifest(api.resolve_manifest_path(path))
 
 
 if _routes is not None:

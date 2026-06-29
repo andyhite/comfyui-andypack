@@ -57,3 +57,14 @@ def test_frame_path_confines_to_root(tree):
     assert ok is not None and ok.endswith("_concept.png")
     assert api.frame_path(tree.root, "../escape.png") is None
     assert api.frame_path(tree.root, "Cortex/missing.png") is None  # 404: doesn't exist
+
+
+def test_user_default_base_is_none_outside_comfyui():
+    # folder_paths is a ComfyUI-only module; absent here -> None.
+    assert api.user_default_base() is None
+
+
+def test_resolve_manifest_path_passthrough_without_comfyui():
+    # No ComfyUI base -> relative path falls back to itself (CWD-relative).
+    assert api.resolve_manifest_path("animations.json") == "animations.json"
+    assert api.resolve_manifest_path("/abs/animations.json") == "/abs/animations.json"

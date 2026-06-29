@@ -19,6 +19,20 @@ from andypack.resolve import (
 Manifest = dict[str, Any]
 
 
+def user_default_base() -> Optional[str]:
+    """ComfyUI's `user/default` directory, or None when not running in ComfyUI."""
+    try:
+        import folder_paths
+    except Exception:
+        return None
+    return os.path.join(folder_paths.get_user_directory(), "default")
+
+
+def resolve_manifest_path(manifest_path: str) -> str:
+    """Resolve a manifest path: absolute as-is; relative under ComfyUI user/default."""
+    return io.resolve_under(user_default_base(), manifest_path)
+
+
 def format_blocked(blocked_by: list) -> list[str]:
     """Render resolve blocked_by entries as '<ref>@<dir>' strings."""
     out: list[str] = []
