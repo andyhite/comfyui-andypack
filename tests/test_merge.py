@@ -56,14 +56,14 @@ def test_read_identity_absent_returns_empty(tmp_path):
 def test_read_identity_reads_concept_sidecar(tmp_path):
     char_dir = tmp_path / "Cortex"
     char_dir.mkdir()
-    (char_dir / "_concept.json").write_text(json.dumps({"prompt": "a mouthless hero"}))
-    assert read_identity(str(tmp_path), "Cortex") == {"prompt": "a mouthless hero"}
+    (char_dir / "_concept.json").write_text(json.dumps({"positive_prompt": "a mouthless hero"}))
+    assert read_identity(str(tmp_path), "Cortex") == {"positive_prompt": "a mouthless hero"}
 
 
 def test_merged_prompts_cascades_identity_global_entity_direction(tmp_path):
     char_dir = tmp_path / "Cortex"
     char_dir.mkdir()
-    (char_dir / "_concept.json").write_text(json.dumps({"prompt": "a mouthless hero"}))
+    (char_dir / "_concept.json").write_text(json.dumps({"positive_prompt": "a mouthless hero"}))
     m = base_manifest()
     pos, neg = merged_prompts(m, str(tmp_path), "Cortex", "pose", "base", "EAST")
     # identity -> (no globals.pose positive) -> pose.prompt -> base.directions.EAST.prompt
@@ -75,7 +75,7 @@ def test_merged_prompts_negative_dedupes_across_layers(tmp_path):
     char_dir = tmp_path / "Cortex"
     char_dir.mkdir()
     # identity negative shares a term with globals.animation negative ("blurry")
-    (char_dir / "_concept.json").write_text(json.dumps({"negative": "blurry, ugly"}))
+    (char_dir / "_concept.json").write_text(json.dumps({"negative_prompt": "blurry, ugly"}))
     m = base_manifest()
     pos, neg = merged_prompts(m, str(tmp_path), "Cortex", "animation", "punch", "EAST")
     # identity(blurry, ugly) + globals.animation(blurry, low quality, watermark)

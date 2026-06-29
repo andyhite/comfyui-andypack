@@ -105,10 +105,12 @@ def merged_prompts(
     dlayer = (entity.get("directions", {}) or {}).get(direction) or {}
 
     positive = merge_layers(
-        identity.get("prompt"), glob.get("prompt"), entity.get("prompt"), dlayer.get("prompt")
+        identity.get("positive_prompt"), glob.get("positive_prompt"),
+        entity.get("positive_prompt"), dlayer.get("positive_prompt"),
     )
     negative = merge_negative(
-        identity.get("negative"), glob.get("negative"), entity.get("negative"), dlayer.get("negative")
+        identity.get("negative_prompt"), glob.get("negative_prompt"),
+        entity.get("negative_prompt"), dlayer.get("negative_prompt"),
     )
     return positive, negative
 

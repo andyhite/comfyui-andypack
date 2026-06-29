@@ -94,9 +94,9 @@ class ConceptImageWriter:
         images.save_image_png(image, os.path.join(char_dir, "_concept.png"))
         layer = {}
         if identity_positive.strip():
-            layer["prompt"] = identity_positive.strip()
+            layer["positive_prompt"] = identity_positive.strip()
         if identity_negative.strip():
-            layer["negative"] = identity_negative.strip()
+            layer["negative_prompt"] = identity_negative.strip()
         if layer:
             io.atomic_write_json(os.path.join(char_dir, "_concept.json"), layer)
         return (char_dir,)

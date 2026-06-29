@@ -102,7 +102,7 @@ def test_effective_manifest_merges_character_entities(manifest, tree):
 
 
 def test_effective_manifest_no_character_entities_returns_same(manifest, tree):
-    tree.identity(prompt="just an identity prompt")  # no poses/animations
+    tree.identity(positive_prompt="just an identity prompt")  # no poses/animations
     assert effective_manifest(manifest, tree.root, tree.char) is manifest
 
 
@@ -118,7 +118,7 @@ def test_character_animation_is_resolvable(manifest, tree):
         animations={
             "special_move": {
                 "category": "combat", "directions": {"EAST": {}},
-                "start_from": {"ref": "base"}, "prompt": "a special move",
+                "start_from": {"ref": "base"}, "positive_prompt": "a special move",
             }
         }
     )

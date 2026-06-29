@@ -4,57 +4,57 @@
   "mirror_map": { "WEST": "EAST", "SOUTH_WEST": "SOUTH_EAST", "NORTH_WEST": "NORTH_EAST" },
   "defaults": { "fps": 16, "length": 33, "start_from": { "ref": "base" } },
   "globals": {
-    "animation": { "negative": "blurry, low quality, watermark" },
-    "pose": { "negative": "blurry, low quality" }
+    "animation": { "negative_prompt": "blurry, low quality, watermark" },
+    "pose": { "negative_prompt": "blurry, low quality" }
   },
   "poses": {
     "base": {
       "from": { "ref": "concept" },
-      "prompt": "neutral standing pose",
+      "positive_prompt": "neutral standing pose",
       "directions": {
-        "EAST": { "prompt": "facing right in profile" },
-        "SOUTH_EAST": { "prompt": "facing down-right at three-quarter" },
-        "SOUTH": { "prompt": "facing toward the viewer" }
+        "EAST": { "positive_prompt": "facing right in profile" },
+        "SOUTH_EAST": { "positive_prompt": "facing down-right at three-quarter" },
+        "SOUTH": { "positive_prompt": "facing toward the viewer" }
       }
     },
     "fighting_stance": {
       "from": { "ref": "base", "direction": "same" },
-      "prompt": "ready fighting stance, fists up",
-      "directions": { "EAST": { "prompt": "guard facing right" } }
+      "positive_prompt": "ready fighting stance, fists up",
+      "directions": { "EAST": { "positive_prompt": "guard facing right" } }
     }
   },
   "animations": {
     "fighting_stance_idle": {
       "category": "combat", "loop": true, "length": 33,
       "start_from": { "ref": "fighting_stance" },
-      "prompt": "bob gently in a ready guard",
+      "positive_prompt": "bob gently in a ready guard",
       "directions": { "EAST": {} }
     },
     "fighting_stance_entry": {
       "category": "combat", "loop": false, "length": 25,
       "start_from": { "ref": "base" },
       "end_at": { "ref": "fighting_stance_idle" },
-      "prompt": "rise from standing into a guard",
+      "positive_prompt": "rise from standing into a guard",
       "directions": { "EAST": {} }
     },
     "fighting_stance_exit": {
       "category": "combat", "loop": false, "length": 25,
       "start_from": { "ref": "fighting_stance_idle" },
       "end_at": { "ref": "base" },
-      "prompt": "drop from guard back to standing",
+      "positive_prompt": "drop from guard back to standing",
       "directions": { "EAST": {} }
     },
     "punch": {
       "category": "combat", "loop": false, "length": 21,
       "start_from": { "ref": "fighting_stance_idle" },
       "end_at": { "ref": "fighting_stance_idle" },
-      "prompt": "throw a straight jab to the right",
-      "negative": "both arms extended, extra arm",
+      "positive_prompt": "throw a straight jab to the right",
+      "negative_prompt": "both arms extended, extra arm",
       "directions": { "EAST": {} }
     },
     "walk": {
       "category": "locomotion", "loop": true, "length": 25,
-      "prompt": "walk forward at a steady pace",
+      "positive_prompt": "walk forward at a steady pace",
       "directions": { "EAST": {} }
     }
   }
