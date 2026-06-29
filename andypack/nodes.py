@@ -170,7 +170,7 @@ class CharacterAnimationSelector:
     FUNCTION = "select"
     RETURN_TYPES = ("IMAGE", "IMAGE", "BOOLEAN", "STRING", "STRING", "STRING", "ANIM_META")
     RETURN_NAMES = (
-        "start_image", "end_image", "has_end",
+        "start_image", "end_image", "is_fflf",
         "positive", "negative", "output_dir", "meta",
     )
 
@@ -198,14 +198,14 @@ class CharacterAnimationSelector:
                 f"animation {animation}@{direction} not selectable: blocked_by={r['blocked_by']}"
             )
         # start_image is always present (every selectable animation has a start
-        # source — the I2V seed). end_image is the FFLF target when declared.
+        # source — the I2V seed). A declared end_at makes this an FFLF clip.
         start_image = images.load_image_tensor(r["start_image"])
         if r["end_image"]:
-            end_image, has_end = images.load_image_tensor(r["end_image"]), True
+            end_image, is_fflf = images.load_image_tensor(r["end_image"]), True
         else:
-            end_image, has_end = images.empty_image(), False
+            end_image, is_fflf = images.empty_image(), False
         return (
-            start_image, end_image, has_end,
+            start_image, end_image, is_fflf,
             r["positive"], r["negative"], r["output_dir"], r["meta"],
         )
 
