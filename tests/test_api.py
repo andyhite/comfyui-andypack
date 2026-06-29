@@ -90,6 +90,21 @@ def test_split_character_dir():
     assert api.split_character_dir("cortex") == ("", "cortex")
 
 
+def test_character_root_and_name_prefers_explicit_dir():
+    assert api.character_root_and_name("output/characters/cortex", "") == (
+        "output/characters", "cortex"
+    )
+
+
+def test_character_root_and_name_from_bare_name_uses_characters_root():
+    # outside ComfyUI characters_dir() is None -> falls back to 'output/characters'
+    assert api.character_root_and_name("", "cortex") == ("output/characters", "cortex")
+
+
+def test_character_root_and_name_empty_when_nothing_given():
+    assert api.character_root_and_name("", "") == ("", "")
+
+
 def test_characters_dir_is_none_outside_comfyui():
     assert api.characters_dir() is None
 

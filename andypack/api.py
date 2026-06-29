@@ -95,6 +95,17 @@ def split_character_dir(character_dir: str) -> tuple[str, str]:
     return os.path.split(os.path.normpath(character_dir))
 
 
+def character_root_and_name(character_dir: str, character_name: str) -> tuple[str, str]:
+    """(root, character) from either a full character_dir or a bare character
+    name (resolved under the characters dir). Prefers an explicit character_dir."""
+    if character_dir:
+        return split_character_dir(character_dir)
+    if character_name:
+        base = characters_dir() or "output/characters"
+        return split_character_dir(os.path.join(base, character_name))
+    return ("", "")
+
+
 def manifest_options(manifest: Manifest) -> dict:
     """The selectable structure of a manifest, for frontend combos.
 
