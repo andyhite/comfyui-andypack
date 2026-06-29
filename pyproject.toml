@@ -1,0 +1,17 @@
+[project]
+name = "comfyui-andypack"
+version = "0.1.0"
+description = "ComfyUI Animation Coordinator — dependency-aware FFLF resolver."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

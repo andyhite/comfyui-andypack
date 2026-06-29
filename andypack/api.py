@@ -1,0 +1,130 @@
+"""Pure JSON-payload builders for the anim_coord HTTP routes (stdlib only)."""
+
+from __future__ import annotations
+
+import os
+from typing import Any, Optional
+from urllib.parse import quote
+
+from andypack import io
+from andypack.manifest import node_kind
+from andypack.resolve import (
+    read_rendered_hash,
+    resolve_animation,
+    resolve_pose,
+    resolved_dir,
+    status,
+)
+
+Manifest = dict[str, Any]
+
+
+def format_blocked(blocked_by: list) -> list[str]:
+    """Render resolve blocked_by entries as '<ref>@<dir>' strings."""
+    out: list[str] = []
+    for entry in blocked_by:
+        ddir = entry["dir"]
+        for key, dep in entry.items():
+            if key == "dir":
+                continue
+            out.append(f"{dep['ref']}@{ddir}")
+    return out
+
+
+def _is_character(root: str, name: str) -> bool:
+    d = os.path.join(root, name)
+    if not os.path.isdir(d):
+        return False
+    if os.path.exists(os.path.join(d, "_concept.png")):
+        return True
+    try:
+        return any(os.path.isdir(os.path.join(d, c)) for c in os.listdir(d))
+    except OSError:
+        return False
+
+
+def list_characters(root: str) -> list[dict]:
+    """One-level scan of `root` for character directories."""
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return []
+    return [{"name": n} for n in names if _is_character(root, n)]
+
+
+def list_options(manifest: Manifest, root: str, character: str) -> list[dict]:
+    """Every (pose|animation, direction) with its UI status and blocked_by."""
+    out: list[dict] = []
+    for pid, pose in manifest.get("poses", {}).items():
+        for direction in pose.get("directions", {}):
+            r = resolve_pose(manifest, root, character, pid, direction)
+            out.append({
+                "kind": "pose", "id": pid, "direction": direction,
+                "status": status(manifest, root, character, pid, direction),
+                "blocked_by": format_blocked(r["blocked_by"]),
+            })
+    for aid, anim in manifest.get("animations", {}).items():
+        for direction in anim.get("directions", {}):
+            r = resolve_animation(manifest, root, character, aid, direction)
+            out.append({
+                "kind": "animation", "id": aid, "direction": direction,
+                "status": status(manifest, root, character, aid, direction),
+                "blocked_by": format_blocked(r["blocked_by"]),
+            })
+    return out
+
+
+def _preview(
+    manifest: Manifest, root: str, character: str,
+    dep_ref: str, dep_dir: str, image_path: Optional[str], stale: bool,
+) -> Optional[dict]:
+    if not image_path:
+        return None
+    rel = os.path.relpath(image_path, root)
+    version = read_rendered_hash(manifest, root, character, dep_ref, dep_dir) or ""
+    url = (
+        "/anim_coord/frame?"
+        f"root={quote(root, safe='')}&path={quote(rel, safe='')}&v={quote(version, safe='')}"
+    )
+    return {"ref": dep_ref, "direction": dep_dir, "url": url, "stale": stale}
+
+
+def resolve_payload(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> dict:
+    """Full resolve trimmed to UI fields, with source/dual anchor previews."""
+    kind = node_kind(manifest, ref)
+    if kind == "pose":
+        r = resolve_pose(manifest, root, character, ref, direction)
+        frm = manifest["poses"][ref]["from"]
+        sdir = resolved_dir(frm, direction)
+        return {
+            "selectable": r["selectable"],
+            "blocked_by": format_blocked(r["blocked_by"]),
+            "source_preview": _preview(
+                manifest, root, character, frm["ref"], sdir, r["source_image"], bool(r["stale"])
+            ),
+        }
+    r = resolve_animation(manifest, root, character, ref, direction)
+    anim = manifest["animations"][ref]
+    previews: dict[str, Any] = {"start_preview": None, "end_preview": None}
+    for slot, key in (("start_from", "start_preview"), ("end_at", "end_preview")):
+        dep = anim.get(slot)
+        if not dep:
+            continue
+        ddir = resolved_dir(dep, direction)
+        image = r["start_image"] if slot == "start_from" else r["end_image"]
+        previews[key] = _preview(
+            manifest, root, character, dep["ref"], ddir, image, slot in r["stale"]
+        )
+    return {
+        "selectable": r["selectable"],
+        "blocked_by": format_blocked(r["blocked_by"]),
+        **previews,
+    }
+
+
+def frame_path(root: str, rel: str) -> Optional[str]:
+    """Confine `rel` under `root` and require it to exist; else None (=> 404)."""
+    target = io.safe_path(root, rel)
+    if target is None or not os.path.isfile(target):
+        return None
+    return target
