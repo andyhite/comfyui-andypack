@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from andypack import images, io
 from andypack.manifest import load_manifest
-from andypack.resolve import resolve_pose
+from andypack.resolve import resolve_animation, resolve_pose
 
 
 def _utc_now() -> str:
@@ -130,15 +130,57 @@ class PoseFrameWriter:
         return (output_dir,)
 
 
+class CharacterAnimationSelector:
+    CATEGORY = "andypack"
+    FUNCTION = "select"
+    RETURN_TYPES = ("IMAGE", "BOOLEAN", "IMAGE", "BOOLEAN", "STRING", "STRING", "STRING", "ANIM_META")
+    RETURN_NAMES = (
+        "start_image", "has_start", "end_image", "has_end",
+        "positive", "negative", "output_dir", "meta",
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "root_dir": ("STRING", {"default": "output/anim"}),
+                "character": ("STRING", {"default": "Cortex"}),
+                "animation": ("STRING", {"default": "fighting_stance_idle"}),
+                "direction": ("STRING", {"default": "E"}),
+            }
+        }
+
+    def _anchor(self, path):
+        if path:
+            return images.load_image_tensor(path), True
+        return images.empty_image(), False
+
+    def select(self, manifest, root_dir, character, animation, direction):
+        r = resolve_animation(manifest, root_dir, character, animation, direction)
+        if not r["selectable"]:
+            raise RuntimeError(
+                f"animation {animation}@{direction} not selectable: blocked_by={r['blocked_by']}"
+            )
+        start_image, has_start = self._anchor(r["start_image"])
+        end_image, has_end = self._anchor(r["end_image"])
+        return (
+            start_image, has_start, end_image, has_end,
+            r["positive"], r["negative"], r["output_dir"], r["meta"],
+        )
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "ConceptImageWriter": ConceptImageWriter,
     "CharacterPoseSelector": CharacterPoseSelector,
     "PoseFrameWriter": PoseFrameWriter,
+    "CharacterAnimationSelector": CharacterAnimationSelector,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
     "ConceptImageWriter": "Concept Image Writer",
     "CharacterPoseSelector": "Character Pose Selector",
     "PoseFrameWriter": "Pose Frame Writer",
+    "CharacterAnimationSelector": "Character Animation Selector",
 }
