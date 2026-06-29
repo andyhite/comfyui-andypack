@@ -7,6 +7,9 @@ console.debug(`${TAG} anim_coord.js loaded`);
 const NO_CHARACTER = "(select character)"; // must match nodes._NO_CHARACTER
 const GLYPH = { generated: "✓", ready: "○", blocked: "⨯", stale: "▲" };
 
+// Inputs stay disabled until the extension is live AND the pack's routes answer.
+let READY = false;
+
 // Selector nodes and their leaf widget. The cascade is:
 //   character (python combo) -> category -> pose|animation -> direction
 const SELECTOR_NODES = {
@@ -49,6 +52,7 @@ function applyCombo(node, name, entries, onChange) {
     existing.options = existing.options || {};
     existing.options.values = labels;
     existing.value = selLabel;
+    existing.disabled = false;
     existing.__anim_labelToRaw = labelToRaw;
     existing.__anim_raw = labelToRaw[selLabel];
     if (onChange) existing.__anim_onChange = onChange;
@@ -68,6 +72,7 @@ function applyCombo(node, name, entries, onChange) {
     { values: labels }
   );
   w.__anim_combo = true;
+  w.disabled = false;
   w.__anim_labelToRaw = labelToRaw;
   w.__anim_raw = labelToRaw[selLabel];
   w.__anim_onChange = onChange;
@@ -80,8 +85,25 @@ function applyCombo(node, name, entries, onChange) {
   return w;
 }
 
+// A disabled, single-entry placeholder combo (no real selection yet).
 function setPlaceholder(node, name, text) {
-  applyCombo(node, name, [{ raw: "", label: text }]);
+  const w = applyCombo(node, name, [{ raw: "", label: text }]);
+  if (w) w.disabled = true;
+}
+
+function setCharacterEnabled(node, enabled) {
+  const w = widget(node, "character");
+  if (w) w.disabled = !enabled;
+}
+
+// Everything off, with a single message — used until the extension+API are ready.
+function lockAll(node, cfg, text) {
+  setCharacterEnabled(node, false);
+  setPlaceholder(node, "category", text);
+  setPlaceholder(node, cfg.idWidget, text);
+  setPlaceholder(node, "direction", text);
+  if (node.__anim_previewHost) node.__anim_previewHost.innerHTML = "";
+  node.setDirtyCanvas(true, true);
 }
 
 // litegraph's graph.links is a plain object (older) or a Map (newer).
@@ -139,6 +161,7 @@ function groupStatus(opts) {
 // --- the cascade ------------------------------------------------------------ //
 
 async function refreshCascade(node, cfg) {
+  setCharacterEnabled(node, true); // READY is guaranteed by the caller (wire)
   const character = characterValue(node);
   const manifestName = manifestNameFor(node);
   if (!character || character === NO_CHARACTER || !manifestName) {
@@ -151,9 +174,19 @@ async function refreshCascade(node, cfg) {
     node.setDirtyCanvas(true, true);
     return;
   }
+  // Show a loading state on the downstream widgets while /options is in flight.
+  setPlaceholder(node, "category", "(loading…)");
+  setPlaceholder(node, cfg.idWidget, "(loading…)");
+  setPlaceholder(node, "direction", "(loading…)");
+  node.setDirtyCanvas(true, true);
+
   const url = `/anim_coord/options?manifest=${enc(manifestName)}&character=${enc(character)}`;
   const opts = await fetchJSON(url);
-  if (!opts) return;
+  if (!opts) {
+    setPlaceholder(node, "category", "(failed to load)");
+    node.setDirtyCanvas(true, true);
+    return;
+  }
   node.__anim_opts = opts.filter((o) => o.kind === cfg.kind);
   buildCategoryCombo(node, cfg);
 }
@@ -256,16 +289,20 @@ function wire(node) {
     const prevOCC = node.onConnectionsChange;
     node.onConnectionsChange = function (...args) {
       prevOCC?.apply(this, args);
-      refreshCascade(node, cfg).catch((e) => console.warn(`${TAG} cascade`, e));
+      if (READY) refreshCascade(node, cfg).catch((e) => console.warn(`${TAG} cascade`, e));
     };
     const charW = widget(node, "character");
     if (charW) {
       const prev = charW.callback;
       charW.callback = (...a) => {
         prev?.(...a);
-        refreshCascade(node, cfg).catch((e) => console.warn(`${TAG} cascade`, e));
+        if (READY) refreshCascade(node, cfg).catch((e) => console.warn(`${TAG} cascade`, e));
       };
     }
+  }
+  if (!READY) {
+    lockAll(node, cfg, "(loading…)");
+    return;
   }
   refreshCascade(node, cfg).catch((e) => console.warn(`${TAG} cascade`, e));
 }
@@ -282,6 +319,11 @@ app.registerExtension({
     console.debug(`${TAG} extension registered (setup)`);
     api.addEventListener("execution_success", refreshAll);
     api.addEventListener("executed", refreshAll);
+    // Only enable the selector inputs once the pack's routes answer.
+    const ok = await fetchJSON("/anim_coord/ping");
+    READY = !!(ok && ok.ok);
+    console.debug(`${TAG} api ready: ${READY}`);
+    refreshAll();
   },
   async nodeCreated(node) {
     wire(node);

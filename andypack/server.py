@@ -26,6 +26,12 @@ if _routes is not None:
         root = request.query.get("root", "")
         return web.json_response(api.list_characters(root))
 
+    @_routes.get("/anim_coord/ping")
+    async def _ping(request):
+        # Lets the frontend confirm the pack's routes are live before enabling
+        # the selector inputs.
+        return web.json_response({"ok": True})
+
     @_routes.get("/anim_coord/manifest_options")
     async def _manifest_options(request):
         manifest = _manifest_from_request(request)
