@@ -18,12 +18,16 @@ function widgetValue(node, name, fallback = "") {
 }
 
 // Turn a STRING widget into a combo with the given values, preserving selection.
+// Never clobber a widget to "" — if we have no values (e.g. the options fetch
+// failed or the node interface is out of sync), leave the widget untouched so
+// the user's typed/default value still submits. Submitting "" would crash the
+// Python node (KeyError on an empty pose/animation/direction).
 function asCombo(w, values) {
-  if (!w) return;
+  if (!w || !values || values.length === 0) return;
   w.type = "combo";
   w.options = w.options || {};
   w.options.values = values;
-  if (!values.includes(w.value)) w.value = values[0] ?? "";
+  if (!values.includes(w.value)) w.value = values[0];
 }
 
 function queryBase(node) {

@@ -91,6 +91,11 @@ class CharacterPoseSelector:
         }
 
     def select(self, manifest, character_dir, pose, direction):
+        if not character_dir or not pose or not direction:
+            raise RuntimeError(
+                "CharacterPoseSelector needs character_dir/pose/direction; got "
+                f"character_dir={character_dir!r}, pose={pose!r}, direction={direction!r}"
+            )
         root, character = os.path.split(os.path.normpath(character_dir))
         r = resolve_pose(manifest, root, character, pose, direction)
         if not r["selectable"]:
@@ -157,6 +162,11 @@ class CharacterAnimationSelector:
         return images.empty_image(), False
 
     def select(self, manifest, character_dir, animation, direction):
+        if not character_dir or not animation or not direction:
+            raise RuntimeError(
+                "CharacterAnimationSelector needs character_dir/animation/direction; got "
+                f"character_dir={character_dir!r}, animation={animation!r}, direction={direction!r}"
+            )
         root, character = os.path.split(os.path.normpath(character_dir))
         r = resolve_animation(manifest, root, character, animation, direction)
         if not r["selectable"]:
