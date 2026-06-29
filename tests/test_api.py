@@ -69,6 +69,34 @@ def test_manifests_dir_and_list_are_empty_without_comfyui():
     assert api.list_manifest_names() == []
 
 
+def test_split_character_dir():
+    assert api.split_character_dir("output/characters/cortex") == ("output/characters", "cortex")
+    assert api.split_character_dir("output/characters/cortex/") == ("output/characters", "cortex")
+    assert api.split_character_dir("cortex") == ("", "cortex")
+
+
+def test_characters_dir_is_none_outside_comfyui():
+    assert api.characters_dir() is None
+
+
+def test_list_subdirs(tmp_path):
+    (tmp_path / "cortex").mkdir()
+    (tmp_path / "boss").mkdir()
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / "notes.txt").write_text("x")
+    assert api.list_subdirs(str(tmp_path)) == ["boss", "cortex"]
+    assert api.list_subdirs(None) == []
+    assert api.list_subdirs(str(tmp_path / "nope")) == []
+
+
+def test_manifest_options_maps_ids_to_directions(manifest):
+    opts = api.manifest_options(manifest)
+    assert opts["poses"]["base"] == ["EAST", "SOUTH_EAST", "SOUTH"]
+    assert opts["poses"]["fighting_stance"] == ["EAST"]
+    assert opts["animations"]["punch"] == ["EAST"]
+    assert set(opts["animations"]) >= {"fighting_stance_idle", "punch", "fighting_stance_entry"}
+
+
 def test_resolve_manifest_path_passthrough_without_comfyui():
     # No ComfyUI base -> relative path falls back to itself (CWD-relative).
     assert api.resolve_manifest_path("default.json") == "default.json"

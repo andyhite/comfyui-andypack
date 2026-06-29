@@ -49,6 +49,53 @@ def resolve_manifest_path(manifest_path: str) -> str:
     return io.resolve_under(manifests_dir(), manifest_path)
 
 
+def characters_dir() -> Optional[str]:
+    """The root that holds per-character directories: `<output>/characters`.
+
+    None when not running in ComfyUI.
+    """
+    try:
+        import folder_paths
+    except Exception:
+        return None
+    return os.path.join(folder_paths.get_output_directory(), "characters")
+
+
+def list_subdirs(directory: Optional[str]) -> list[str]:
+    """Sorted names of immediate subdirectories of `directory` (excluding dotfiles)."""
+    if not directory:
+        return []
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return []
+    return sorted(
+        n for n in entries
+        if not n.startswith(".") and os.path.isdir(os.path.join(directory, n))
+    )
+
+
+def split_character_dir(character_dir: str) -> tuple[str, str]:
+    """Split a character_dir into (root, character) — the form resolve.* expects."""
+    return os.path.split(os.path.normpath(character_dir))
+
+
+def manifest_options(manifest: Manifest) -> dict:
+    """The selectable structure of a manifest, for frontend combos.
+
+    Returns ``{"poses": {id: [directions]}, "animations": {id: [directions]}}`` —
+    derived purely from the manifest (no rendered tree needed), so the frontend
+    can populate pose/animation and direction combos before anything is generated.
+    """
+    def dirs(entity: dict) -> list[str]:
+        return list((entity.get("directions") or {}).keys())
+
+    return {
+        "poses": {pid: dirs(p) for pid, p in manifest.get("poses", {}).items()},
+        "animations": {aid: dirs(a) for aid, a in manifest.get("animations", {}).items()},
+    }
+
+
 def format_blocked(blocked_by: list) -> list[str]:
     """Render resolve blocked_by entries as '<ref>@<dir>' strings."""
     out: list[str] = []

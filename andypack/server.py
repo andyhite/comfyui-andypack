@@ -26,17 +26,20 @@ if _routes is not None:
         root = request.query.get("root", "")
         return web.json_response(api.list_characters(root))
 
+    @_routes.get("/anim_coord/manifest_options")
+    async def _manifest_options(request):
+        manifest = _manifest_from_request(request)
+        return web.json_response(api.manifest_options(manifest))
+
     @_routes.get("/anim_coord/options")
     async def _options(request):
-        root = request.query.get("root", "")
-        character = request.query.get("character", "")
+        root, character = api.split_character_dir(request.query.get("character_dir", ""))
         manifest = _manifest_from_request(request)
         return web.json_response(api.list_options(manifest, root, character))
 
     @_routes.get("/anim_coord/resolve")
     async def _resolve(request):
-        root = request.query.get("root", "")
-        character = request.query.get("character", "")
+        root, character = api.split_character_dir(request.query.get("character_dir", ""))
         ref = request.query.get("id", "")
         direction = request.query.get("direction", "")
         manifest = _manifest_from_request(request)

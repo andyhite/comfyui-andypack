@@ -38,6 +38,33 @@ class AnimationManifestLoader:
         return (load_manifest(api.resolve_manifest_path(manifest)),)
 
 
+class CharacterSelector:
+    CATEGORY = "andypack"
+    FUNCTION = "select"
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("character_dir",)
+
+    @classmethod
+    def _root(cls):
+        return api.characters_dir() or "output/characters"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        # Combo of character folders found in <output>/characters.
+        names = api.list_subdirs(api.characters_dir()) or ["cortex"]
+        return {"required": {"character": (names,)}}
+
+    @classmethod
+    def IS_CHANGED(cls, character):
+        try:
+            return os.path.getmtime(os.path.join(cls._root(), character))
+        except OSError:
+            return float("nan")
+
+    def select(self, character):
+        return (os.path.join(self._root(), character),)
+
+
 class ConceptImageWriter:
     CATEGORY = "andypack"
     FUNCTION = "write"
@@ -50,7 +77,7 @@ class ConceptImageWriter:
         return {
             "required": {
                 "image": ("IMAGE",),
-                "root_dir": ("STRING", {"default": "output/characters"}),
+                "root_dir": ("STRING", {"default": api.characters_dir() or "output/characters"}),
                 "character": ("STRING", {"default": "cortex"}),
             },
             "optional": {
@@ -96,7 +123,7 @@ class CharacterPoseSelector:
                 "CharacterPoseSelector needs character_dir/pose/direction; got "
                 f"character_dir={character_dir!r}, pose={pose!r}, direction={direction!r}"
             )
-        root, character = os.path.split(os.path.normpath(character_dir))
+        root, character = api.split_character_dir(character_dir)
         r = resolve_pose(manifest, root, character, pose, direction)
         if not r["selectable"]:
             raise RuntimeError(
@@ -167,7 +194,7 @@ class CharacterAnimationSelector:
                 "CharacterAnimationSelector needs character_dir/animation/direction; got "
                 f"character_dir={character_dir!r}, animation={animation!r}, direction={direction!r}"
             )
-        root, character = os.path.split(os.path.normpath(character_dir))
+        root, character = api.split_character_dir(character_dir)
         r = resolve_animation(manifest, root, character, animation, direction)
         if not r["selectable"]:
             raise RuntimeError(
@@ -225,6 +252,7 @@ class AnimationFrameWriter:
 
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
+    "CharacterSelector": CharacterSelector,
     "ConceptImageWriter": ConceptImageWriter,
     "CharacterPoseSelector": CharacterPoseSelector,
     "PoseFrameWriter": PoseFrameWriter,
@@ -233,6 +261,7 @@ NODE_CLASS_MAPPINGS = {
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
+    "CharacterSelector": "Character Selector",
     "ConceptImageWriter": "Concept Image Writer",
     "CharacterPoseSelector": "Character Pose Selector",
     "PoseFrameWriter": "Pose Frame Writer",
