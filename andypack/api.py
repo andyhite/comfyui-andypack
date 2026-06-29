@@ -28,9 +28,25 @@ def user_default_base() -> Optional[str]:
     return os.path.join(folder_paths.get_user_directory(), "default")
 
 
+def manifests_dir() -> Optional[str]:
+    """The pack's manifest directory: `user/default/andypack/animations`.
+
+    None when not running in ComfyUI.
+    """
+    base = user_default_base()
+    if base is None:
+        return None
+    return os.path.join(base, "andypack", "animations")
+
+
+def list_manifest_names() -> list[str]:
+    """Available manifest filenames (e.g. `default.json`) in the manifests dir."""
+    return io.list_json_names(manifests_dir())
+
+
 def resolve_manifest_path(manifest_path: str) -> str:
-    """Resolve a manifest path: absolute as-is; relative under ComfyUI user/default."""
-    return io.resolve_under(user_default_base(), manifest_path)
+    """Resolve a manifest path: absolute as-is; a bare name under the manifests dir."""
+    return io.resolve_under(manifests_dir(), manifest_path)
 
 
 def format_blocked(blocked_by: list) -> list[str]:

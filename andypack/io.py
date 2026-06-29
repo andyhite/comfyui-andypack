@@ -66,6 +66,24 @@ def build_animation_meta(
     return full
 
 
+def list_json_names(directory: Optional[str]) -> list[str]:
+    """Sorted basenames of `*.json` files directly in `directory`.
+
+    Returns [] when `directory` is None or does not exist. Subdirectories and
+    non-JSON files are ignored.
+    """
+    if not directory:
+        return []
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return []
+    return sorted(
+        n for n in entries
+        if n.endswith(".json") and os.path.isfile(os.path.join(directory, n))
+    )
+
+
 def resolve_under(base: Optional[str], candidate: str) -> str:
     """Resolve a possibly-relative path against `base`.
 

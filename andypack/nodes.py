@@ -22,17 +22,20 @@ class AnimationManifestLoader:
 
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"manifest_path": ("STRING", {"default": "animations.json"})}}
+        # Combo of manifest files found in user/default/andypack/animations.
+        # Falls back to the conventional name so the widget is never empty.
+        names = api.list_manifest_names() or ["default.json"]
+        return {"required": {"manifest": (names,)}}
 
     @classmethod
-    def IS_CHANGED(cls, manifest_path):
+    def IS_CHANGED(cls, manifest):
         try:
-            return os.path.getmtime(api.resolve_manifest_path(manifest_path))
+            return os.path.getmtime(api.resolve_manifest_path(manifest))
         except OSError:
             return float("nan")
 
-    def load(self, manifest_path):
-        return (load_manifest(api.resolve_manifest_path(manifest_path)),)
+    def load(self, manifest):
+        return (load_manifest(api.resolve_manifest_path(manifest)),)
 
 
 class ConceptImageWriter:

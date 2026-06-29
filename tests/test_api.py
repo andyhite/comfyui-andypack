@@ -64,7 +64,12 @@ def test_user_default_base_is_none_outside_comfyui():
     assert api.user_default_base() is None
 
 
+def test_manifests_dir_and_list_are_empty_without_comfyui():
+    assert api.manifests_dir() is None
+    assert api.list_manifest_names() == []
+
+
 def test_resolve_manifest_path_passthrough_without_comfyui():
     # No ComfyUI base -> relative path falls back to itself (CWD-relative).
-    assert api.resolve_manifest_path("animations.json") == "animations.json"
+    assert api.resolve_manifest_path("default.json") == "default.json"
     assert api.resolve_manifest_path("/abs/animations.json") == "/abs/animations.json"

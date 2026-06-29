@@ -81,3 +81,16 @@ def test_resolve_under_absolute_passes_through():
 
 def test_resolve_under_no_base_passes_through():
     assert io.resolve_under(None, "animations.json") == "animations.json"
+
+
+def test_list_json_names_sorted_basenames(tmp_path):
+    (tmp_path / "combat.json").write_text("{}")
+    (tmp_path / "default.json").write_text("{}")
+    (tmp_path / "notes.txt").write_text("x")
+    (tmp_path / "sub").mkdir()
+    assert io.list_json_names(str(tmp_path)) == ["combat.json", "default.json"]
+
+
+def test_list_json_names_missing_or_none_returns_empty(tmp_path):
+    assert io.list_json_names(None) == []
+    assert io.list_json_names(str(tmp_path / "nope")) == []
