@@ -236,8 +236,33 @@ def resolve_payload(manifest: Manifest, root: str, character: str, ref: str, dir
     }
 
 
+def _root_within_output(root: str) -> bool:
+    """Whether a client-supplied frame `root` is allowed to be served from.
+
+    The `/frame` route streams files, so `root` must not be attacker-controlled:
+    confining `rel` under `root` is meaningless if the caller also chooses `root`.
+    Inside ComfyUI we require `root` to resolve to (or under) the output
+    directory — the only place legitimate character trees live. Outside ComfyUI
+    (no output dir, e.g. unit tests / CLI) there is no sandbox to enforce, so the
+    root is accepted as-is.
+    """
+    base = output_dir()
+    if base is None:
+        return True
+    base_real = os.path.realpath(base)
+    root_real = os.path.realpath(root)
+    return root_real == base_real or root_real.startswith(base_real + os.sep)
+
+
 def frame_path(root: str, rel: str) -> Optional[str]:
-    """Confine `rel` under `root` and require it to exist; else None (=> 404)."""
+    """Confine `rel` under `root` and require it to exist; else None (=> 404).
+
+    `root` itself is first clamped to the ComfyUI output tree (see
+    `_root_within_output`) so a caller cannot point the route at an arbitrary
+    directory and read files outside the character store.
+    """
+    if not _root_within_output(root):
+        return None
     target = io.safe_path(root, rel)
     if target is None or not os.path.isfile(target):
         return None

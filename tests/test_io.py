@@ -48,6 +48,27 @@ def test_build_animation_meta_adds_frame_pointers():
     assert full["seed"] == 7
 
 
+def test_remove_if_exists_is_idempotent(tmp_path):
+    p = tmp_path / "x.json"
+    p.write_text("{}")
+    io.remove_if_exists(str(p))
+    assert not p.exists()
+    io.remove_if_exists(str(p))  # missing -> no error
+
+
+def test_clear_frames_removes_only_frame_pngs(tmp_path):
+    (tmp_path / "frame_00000.png").write_text("x")
+    (tmp_path / "frame_00001.png").write_text("x")
+    (tmp_path / "meta.json").write_text("{}")
+    (tmp_path / "note.txt").write_text("x")
+    io.clear_frames(str(tmp_path))
+    assert sorted(os.listdir(tmp_path)) == ["meta.json", "note.txt"]
+
+
+def test_clear_frames_missing_dir_is_noop(tmp_path):
+    io.clear_frames(str(tmp_path / "nope"))  # no raise
+
+
 def test_safe_path_allows_inside(tmp_path):
     root = str(tmp_path)
     target = io.safe_path(root, "Cortex/_base/EAST.png")

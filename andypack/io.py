@@ -32,6 +32,30 @@ def frame_name(index: int) -> str:
     return f"frame_{index:05d}.png"
 
 
+def remove_if_exists(path: str) -> None:
+    """Best-effort unlink; ignores a missing file."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def clear_frames(output_dir: str) -> None:
+    """Delete every `frame_*.png` in `output_dir` (missing dir is a no-op).
+
+    Used before re-rendering an animation so a shorter clip cannot leave stale
+    higher-index frames behind (which would inflate the completeness count and
+    orphan frames past `last_frame`).
+    """
+    try:
+        names = os.listdir(output_dir)
+    except OSError:
+        return
+    for name in names:
+        if name.startswith("frame_") and name.endswith(".png"):
+            remove_if_exists(os.path.join(output_dir, name))
+
+
 def apply_loop_closure(frames: list, mode: str) -> list:
     """Make a loop seamless: drop the trailing closing frame, or duplicate the first."""
     if not frames:

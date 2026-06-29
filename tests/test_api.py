@@ -86,6 +86,25 @@ def test_frame_path_confines_to_root(tree):
     assert api.frame_path(tree.root, "Cortex/missing.png") is None  # 404: doesn't exist
 
 
+def test_frame_path_rejects_root_outside_output(tmp_path, monkeypatch):
+    # Simulate running inside ComfyUI: the output tree is `tmp_path/output`.
+    output = tmp_path / "output"
+    chars = output / "characters" / "Cortex"
+    chars.mkdir(parents=True)
+    (chars / "_concept.png").write_text("png")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("top secret")
+    monkeypatch.setattr(api, "output_dir", lambda: str(output))
+
+    # A legit root under the output tree still serves its files.
+    ok = api.frame_path(str(output / "characters"), os.path.join("Cortex", "_concept.png"))
+    assert ok is not None and ok.endswith("_concept.png")
+
+    # A root pointed outside the output tree is refused even though the file exists.
+    assert api.frame_path(str(tmp_path), "secret.txt") is None
+    assert api.frame_path("/etc", "passwd") is None
+
+
 def test_user_default_base_is_none_outside_comfyui():
     # folder_paths is a ComfyUI-only module; absent here -> None.
     assert api.user_default_base() is None

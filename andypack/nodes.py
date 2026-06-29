@@ -17,6 +17,28 @@ def _utc_now() -> str:
 _NO_CHARACTER = "(select character)"
 
 
+def _mtime(path) -> float:
+    try:
+        return os.path.getmtime(path) if path else 0.0
+    except OSError:
+        return 0.0
+
+
+def _selector_fingerprint(resolved: dict, *image_keys: str) -> str:
+    """A change-token for a selector: its merged prompt_hash, selectability, and
+    the identity+mtime of each anchor image it consumes. A selector reads the
+    rendered tree, so without this ComfyUI would cache its first result and never
+    notice a dependency being (re)rendered or a prompt edit going stale."""
+    parts = [
+        resolved["meta"]["prompt_hash"],
+        str(resolved["selectable"]),
+    ]
+    for key in image_keys:
+        path = resolved.get(key)
+        parts.append(f"{path}:{_mtime(path)}")
+    return "|".join(parts)
+
+
 def _character_choices():
     """Combo choices for a character dropdown: a placeholder + the folders in the
     characters dir. The placeholder lets the cascade start unselected."""
@@ -109,6 +131,20 @@ class CharacterPoseSelector:
             }
         }
 
+    @classmethod
+    def IS_CHANGED(cls, manifest, character, category, pose, direction):
+        # Re-resolve so the cache reflects the rendered tree (deps generated /
+        # re-rendered, prompt edits going stale), not just the widget values.
+        if character in ("", _NO_CHARACTER) or not pose or not direction:
+            return float("nan")
+        root = _characters_root()
+        try:
+            eff = effective_manifest(manifest, root, character)
+            r = resolve_pose(eff, root, character, pose, direction)
+        except Exception:
+            return float("nan")
+        return _selector_fingerprint(r, "source_image")
+
     def select(self, manifest, character, category, pose, direction):
         if character in ("", _NO_CHARACTER):
             raise RuntimeError("CharacterPoseSelector: select a character first")
@@ -146,11 +182,13 @@ class PoseFrameWriter:
         }
 
     def write(self, image, output_dir, meta):
-        # payload first (atomic), sidecar last (atomic) = completion sentinel
+        # Re-render discipline: drop the sidecar (completion sentinel) FIRST so an
+        # interrupted rewrite reads as incomplete, then payload, then sidecar last.
         png_path = os.path.join(output_dir, meta["image"])
+        sidecar_path = os.path.join(output_dir, f"{meta['direction']}.json")
+        io.remove_if_exists(sidecar_path)
         images.save_image_png(image, png_path)
         sidecar = io.build_pose_sidecar(meta, created_utc=_utc_now())
-        sidecar_path = os.path.join(output_dir, f"{meta['direction']}.json")
         io.atomic_write_json(sidecar_path, sidecar)
         return (output_dir,)
 
@@ -175,6 +213,20 @@ class CharacterAnimationSelector:
                 "direction": ("STRING", {"default": ""}),
             }
         }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character, category, animation, direction):
+        # Re-resolve so the cache reflects the rendered tree (anchors generated /
+        # re-rendered, prompt edits going stale), not just the widget values.
+        if character in ("", _NO_CHARACTER) or not animation or not direction:
+            return float("nan")
+        root = _characters_root()
+        try:
+            eff = effective_manifest(manifest, root, character)
+            r = resolve_animation(eff, root, character, animation, direction)
+        except Exception:
+            return float("nan")
+        return _selector_fingerprint(r, "start_image", "end_image")
 
     def select(self, manifest, character, category, animation, direction):
         if character in ("", _NO_CHARACTER):
@@ -224,6 +276,13 @@ class AnimationFrameWriter:
 
     def write(self, frames, output_dir, meta, seed=0, loop_closure="drop_last"):
         os.makedirs(output_dir, exist_ok=True)
+        # Re-render discipline: drop meta.json (the completion sentinel) FIRST and
+        # clear any stale frames so an interrupted rewrite reads as incomplete and
+        # a shorter clip can't leave orphan higher-index frames behind. meta.json
+        # is written LAST (atomic) below.
+        meta_path = os.path.join(output_dir, "meta.json")
+        io.remove_if_exists(meta_path)
+        io.clear_frames(output_dir)
         # frames: IMAGE batch [B, H, W, C] -> list of single-frame tensors
         batch = [frames[i:i + 1] for i in range(frames.shape[0])]
         if meta.get("loop"):
@@ -239,7 +298,7 @@ class AnimationFrameWriter:
             seed=seed,
             created_utc=_utc_now(),
         )
-        io.atomic_write_json(os.path.join(output_dir, "meta.json"), full_meta)
+        io.atomic_write_json(meta_path, full_meta)
         return (output_dir,)
 
 
