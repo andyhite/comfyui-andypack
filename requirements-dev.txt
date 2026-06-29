@@ -1,0 +1,8 @@
+# Dev/test dependencies. Install CPU torch separately (see .github/workflows/ci.yml):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+pytest
+ruff
+mypy
+numpy
+pillow
+aiohttp

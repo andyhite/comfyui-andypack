@@ -149,6 +149,28 @@ def _anim_meta_path(root: str, character: str, anim_id: str, direction: str) -> 
     return os.path.join(_anim_dir(root, character, anim_id, direction), "meta.json")
 
 
+# Public path accessors (nodes build payload paths through these instead of
+# duplicating the on-disk layout).
+def concept_image_path(root: str, character: str) -> str:
+    return _concept_png(root, character)
+
+
+def pose_image_path(root: str, character: str, pose_id: str, direction: str) -> str:
+    return _pose_png(root, character, pose_id, direction)
+
+
+def pose_sidecar_path(root: str, character: str, pose_id: str, direction: str) -> str:
+    return _pose_sidecar(root, character, pose_id, direction)
+
+
+def animation_frame_dir(root: str, character: str, anim_id: str, direction: str) -> str:
+    return _anim_dir(root, character, anim_id, direction)
+
+
+def animation_meta_path(root: str, character: str, anim_id: str, direction: str) -> str:
+    return _anim_meta_path(root, character, anim_id, direction)
+
+
 # --- direction resolution + completeness ------------------------------------ #
 
 def resolved_dir(dep: dict, selected_dir: str) -> str:
@@ -194,17 +216,57 @@ def node_complete(manifest: Manifest, root: str, character: str, ref: str, direc
     return animation_complete(root, character, ref, direction)
 
 
-def read_rendered_hash(
+def read_node_meta(
     manifest: Manifest, root: str, character: str, ref: str, direction: str
-) -> Optional[str]:
+) -> Optional[dict]:
+    """The rendered sidecar/meta dict for a node, or None (concept / unrendered)."""
     kind = node_kind(manifest, ref)
     if kind == "concept":
         return None
     if kind == "pose":
-        meta = _read_json(_pose_sidecar(root, character, ref, direction))
-    else:
-        meta = _read_json(_anim_meta_path(root, character, ref, direction))
+        return _read_json(_pose_sidecar(root, character, ref, direction))
+    return _read_json(_anim_meta_path(root, character, ref, direction))
+
+
+def read_rendered_hash(
+    manifest: Manifest, root: str, character: str, ref: str, direction: str
+) -> Optional[str]:
+    meta = read_node_meta(manifest, root, character, ref, direction)
     return meta.get("prompt_hash") if meta else None
+
+
+def read_render_id(
+    manifest: Manifest, root: str, character: str, ref: str, direction: str
+) -> Optional[str]:
+    """The rendered node's `render_id` (provenance token), or None when the node
+    is a concept, unrendered, or was written before provenance existed."""
+    meta = read_node_meta(manifest, root, character, ref, direction)
+    return meta.get("render_id") if meta else None
+
+
+def direct_deps(manifest: Manifest, ref: str, direction: str) -> list[tuple[str, str]]:
+    """(dep_ref, resolved_dir) for a node's direct dependencies at `direction`:
+    a pose's `from`; an animation's effective start_from + end_at. Concept refs
+    are included (they have no render_id, recorded as None)."""
+    kind = node_kind(manifest, ref)
+    if kind == "concept":
+        return []
+    if kind == "pose":
+        frm = manifest["poses"][ref]["from"]
+        return [(frm["ref"], resolved_dir(frm, direction))]
+    return [(dep["ref"], resolved_dir(dep, direction)) for _slot, dep in animation_deps(manifest, ref)]
+
+
+def recorded_sources(
+    manifest: Manifest, root: str, character: str, ref: str, direction: str
+) -> dict[str, Optional[str]]:
+    """`"dep_ref@dir" -> dep render_id` for each direct dep, captured at resolve
+    time and persisted into the node's meta so `outdated` can later detect a
+    consumed source being re-rendered (even with an unchanged prompt)."""
+    sources: dict[str, Optional[str]] = {}
+    for dep_ref, ddir in direct_deps(manifest, ref, direction):
+        sources[f"{dep_ref}@{ddir}"] = read_render_id(manifest, root, character, dep_ref, ddir)
+    return sources
 
 
 # --- FFLF anchors ----------------------------------------------------------- #
@@ -290,10 +352,20 @@ def outdated(manifest: Manifest, root: str, character: str, ref: str, direction:
         return False
     if not node_complete(manifest, root, character, ref, direction):
         return False
-    rendered = read_rendered_hash(manifest, root, character, ref, direction)
+    meta = read_node_meta(manifest, root, character, ref, direction)
     current = compute_prompt_hash(manifest, root, character, kind, ref, direction)
-    if rendered != current:
+    if (meta or {}).get("prompt_hash") != current:
         return True
+    # Provenance: if this node recorded the render_id of each source it consumed,
+    # a source whose current render_id differs (re-rendered, even with an
+    # unchanged prompt) makes this node stale. Absent on pre-provenance metas, in
+    # which case we fall back to the transitive-hash walk below.
+    sources = (meta or {}).get("sources")
+    if isinstance(sources, dict):
+        for key, recorded in sources.items():
+            dep_ref, ddir = key.rsplit("@", 1)
+            if read_render_id(manifest, root, character, dep_ref, ddir) != recorded:
+                return True
     if kind == "pose":
         frm = manifest["poses"][ref]["from"]
         return outdated(manifest, root, character, frm["ref"], resolved_dir(frm, direction))
@@ -324,6 +396,7 @@ def resolve_pose(manifest: Manifest, root: str, character: str, pose_id: str, di
             "kind": "pose", "pose": pose_id, "direction": direction, "from": frm,
             "image": f"{direction}.png", "manifest_version": manifest["version"],
             "prompt_hash": compute_prompt_hash(manifest, root, character, "pose", pose_id, direction),
+            "sources": recorded_sources(manifest, root, character, pose_id, direction),
         },
     }
 
@@ -341,12 +414,19 @@ def resolve_animation(manifest: Manifest, root: str, character: str, anim_id: st
         if outdated(manifest, root, character, dep["ref"], ddir):
             stale.append(slot)
     positive, negative = merged_prompts(manifest, root, character, "animation", anim_id, direction)
+    start_image = start_anchor(manifest, root, character, anim_id, direction)
+    end_image = end_anchor(manifest, root, character, anim_id, direction)
+    # A clip loops when it begins and ends on the exact same frame — i.e. FFLF
+    # whose start and end anchors resolve to the same image. There is no manifest
+    # `loop` flag; looping is purely a consequence of the start/end anchors. The
+    # writer drops the duplicated final frame so such a clip plays seamlessly.
+    is_loop = start_image is not None and start_image == end_image
     return {
         "selectable": (direction in anim["directions"]) and not blocked_by,
         "blocked_by": blocked_by,
         "stale": stale,
-        "start_image": start_anchor(manifest, root, character, anim_id, direction),
-        "end_image": end_anchor(manifest, root, character, anim_id, direction),
+        "start_image": start_image,
+        "end_image": end_image,
         "positive": positive,
         "negative": negative,
         "output_dir": _anim_dir(root, character, anim_id, direction),
@@ -354,8 +434,9 @@ def resolve_animation(manifest: Manifest, root: str, character: str, anim_id: st
             "kind": "animation", "animation": anim_id, "direction": direction,
             "fps": anim.get("fps", defaults.get("fps")),
             "length": anim.get("length", defaults.get("length")),
-            "loop": anim.get("loop", False), "manifest_version": manifest["version"],
+            "loop": is_loop, "manifest_version": manifest["version"],
             "prompt_hash": compute_prompt_hash(manifest, root, character, "animation", anim_id, direction),
+            "sources": recorded_sources(manifest, root, character, anim_id, direction),
         },
     }
 

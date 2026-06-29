@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -9,6 +10,17 @@ import tempfile
 from typing import Any, Optional
 
 _NON_SNAKE = re.compile(r"[^a-z0-9]+")
+
+_RID_SEP = "␟"  # UNIT SEPARATOR
+
+
+def render_id(prompt_hash: str, created_utc: str) -> str:
+    """A per-render identity: changes when the merged prompt drifts (prompt_hash)
+    OR when the node is simply re-rendered (created_utc). Descendants record the
+    render_id they consumed, so provenance staleness catches an ancestor being
+    re-rendered even with an unchanged prompt."""
+    raw = f"{prompt_hash}{_RID_SEP}{created_utc}"
+    return "rid:" + hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
 def atomic_write_json(path: str, data: dict) -> None:
@@ -32,6 +44,30 @@ def frame_name(index: int) -> str:
     return f"frame_{index:05d}.png"
 
 
+def remove_if_exists(path: str) -> None:
+    """Best-effort unlink; ignores a missing file."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def clear_frames(output_dir: str) -> None:
+    """Delete every `frame_*.png` in `output_dir` (missing dir is a no-op).
+
+    Used before re-rendering an animation so a shorter clip cannot leave stale
+    higher-index frames behind (which would inflate the completeness count and
+    orphan frames past `last_frame`).
+    """
+    try:
+        names = os.listdir(output_dir)
+    except OSError:
+        return
+    for name in names:
+        if name.startswith("frame_") and name.endswith(".png"):
+            remove_if_exists(os.path.join(output_dir, name))
+
+
 def apply_loop_closure(frames: list, mode: str) -> list:
     """Make a loop seamless: drop the trailing closing frame, or duplicate the first."""
     if not frames:
@@ -44,8 +80,12 @@ def apply_loop_closure(frames: list, mode: str) -> list:
 
 
 def build_pose_sidecar(meta: dict, created_utc: str) -> dict:
-    """Pose sidecar = resolve_pose meta + created_utc."""
-    return {**meta, "created_utc": created_utc}
+    """Pose sidecar = resolve_pose meta + created_utc + render_id."""
+    return {
+        **meta,
+        "created_utc": created_utc,
+        "render_id": render_id(meta["prompt_hash"], created_utc),
+    }
 
 
 def build_animation_meta(
@@ -65,6 +105,7 @@ def build_animation_meta(
         "start_frame": start_frame,
         "last_frame": last_frame,
         "created_utc": created_utc,
+        "render_id": render_id(meta["prompt_hash"], created_utc),
     }
     return full
 

@@ -7,7 +7,7 @@ from typing import Any, Optional
 from urllib.parse import quote
 
 from andypack import io
-from andypack.manifest import node_kind
+from andypack.manifest import node_kind, topo_order
 from andypack.resolve import (
     effective_manifest,
     effective_start_dep,
@@ -185,6 +185,60 @@ def list_options(manifest: Manifest, root: str, character: str) -> list[dict]:
     return out
 
 
+_COVERAGE_ORDER = ("blocked", "stale", "ready", "generated")
+
+
+def coverage_report(manifest: Manifest, root: str, character: str) -> dict:
+    """Every (entity, direction) with its status, plus per-status counts. Reuses
+    the character's effective manifest (character-specific entities included)."""
+    rows = list_options(manifest, root, character)
+    summary = {key: 0 for key in _COVERAGE_ORDER}
+    for row in rows:
+        summary[row["status"]] = summary.get(row["status"], 0) + 1
+    return {"character": character, "rows": rows, "summary": summary, "total": len(rows)}
+
+
+def format_coverage_table(report: dict) -> str:
+    """Render a coverage_report as a fixed-width text table for a Show-Text node."""
+    rows = sorted(
+        report["rows"],
+        key=lambda r: (r["kind"], r.get("category") or "", r["id"], r["direction"]),
+    )
+    lines = [f"coverage for {report['character'] or '(none)'} — {report['total']} cells"]
+    counts = report["summary"]
+    lines.append(
+        "  ".join(f"{key}={counts.get(key, 0)}" for key in _COVERAGE_ORDER)
+    )
+    lines.append("")
+    lines.append(f"{'KIND':<10} {'CATEGORY':<12} {'ID':<26} {'DIR':<12} STATUS")
+    for r in rows:
+        blocked = f"  <- {', '.join(r['blocked_by'])}" if r["blocked_by"] else ""
+        lines.append(
+            f"{r['kind']:<10} {(r.get('category') or ''):<12} {r['id']:<26} "
+            f"{r['direction']:<12} {r['status']}{blocked}"
+        )
+    return "\n".join(lines)
+
+
+def regen_queue(manifest: Manifest, root: str, character: str) -> list[dict]:
+    """Selectable-now (status `ready` or `stale`) (entity, direction) cells in
+    dependency order — the work list for a batch regeneration pass. Blocked cells
+    are omitted (their dependencies must be generated first)."""
+    manifest = effective_manifest(manifest, root, character)
+    out: list[dict] = []
+    for ref in topo_order(manifest):
+        kind = node_kind(manifest, ref)
+        collection = manifest["poses"] if kind == "pose" else manifest["animations"]
+        entity = collection.get(ref)
+        if not entity:
+            continue
+        for direction in entity.get("directions", {}) or {}:
+            st = status(manifest, root, character, ref, direction)
+            if st in ("ready", "stale"):
+                out.append({"kind": kind, "id": ref, "direction": direction, "status": st})
+    return out
+
+
 def _preview(
     manifest: Manifest, root: str, character: str,
     dep_ref: str, dep_dir: str, image_path: Optional[str], stale: bool,
@@ -236,8 +290,33 @@ def resolve_payload(manifest: Manifest, root: str, character: str, ref: str, dir
     }
 
 
+def _root_within_output(root: str) -> bool:
+    """Whether a client-supplied frame `root` is allowed to be served from.
+
+    The `/frame` route streams files, so `root` must not be attacker-controlled:
+    confining `rel` under `root` is meaningless if the caller also chooses `root`.
+    Inside ComfyUI we require `root` to resolve to (or under) the output
+    directory — the only place legitimate character trees live. Outside ComfyUI
+    (no output dir, e.g. unit tests / CLI) there is no sandbox to enforce, so the
+    root is accepted as-is.
+    """
+    base = output_dir()
+    if base is None:
+        return True
+    base_real = os.path.realpath(base)
+    root_real = os.path.realpath(root)
+    return root_real == base_real or root_real.startswith(base_real + os.sep)
+
+
 def frame_path(root: str, rel: str) -> Optional[str]:
-    """Confine `rel` under `root` and require it to exist; else None (=> 404)."""
+    """Confine `rel` under `root` and require it to exist; else None (=> 404).
+
+    `root` itself is first clamped to the ComfyUI output tree (see
+    `_root_within_output`) so a caller cannot point the route at an arbitrary
+    directory and read files outside the character store.
+    """
+    if not _root_within_output(root):
+        return None
     target = io.safe_path(root, rel)
     if target is None or not os.path.isfile(target):
         return None
