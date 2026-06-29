@@ -18,7 +18,7 @@ class AnimationManifestLoader:
     CATEGORY = "andypack"
     FUNCTION = "load"
     RETURN_TYPES = ("ANIM_MANIFEST",)
-    RETURN_NAMES = ("manifest",)
+    RETURN_NAMES = ("MANIFEST",)
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -42,7 +42,7 @@ class CharacterSelector:
     CATEGORY = "andypack"
     FUNCTION = "select"
     RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("character_dir",)
+    RETURN_NAMES = ("CHARACTER_DIR",)
 
     @classmethod
     def _root(cls):
@@ -69,7 +69,7 @@ class ConceptImageWriter:
     CATEGORY = "andypack"
     FUNCTION = "write"
     RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("character_dir",)
+    RETURN_NAMES = ("CHARACTER_DIR",)
     OUTPUT_NODE = True
 
     @classmethod
@@ -106,7 +106,7 @@ class CharacterPoseSelector:
     CATEGORY = "andypack"
     FUNCTION = "select"
     RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING", "ANIM_META")
-    RETURN_NAMES = ("source_image", "positive", "negative", "output_dir", "meta")
+    RETURN_NAMES = ("SOURCE_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT", "OUTPUT_DIR", "META")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -143,7 +143,7 @@ class PoseFrameWriter:
     CATEGORY = "andypack"
     FUNCTION = "write"
     RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("output_dir",)
+    RETURN_NAMES = ("OUTPUT_DIR",)
     OUTPUT_NODE = True
 
     @classmethod
@@ -169,10 +169,10 @@ class PoseFrameWriter:
 class CharacterAnimationSelector:
     CATEGORY = "andypack"
     FUNCTION = "select"
-    RETURN_TYPES = ("IMAGE", "IMAGE", "BOOLEAN", "STRING", "STRING", "STRING", "ANIM_META")
+    RETURN_TYPES = ("IMAGE", "IMAGE", "STRING", "STRING", "BOOLEAN", "STRING", "ANIM_META")
     RETURN_NAMES = (
-        "start_image", "end_image", "is_fflf",
-        "positive", "negative", "output_dir", "meta",
+        "START_IMAGE", "END_IMAGE",
+        "POSITIVE_PROMPT", "NEGATIVE_PROMPT", "IS_FFLF", "OUTPUT_DIR", "META",
     )
 
     @classmethod
@@ -207,8 +207,8 @@ class CharacterAnimationSelector:
         else:
             end_image, is_fflf = images.empty_image(), False
         return (
-            start_image, end_image, is_fflf,
-            r["positive"], r["negative"], r["output_dir"], r["meta"],
+            start_image, end_image,
+            r["positive"], r["negative"], is_fflf, r["output_dir"], r["meta"],
         )
 
 
@@ -216,7 +216,7 @@ class AnimationFrameWriter:
     CATEGORY = "andypack"
     FUNCTION = "write"
     RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("output_dir",)
+    RETURN_NAMES = ("OUTPUT_DIR",)
     OUTPUT_NODE = True
 
     @classmethod
