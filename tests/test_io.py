@@ -26,17 +26,17 @@ def test_loop_closure_duplicate_first():
 
 
 def test_build_pose_sidecar_carries_meta_plus_timestamp():
-    meta = {"kind": "pose", "pose": "base", "direction": "E",
-            "from": {"ref": "concept"}, "image": "E.png",
+    meta = {"kind": "pose", "pose": "base", "direction": "EAST",
+            "from": {"ref": "concept"}, "image": "EAST.png",
             "manifest_version": 1, "prompt_hash": "sha1:abc"}
     side = io.build_pose_sidecar(meta, created_utc="2026-06-29T00:00:00Z")
     assert side["prompt_hash"] == "sha1:abc"
-    assert side["image"] == "E.png"
+    assert side["image"] == "EAST.png"
     assert side["created_utc"] == "2026-06-29T00:00:00Z"
 
 
 def test_build_animation_meta_adds_frame_pointers():
-    meta = {"kind": "animation", "animation": "punch", "direction": "E",
+    meta = {"kind": "animation", "animation": "punch", "direction": "EAST",
             "fps": 16, "length": 21, "loop": False,
             "manifest_version": 1, "prompt_hash": "sha1:abc"}
     full = io.build_animation_meta(meta, count=21, start_frame="frame_00000.png",
@@ -50,7 +50,7 @@ def test_build_animation_meta_adds_frame_pointers():
 
 def test_safe_path_allows_inside(tmp_path):
     root = str(tmp_path)
-    target = io.safe_path(root, "Cortex/_base/E.png")
+    target = io.safe_path(root, "Cortex/_base/EAST.png")
     assert target is not None and target.startswith(os.path.realpath(root))
 
 

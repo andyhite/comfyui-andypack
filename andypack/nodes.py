@@ -86,7 +86,7 @@ class CharacterPoseSelector:
                 "manifest": ("ANIM_MANIFEST",),
                 "character_dir": ("STRING", {"default": "output/characters/cortex"}),
                 "pose": ("STRING", {"default": "base"}),
-                "direction": ("STRING", {"default": "E"}),
+                "direction": ("STRING", {"default": "EAST"}),
             }
         }
 
@@ -152,7 +152,7 @@ class CharacterAnimationSelector:
                 "manifest": ("ANIM_MANIFEST",),
                 "character_dir": ("STRING", {"default": "output/characters/cortex"}),
                 "animation": ("STRING", {"default": "fighting_stance_idle"}),
-                "direction": ("STRING", {"default": "E"}),
+                "direction": ("STRING", {"default": "EAST"}),
             }
         }
 

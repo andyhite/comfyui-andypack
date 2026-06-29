@@ -24,11 +24,11 @@ def _write_animation(manifest, root, char, anim_id, direction, count):
 
 def test_writing_idle_unlocks_punch(manifest, tree):
     root, char = tree.root, tree.char
-    tree.concept().pose("base", "E").pose("fighting_stance", "E")
-    assert status(manifest, root, char, "punch", "E") == "blocked"
+    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST")
+    assert status(manifest, root, char, "punch", "EAST") == "blocked"
 
-    _write_animation(manifest, root, char, "fighting_stance_idle", "E", count=3)
+    _write_animation(manifest, root, char, "fighting_stance_idle", "EAST", count=3)
 
-    assert status(manifest, root, char, "fighting_stance_idle", "E") == "generated"
+    assert status(manifest, root, char, "fighting_stance_idle", "EAST") == "generated"
     for combat in ("punch", "fighting_stance_entry", "fighting_stance_exit"):
-        assert status(manifest, root, char, combat, "E") == "ready"
+        assert status(manifest, root, char, combat, "EAST") == "ready"

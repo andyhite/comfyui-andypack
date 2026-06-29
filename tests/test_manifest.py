@@ -48,7 +48,7 @@ def test_validate_rejects_pose_from_animation():
 def test_validate_detects_cycle():
     m = base_manifest()
     # base <- fighting_stance and fighting_stance <- base  => cycle
-    m["poses"]["base"]["from"] = {"ref": "fighting_stance", "direction": "E"}
+    m["poses"]["base"]["from"] = {"ref": "fighting_stance", "direction": "EAST"}
     with pytest.raises(ManifestError):
         validate_manifest(m)
 

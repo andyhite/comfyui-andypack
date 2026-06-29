@@ -11,40 +11,40 @@ def test_list_characters_finds_dirs_with_concept(tree):
 
 
 def test_format_blocked_renders_ref_at_dir():
-    blocked = [{"start_from": {"ref": "fighting_stance_idle"}, "dir": "E"},
-               {"end_at": {"ref": "fighting_stance_idle"}, "dir": "E"}]
-    assert api.format_blocked(blocked) == ["fighting_stance_idle@E", "fighting_stance_idle@E"]
+    blocked = [{"start_from": {"ref": "fighting_stance_idle"}, "dir": "EAST"},
+               {"end_at": {"ref": "fighting_stance_idle"}, "dir": "EAST"}]
+    assert api.format_blocked(blocked) == ["fighting_stance_idle@EAST", "fighting_stance_idle@EAST"]
 
 
 def test_list_options_reports_status_and_blocked(manifest, tree):
     tree.concept()  # only concept present
     opts = {(o["kind"], o["id"], o["direction"]): o for o in api.list_options(manifest, tree.root, tree.char)}
 
-    assert opts[("pose", "base", "E")]["status"] == "ready"
-    assert opts[("pose", "fighting_stance", "E")]["status"] == "blocked"
-    assert opts[("animation", "punch", "E")]["status"] == "blocked"
-    assert opts[("animation", "punch", "E")]["blocked_by"] == [
-        "fighting_stance_idle@E", "fighting_stance_idle@E"
+    assert opts[("pose", "base", "EAST")]["status"] == "ready"
+    assert opts[("pose", "fighting_stance", "EAST")]["status"] == "blocked"
+    assert opts[("animation", "punch", "EAST")]["status"] == "blocked"
+    assert opts[("animation", "punch", "EAST")]["blocked_by"] == [
+        "fighting_stance_idle@EAST", "fighting_stance_idle@EAST"
     ]
     # base covers three directions
     assert {k for k in opts if k[0] == "pose" and k[1] == "base"} == {
-        ("pose", "base", "E"), ("pose", "base", "SE"), ("pose", "base", "S")
+        ("pose", "base", "EAST"), ("pose", "base", "SOUTH_EAST"), ("pose", "base", "SOUTH")
     }
 
 
 def test_resolve_payload_pose_has_source_preview(manifest, tree):
     tree.concept()
-    p = api.resolve_payload(manifest, tree.root, tree.char, "base", "E")
+    p = api.resolve_payload(manifest, tree.root, tree.char, "base", "EAST")
     assert p["selectable"] is True
     assert p["source_preview"]["ref"] == "concept"
     assert "/anim_coord/frame?" in p["source_preview"]["url"]
 
 
 def test_resolve_payload_animation_has_dual_previews(manifest, tree):
-    tree.concept().pose("base", "E").pose("fighting_stance", "E").animation(
-        "fighting_stance_idle", "E", frames=3
+    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST").animation(
+        "fighting_stance_idle", "EAST", frames=3
     )
-    p = api.resolve_payload(manifest, tree.root, tree.char, "punch", "E")
+    p = api.resolve_payload(manifest, tree.root, tree.char, "punch", "EAST")
     assert p["selectable"] is True
     assert p["start_preview"]["ref"] == "fighting_stance_idle"
     assert p["end_preview"]["ref"] == "fighting_stance_idle"

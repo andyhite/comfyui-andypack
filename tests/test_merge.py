@@ -44,15 +44,15 @@ def test_merged_prompts_cascades_identity_global_entity_direction(tmp_path):
     char_dir.mkdir()
     (char_dir / "_concept.json").write_text(json.dumps({"prompt": "a mouthless hero"}))
     m = base_manifest()
-    pos, neg = merged_prompts(m, str(tmp_path), "Cortex", "pose", "base", "E")
-    # identity -> (no globals.pose positive) -> pose.prompt -> base.directions.E.prompt
+    pos, neg = merged_prompts(m, str(tmp_path), "Cortex", "pose", "base", "EAST")
+    # identity -> (no globals.pose positive) -> pose.prompt -> base.directions.EAST.prompt
     assert pos == "a mouthless hero, neutral standing pose, facing right in profile"
     assert neg == "blurry, low quality"  # globals.pose.negative only
 
 
 def test_compute_prompt_hash_matches_formula(tmp_path):
     m = base_manifest()
-    pos, neg = merged_prompts(m, str(tmp_path), "Cortex", "animation", "punch", "E")
+    pos, neg = merged_prompts(m, str(tmp_path), "Cortex", "animation", "punch", "EAST")
     raw = _norm(pos) + "␟" + _norm(neg)
     expected = "sha1:" + hashlib.sha1(raw.encode("utf-8")).hexdigest()
-    assert compute_prompt_hash(m, str(tmp_path), "Cortex", "animation", "punch", "E") == expected
+    assert compute_prompt_hash(m, str(tmp_path), "Cortex", "animation", "punch", "EAST") == expected
