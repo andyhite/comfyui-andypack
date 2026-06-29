@@ -145,8 +145,65 @@ function refreshDirections(node, cfg) {
   const id = selectedRaw(node, cfg.idWidget);
   const opts = (node.__anim_byId && node.__anim_byId[id]) || [];
   const entries = opts.map((o) => ({ raw: o.direction, label: `${GLYPH[o.status]} ${o.direction}` }));
-  applyCombo(node, "direction", entries);
+  applyCombo(node, "direction", entries, () => renderPreviews(node, cfg));
+  renderPreviews(node, cfg).catch(() => {});
   node.setDirtyCanvas(true, true);
+}
+
+// --- anchor thumbnails (guarded DOM widget) --------------------------------- //
+
+function previewCard(label, preview) {
+  const card = document.createElement("div");
+  card.style.cssText =
+    "display:flex;flex-direction:column;align-items:center;font-size:10px;gap:2px;flex:1;color:#bbb";
+  const cap = document.createElement("div");
+  cap.textContent = preview ? `${label}: ${preview.ref}.${preview.direction}` : `${label}: —`;
+  card.appendChild(cap);
+  if (preview && preview.url) {
+    const img = document.createElement("img");
+    img.src = api.apiURL ? api.apiURL(preview.url) : preview.url;
+    img.style.cssText =
+      "width:72px;height:72px;object-fit:contain;border:1px solid #444;background:#222";
+    if (preview.stale) img.style.outline = "2px solid #d9a521"; // amber = stale
+    card.appendChild(img);
+  }
+  return card;
+}
+
+async function renderPreviews(node, cfg) {
+  const host = node.__anim_previewHost;
+  if (!host) return;
+  const id = selectedRaw(node, cfg.idWidget);
+  const direction = selectedRaw(node, "direction");
+  const manifestName = manifestNameFor(node);
+  if (!id || !direction || !manifestName) {
+    host.innerHTML = "";
+    return;
+  }
+  const url =
+    `/anim_coord/resolve?manifest=${enc(manifestName)}${characterQuery(node)}` +
+    `&id=${enc(id)}&direction=${enc(direction)}`;
+  const data = await fetchJSON(url);
+  host.innerHTML = "";
+  if (!data) return;
+  if (cfg.kind === "pose") {
+    host.appendChild(previewCard("from", data.source_preview));
+  } else {
+    host.appendChild(previewCard("start", data.start_preview));
+    host.appendChild(previewCard("end", data.end_preview));
+  }
+}
+
+function ensurePreviewHost(node) {
+  if (node.__anim_previewHost || typeof node.addDOMWidget !== "function") return;
+  const host = document.createElement("div");
+  host.style.cssText = "display:flex;gap:6px;padding:4px;width:100%";
+  try {
+    node.addDOMWidget("anim_preview", "preview", host, {});
+    node.__anim_previewHost = host;
+  } catch (e) {
+    console.warn(`${TAG} addDOMWidget unavailable`, e);
+  }
 }
 
 async function refreshCombos(node, cfg) {
@@ -178,6 +235,7 @@ async function refreshCombos(node, cfg) {
 function wire(node) {
   const cfg = SELECTOR_NODES[node.comfyClass];
   if (!cfg) return;
+  ensurePreviewHost(node);
   if (!node.__anim_wired) {
     node.__anim_wired = true;
     const prevOCC = node.onConnectionsChange;
