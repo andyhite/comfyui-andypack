@@ -246,3 +246,80 @@ def outdated(manifest: Manifest, root: str, character: str, ref: str, direction:
         if dep and outdated(manifest, root, character, dep["ref"], resolved_dir(dep, direction)):
             return True
     return False
+
+
+# --- resolve + status ------------------------------------------------------- #
+
+def resolve_pose(manifest: Manifest, root: str, character: str, pose_id: str, direction: str) -> dict:
+    pose = manifest["poses"][pose_id]
+    frm = pose["from"]
+    src_dir = resolved_dir(frm, direction)
+    src_complete = node_complete(manifest, root, character, frm["ref"], src_dir)
+    positive, negative = merged_prompts(manifest, root, character, "pose", pose_id, direction)
+    return {
+        "selectable": (direction in pose["directions"]) and src_complete,
+        "blocked_by": [] if src_complete else [{"from": frm, "dir": src_dir}],
+        "stale": src_complete and outdated(manifest, root, character, frm["ref"], src_dir),
+        "source_image": pose_source_image(manifest, root, character, pose_id, direction)
+        if src_complete else None,
+        "positive": positive,
+        "negative": negative,
+        "output_dir": _pose_basedir(root, character, pose_id),
+        "meta": {
+            "kind": "pose", "pose": pose_id, "direction": direction, "from": frm,
+            "image": f"{direction}.png", "manifest_version": manifest["version"],
+            "prompt_hash": compute_prompt_hash(manifest, root, character, "pose", pose_id, direction),
+        },
+    }
+
+
+def resolve_animation(manifest: Manifest, root: str, character: str, anim_id: str, direction: str) -> dict:
+    anim = manifest["animations"][anim_id]
+    defaults = manifest.get("defaults", {})
+    blocked_by: list[dict] = []
+    stale: list[str] = []
+    for slot in ("start_from", "end_at"):
+        dep = anim.get(slot)
+        if not dep:
+            continue
+        ddir = resolved_dir(dep, direction)
+        if not node_complete(manifest, root, character, dep["ref"], ddir):
+            blocked_by.append({slot: dep, "dir": ddir})
+            continue
+        if outdated(manifest, root, character, dep["ref"], ddir):
+            stale.append(slot)
+    positive, negative = merged_prompts(manifest, root, character, "animation", anim_id, direction)
+    return {
+        "selectable": (direction in anim["directions"]) and not blocked_by,
+        "blocked_by": blocked_by,
+        "stale": stale,
+        "start_image": start_anchor(manifest, root, character, anim_id, direction),
+        "end_image": end_anchor(manifest, root, character, anim_id, direction),
+        "positive": positive,
+        "negative": negative,
+        "output_dir": _anim_dir(root, character, anim_id, direction),
+        "meta": {
+            "kind": "animation", "animation": anim_id, "direction": direction,
+            "fps": anim.get("fps", defaults.get("fps")),
+            "length": anim.get("length", defaults.get("length")),
+            "loop": anim.get("loop", False), "manifest_version": manifest["version"],
+            "prompt_hash": compute_prompt_hash(manifest, root, character, "animation", anim_id, direction),
+        },
+    }
+
+
+def status(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> str:
+    kind = node_kind(manifest, ref)
+    if kind == "pose":
+        r = resolve_pose(manifest, root, character, ref, direction)
+        own_complete = pose_complete(root, character, ref, direction)
+        dep_stale = bool(r["stale"])
+    else:
+        r = resolve_animation(manifest, root, character, ref, direction)
+        own_complete = animation_complete(root, character, ref, direction)
+        dep_stale = bool(r["stale"])
+    if r["blocked_by"]:
+        return "blocked"
+    if own_complete:
+        return "stale" if outdated(manifest, root, character, ref, direction) else "generated"
+    return "stale" if dep_stale else "ready"
