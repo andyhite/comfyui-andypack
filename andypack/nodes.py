@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from andypack import images, io
 from andypack.manifest import load_manifest
+from andypack.resolve import resolve_pose
 
 
 def _utc_now() -> str:
@@ -68,11 +69,47 @@ class ConceptImageWriter:
         return (char_dir,)
 
 
+class CharacterPoseSelector:
+    CATEGORY = "andypack"
+    FUNCTION = "select"
+    RETURN_TYPES = ("IMAGE", "BOOLEAN", "STRING", "STRING", "STRING", "ANIM_META")
+    RETURN_NAMES = ("source_image", "has_source", "positive", "negative", "output_dir", "meta")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "root_dir": ("STRING", {"default": "output/anim"}),
+                "character": ("STRING", {"default": "Cortex"}),
+                "pose": ("STRING", {"default": "base"}),
+                "direction": ("STRING", {"default": "E"}),
+            }
+        }
+
+    def select(self, manifest, root_dir, character, pose, direction):
+        r = resolve_pose(manifest, root_dir, character, pose, direction)
+        if not r["selectable"]:
+            raise RuntimeError(
+                f"pose {pose}@{direction} not selectable: blocked_by={r['blocked_by']}"
+            )
+        src = r["source_image"]
+        if src:
+            image = images.load_image_tensor(src)
+            has_source = True
+        else:
+            image = images.empty_image()
+            has_source = False
+        return (image, has_source, r["positive"], r["negative"], r["output_dir"], r["meta"])
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "ConceptImageWriter": ConceptImageWriter,
+    "CharacterPoseSelector": CharacterPoseSelector,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
     "ConceptImageWriter": "Concept Image Writer",
+    "CharacterPoseSelector": "Character Pose Selector",
 }
