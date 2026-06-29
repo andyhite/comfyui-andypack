@@ -23,22 +23,10 @@ _SEP = "␟"  # UNIT SEPARATOR
 # --- cascade: merge, identity, hashing -------------------------------------- #
 
 def merge_layers(*parts: Optional[str]) -> str:
-    """Join non-empty layers, comma-splitting, case-insensitive dedupe, first wins."""
-    seen: set[str] = set()
-    out: list[str] = []
-    for part in parts:
-        if not part:
-            continue
-        for raw in part.split(","):
-            term = raw.strip()
-            if not term:
-                continue
-            key = term.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(term)
-    return ", ".join(out)
+    """Join non-empty cascade layers, general -> specific, with a blank line
+    (`\\n\\n`) between each. Each layer is kept verbatim (stripped of surrounding
+    whitespace); empty/whitespace-only layers are dropped."""
+    return "\n\n".join(part.strip() for part in parts if part and part.strip())
 
 
 def _normalize(text: str) -> str:

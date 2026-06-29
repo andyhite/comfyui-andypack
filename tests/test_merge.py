@@ -16,16 +16,21 @@ def _norm(s):
     return re.sub(r"\s+", " ", s.strip())
 
 
-def test_merge_layers_joins_non_empty_in_order():
-    assert merge_layers("a", None, "b", "") == "a, b"
+def test_merge_layers_joins_non_empty_with_blank_line():
+    assert merge_layers("a", None, "b", "") == "a\n\nb"
 
 
-def test_merge_layers_dedupes_case_insensitively_preserving_first():
-    assert merge_layers("Blurry, foo", "blurry, bar") == "Blurry, foo, bar"
+def test_merge_layers_keeps_each_layer_verbatim():
+    # layers are joined as-is (no comma-splitting, no dedupe)
+    assert merge_layers("Blurry, foo", "blurry, bar") == "Blurry, foo\n\nblurry, bar"
 
 
-def test_merge_layers_is_lossless_for_prose_commas():
+def test_merge_layers_preserves_prose_commas():
     assert merge_layers("walks forward, steady pace") == "walks forward, steady pace"
+
+
+def test_merge_layers_strips_each_layer():
+    assert merge_layers("  a  ", "\n b \n") == "a\n\nb"
 
 
 def test_read_identity_absent_returns_empty(tmp_path):
@@ -46,8 +51,8 @@ def test_merged_prompts_cascades_identity_global_entity_direction(tmp_path):
     m = base_manifest()
     pos, neg = merged_prompts(m, str(tmp_path), "Cortex", "pose", "base", "EAST")
     # identity -> (no globals.pose positive) -> pose.prompt -> base.directions.EAST.prompt
-    assert pos == "a mouthless hero, neutral standing pose, facing right in profile"
-    assert neg == "blurry, low quality"  # globals.pose.negative only
+    assert pos == "a mouthless hero\n\nneutral standing pose\n\nfacing right in profile"
+    assert neg == "blurry, low quality"  # globals.pose.negative only (single layer)
 
 
 def test_compute_prompt_hash_matches_formula(tmp_path):
