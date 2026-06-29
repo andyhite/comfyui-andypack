@@ -23,10 +23,32 @@ _SEP = "␟"  # UNIT SEPARATOR
 # --- cascade: merge, identity, hashing -------------------------------------- #
 
 def merge_layers(*parts: Optional[str]) -> str:
-    """Join non-empty cascade layers, general -> specific, with a blank line
-    (`\\n\\n`) between each. Each layer is kept verbatim (stripped of surrounding
-    whitespace); empty/whitespace-only layers are dropped."""
+    """Join non-empty POSITIVE cascade layers, general -> specific, with a blank
+    line (`\\n\\n`) between each. Each layer is kept verbatim (stripped of
+    surrounding whitespace); empty/whitespace-only layers are dropped."""
     return "\n\n".join(part.strip() for part in parts if part and part.strip())
+
+
+def merge_negative(*parts: Optional[str]) -> str:
+    """Merge NEGATIVE cascade layers as comma-separated term lists: split each
+    layer on commas, strip terms, case-insensitive dedupe (first occurrence
+    wins), re-join with ', '. Negatives are almost always term lists, so this
+    collapses duplicate boilerplate across layers."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        for raw in part.split(","):
+            term = raw.strip()
+            if not term:
+                continue
+            key = term.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(term)
+    return ", ".join(out)
 
 
 def _normalize(text: str) -> str:
@@ -61,7 +83,7 @@ def merged_prompts(
     positive = merge_layers(
         identity.get("prompt"), glob.get("prompt"), entity.get("prompt"), dlayer.get("prompt")
     )
-    negative = merge_layers(
+    negative = merge_negative(
         identity.get("negative"), glob.get("negative"), entity.get("negative"), dlayer.get("negative")
     )
     return positive, negative
