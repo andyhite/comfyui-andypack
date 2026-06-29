@@ -170,12 +170,55 @@ class CharacterAnimationSelector:
         )
 
 
+class AnimationFrameWriter:
+    CATEGORY = "andypack"
+    FUNCTION = "write"
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("output_dir",)
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "frames": ("IMAGE",),
+                "output_dir": ("STRING",),
+                "meta": ("ANIM_META",),
+            },
+            "optional": {
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
+                "loop_closure": (["drop_last", "duplicate_first"],),
+            },
+        }
+
+    def write(self, frames, output_dir, meta, seed=0, loop_closure="drop_last"):
+        os.makedirs(output_dir, exist_ok=True)
+        # frames: IMAGE batch [B, H, W, C] -> list of single-frame tensors
+        batch = [frames[i:i + 1] for i in range(frames.shape[0])]
+        if meta.get("loop"):
+            batch = io.apply_loop_closure(batch, loop_closure)
+        for index, frame in enumerate(batch):
+            images.save_image_png(frame, os.path.join(output_dir, io.frame_name(index)))
+        count = len(batch)
+        full_meta = io.build_animation_meta(
+            meta,
+            count=count,
+            start_frame=io.frame_name(0),
+            last_frame=io.frame_name(count - 1),
+            seed=seed,
+            created_utc=_utc_now(),
+        )
+        io.atomic_write_json(os.path.join(output_dir, "meta.json"), full_meta)
+        return (output_dir,)
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "ConceptImageWriter": ConceptImageWriter,
     "CharacterPoseSelector": CharacterPoseSelector,
     "PoseFrameWriter": PoseFrameWriter,
     "CharacterAnimationSelector": CharacterAnimationSelector,
+    "AnimationFrameWriter": AnimationFrameWriter,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
@@ -183,4 +226,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "CharacterPoseSelector": "Character Pose Selector",
     "PoseFrameWriter": "Pose Frame Writer",
     "CharacterAnimationSelector": "Character Animation Selector",
+    "AnimationFrameWriter": "Animation Frame Writer",
 }
