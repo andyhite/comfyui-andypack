@@ -1,232 +1,605 @@
 {
   "version": 1,
-  "directions": ["EAST", "SOUTH_EAST", "SOUTH", "SOUTH_WEST", "WEST", "NORTH_WEST", "NORTH", "NORTH_EAST"],
-  "mirror_map": { "WEST": "EAST", "SOUTH_WEST": "SOUTH_EAST", "NORTH_WEST": "NORTH_EAST" },
-  "defaults": { "fps": 16, "length": 33, "start_from": { "ref": "base" } },
-
-  "globals": {
-    "animation": { "negative_prompt": "extra limbs, extra arms, mutated hands, fused fingers, deformed, blurry, low quality, jpeg artifacts, watermark, text" },
-    "pose": { "negative_prompt": "deformed, blurry, low quality, jpeg artifacts, watermark, text" }
+  "directions": [
+    "EAST",
+    "SOUTH_EAST",
+    "SOUTH",
+    "SOUTH_WEST",
+    "WEST",
+    "NORTH_WEST",
+    "NORTH",
+    "NORTH_EAST"
+  ],
+  "mirror_map": {
+    "WEST": "EAST",
+    "SOUTH_WEST": "SOUTH_EAST",
+    "NORTH_WEST": "NORTH_EAST"
   },
-
+  "defaults": {
+    "fps": 16,
+    "length": 33,
+    "start_from": {
+      "ref": "base"
+    }
+  },
+  "globals": {
+    "animation": {
+      "negative_prompt": "extra limbs, extra arms, mutated hands, fused fingers, deformed, blurry, low quality, jpeg artifacts, watermark, text"
+    },
+    "pose": {
+      "negative_prompt": "deformed, blurry, low quality, jpeg artifacts, watermark, text"
+    }
+  },
   "poses": {
     "base": {
-      "from": { "ref": "concept" },
+      "from": {
+        "ref": "concept"
+      },
       "positive_prompt": "a neutral standing pose of the character, arms relaxed at its sides",
       "directions": {
-        "EAST":  { "positive_prompt": "the character facing directly to the right in profile" },
-        "SOUTH_EAST": { "positive_prompt": "the character facing down-right at a three-quarter view" },
-        "SOUTH":  { "positive_prompt": "the character facing toward the viewer" }
+        "EAST": {
+          "positive_prompt": "the character facing directly to the right in profile"
+        },
+        "SOUTH_EAST": {
+          "positive_prompt": "the character facing down-right at a three-quarter view"
+        },
+        "SOUTH": {
+          "positive_prompt": "the character facing toward the viewer"
+        }
+      }
+    },
+    "walk_stride": {
+      "from": {
+        "ref": "base"
+      },
+      "category": "anchor",
+      "positive_prompt": "a mid-stride walking contact pose, the lead leg forward and planted heel-down, the trailing leg extended behind and lifting off the toe, the arms swung into clear opposition with the rear arm drawn back and the lead arm forward, the torso upright and balanced over the lead leg, the head level. Captured mid-step, clearly in motion rather than standing still.",
+      "directions": {
+        "EAST": {
+          "positive_prompt": "facing to the right in profile"
+        }
+      }
+    },
+    "run_stride": {
+      "from": {
+        "ref": "base"
+      },
+      "category": "anchor",
+      "positive_prompt": "a dynamic mid-run pose, the torso pitched forward into its momentum, one knee driven high and forward while the other leg extends fully behind in push-off, the arms bent sharp at the elbows and pumping in strong opposition, the head leading low and level. A fast stride captured at full speed with the body about to leave the ground.",
+      "directions": {
+        "EAST": {
+          "positive_prompt": "facing to the right in profile"
+        }
+      }
+    },
+    "crouch": {
+      "from": {
+        "ref": "base"
+      },
+      "category": "anchor",
+      "positive_prompt": "a low braced crouch, the knees bent deeply and the hips sunk low, the torso leaned in over the legs and compacted downward, the arms hanging loosely between the knees, the head lowered. A compact, hunkered, held-low pose.",
+      "directions": {
+        "EAST": {
+          "positive_prompt": "facing to the right"
+        }
+      }
+    },
+    "jump_tuck": {
+      "from": {
+        "ref": "base"
+      },
+      "category": "anchor",
+      "positive_prompt": "an airborne pose at the peak of a jump, the legs tucked up beneath the body, the torso compact, the arms raised slightly, the head held level and pulled upward. Suspended in mid-air with the knees gathered in, clearly off the ground.",
+      "directions": {
+        "EAST": {
+          "positive_prompt": "facing to the right"
+        }
       }
     },
     "fighting_stance": {
-      "from": { "ref": "base", "direction": "same" },
+      "from": {
+        "ref": "base",
+        "direction": "same"
+      },
+      "category": "anchor",
       "positive_prompt": "the character in a ready fighting stance, weight low on staggered feet, both fists raised in a guard in front of the chest and head",
-      "directions": { "EAST": { "positive_prompt": "facing to the right" } }
+      "directions": {
+        "EAST": {
+          "positive_prompt": "facing to the right"
+        }
+      }
+    },
+    "wall_cling_pose": {
+      "from": {
+        "ref": "base"
+      },
+      "category": "anchor",
+      "positive_prompt": "pressed flat against a vertical wall on its right, the limbs braced and gripping the surface, the body kept close and flat to the wall, the head turned in toward it. A tense, held wall-grip pose.",
+      "directions": {
+        "EAST": {
+          "positive_prompt": "facing right toward the wall, body in profile"
+        }
+      }
+    },
+    "climb_reach": {
+      "from": {
+        "ref": "base"
+      },
+      "category": "anchor",
+      "positive_prompt": "a mid-climb pose on a vertical surface, one arm reached high overhead gripping, the other arm pulled in low, one knee lifted to push from below, the body drawn close to the wall, the head tilted up toward the climb. Captured mid-pull, clearly climbing upward.",
+      "directions": {
+        "EAST": {
+          "positive_prompt": "in profile, facing to the right"
+        }
+      }
     }
   },
-
   "animations": {
     "walk": {
-      "category": "locomotion", "directions": { "EAST": {} }, "length": 33,
-      "positive_prompt": "The character walks forward at a steady, even pace in a clear alternating gait. One leg lifts at the hip, the knee bends to clear the ground, the foot swings through and plants heel-first then rolls onto the toe, and as the weight transfers the opposite leg repeats the same cycle. The hips rock subtly with each weight shift and the torso stays upright and balanced over the supporting leg. The thin arms swing loosely front-to-back in natural opposition to the legs, elbows slightly bent. The heavy oversized head bobs gently up and down once per step, dipping as each foot plants. The motion completes one full two-step stride cycle and returns to the exact starting pose for a seamless loop."
+      "category": "locomotion",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 33,
+      "start_from": {
+        "ref": "walk_stride"
+      },
+      "end_at": {
+        "ref": "walk_stride"
+      },
+      "positive_prompt": "The character walks forward at a steady, even pace in a clear alternating gait. One leg lifts at the hip, the knee bends to clear the ground, the foot swings through and plants heel-first then rolls onto the toe, and as the weight transfers the opposite leg repeats the same cycle. The hips rock subtly with each weight shift and the torso stays upright and balanced over the supporting leg. The arms swing loosely front-to-back in natural opposition to the legs, elbows slightly bent. The head bobs gently up and down once per step, dipping as each foot plants. The motion completes one full two-step stride cycle and returns to the exact starting pose for a seamless loop."
     },
     "run": {
-      "category": "locomotion", "directions": { "EAST": {} }, "length": 25,
-      "positive_prompt": "The character runs forward at full speed, the torso pitched slightly forward into its momentum. The legs drive in a fast, springy alternating stride: each knee lifts high, the foot pushes off hard and extends behind, and there is a brief fully airborne moment between footfalls where neither foot touches the ground. The thin arms pump back and forth in strong opposition to the legs, elbows bent sharper than in a walk. The heavy oversized head bobs up and down once per stride with more force than a walk, and the body rises and falls with each push-off. The motion completes one full two-step stride cycle and returns to the starting pose for a seamless loop."
+      "category": "locomotion",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 25,
+      "start_from": {
+        "ref": "run_stride"
+      },
+      "end_at": {
+        "ref": "run_stride"
+      },
+      "positive_prompt": "The character runs forward at full speed, the torso pitched slightly forward into its momentum. The legs drive in a fast, springy alternating stride: each knee lifts high, the foot pushes off hard and extends behind, and there is a brief fully airborne moment between footfalls where neither foot touches the ground. The arms pump back and forth in strong opposition to the legs, elbows bent sharper than in a walk. The head bobs up and down once per stride with more force than a walk, and the body rises and falls with each push-off. The motion completes one full two-step stride cycle and returns to the starting pose for a seamless loop."
     },
     "skid_stop": {
-      "category": "locomotion", "directions": { "EAST": {} }, "length": 21,
-      "positive_prompt": "The character brakes hard out of a run. It plants both feet forward and leans its weight sharply back to fight the forward momentum, the legs stiffening and the feet skidding a short distance across the ground. The thin arms swing outward and slightly up to catch its balance and the torso counter-rotates against the slide. The heavy oversized head stays roughly level through the stop, lagging back slightly with the deceleration, then the body settles upright into a neutral standing stance as the slide ends."
+      "category": "locomotion",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 21,
+      "start_from": {
+        "ref": "run_stride"
+      },
+      "end_at": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character brakes hard out of a run. It plants both feet forward and leans its weight sharply back to fight the forward momentum, the legs stiffening and the feet skidding a short distance across the ground. The arms swing outward and slightly up to catch its balance and the torso counter-rotates against the slide. The head stays roughly level through the stop, lagging back slightly with the deceleration, then the body settles upright into a neutral standing stance as the slide ends."
     },
     "dash": {
-      "category": "locomotion", "directions": { "EAST": {} }, "length": 17,
-      "positive_prompt": "The character bursts forward in a sudden horizontal ground dash. It drops low and coils onto its back leg, then drives off that leg explosively to shoot ahead at speed, the body kept low and streamlined. The thin arms sweep back and tuck close along the sides and the heavy oversized head leads the motion, held level and thrust forward. After the burst the body eases up and settles into a neutral standing stance. A fast, snappy, low ground burst with a quick start and a short recovery."
+      "category": "locomotion",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 17,
+      "start_from": {
+        "ref": "base"
+      },
+      "end_at": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character bursts forward in a sudden horizontal ground dash. It drops low and coils onto its back leg, then drives off that leg explosively to shoot ahead at speed, the body kept low and streamlined. The arms sweep back and tuck close along the sides and the head leads the motion, held level and thrust forward. After the burst the body eases up and settles into a neutral standing stance. A fast, snappy, low ground burst with a quick start and a short recovery."
     },
     "slide": {
-      "category": "locomotion", "directions": { "EAST": {} }, "length": 21,
-      "positive_prompt": "The character drops into a low feet-first ground slide. From a run it ducks down sharply, kicks one leg forward and drops its hips low to skim along the ground, the trailing leg folded under it and the torso leaned back and compact. The thin arms tuck in close to the body. After skimming forward it plants its feet, pushes the torso back upright, and rises into a neutral standing stance. A quick, low slide for passing beneath obstacles."
+      "category": "locomotion",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 21,
+      "start_from": {
+        "ref": "run_stride"
+      },
+      "end_at": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character drops into a low feet-first ground slide. From a run it ducks down sharply, kicks one leg forward and drops its hips low to skim along the ground, the trailing leg folded under it and the torso leaned back and compact. The arms tuck in close to the body. After skimming forward it plants its feet, pushes the torso back upright, and rises into a neutral standing stance. A quick, low slide for passing beneath obstacles."
     },
-
     "jump_launch": {
-      "category": "aerial", "directions": { "EAST": {} }, "length": 17,
-      "positive_prompt": "The character performs the launch of a single jump. It first crouches low, the knees bending deeply and the torso compressing downward to load the leap as the heavy oversized head dips. Then it explodes upward as both legs extend and push off the ground hard, the body stretching tall and the head pulled skyward. As it leaves the ground it tucks its legs up beneath it and the thin arms lift slightly with the upward rush. The clip ends as the body rises into the air."
+      "category": "aerial",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 17,
+      "start_from": {
+        "ref": "base"
+      },
+      "end_at": {
+        "ref": "jump_tuck"
+      },
+      "positive_prompt": "The character performs the launch of a single jump. It first crouches low, the knees bending deeply and the torso compressing downward to load the leap as the head dips. Then it explodes upward as both legs extend and push off the ground hard, the body stretching tall and the head pulled skyward. As it leaves the ground it tucks its legs up beneath it and the arms lift slightly with the upward rush. The clip ends as the body rises into the air with the legs gathered into a tuck."
     },
     "jump_apex": {
-      "category": "aerial", "directions": { "EAST": {} }, "length": 25,
-      "positive_prompt": "The character hovers at the very top of its jump arc, the body floating nearly weightless as the upward and downward momentum cancel out. The legs stay tucked up beneath it, the thin arms are held slightly raised, and the heavy oversized head settles level. Only a faint floating drift of motion, holding the airborne peak pose."
+      "category": "aerial",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 25,
+      "start_from": {
+        "ref": "jump_tuck"
+      },
+      "positive_prompt": "The character hovers at the very top of its jump arc, the body floating nearly weightless as the upward and downward momentum cancel out. The legs stay tucked up beneath it, the arms are held slightly raised, and the head settles level. Only a faint floating drift of motion, holding the airborne peak pose for a seamless loop."
     },
     "fall": {
-      "category": "aerial", "directions": { "EAST": {} }, "length": 17,
-      "positive_prompt": "The character falls downward through the air, gaining speed as it drops. The legs begin to extend and reach down below it toward the ground, the thin arms drift upward against the rising air resistance, and the torso braces for the coming impact while the heavy oversized head stays up. A continuous downward plummet."
+      "category": "aerial",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 17,
+      "start_from": {
+        "ref": "jump_tuck"
+      },
+      "positive_prompt": "The character falls downward through the air, gaining speed as it drops. From the tucked airborne pose the legs begin to extend and reach down below it toward the ground, the arms drift upward against the rising air resistance, and the torso braces for the coming impact while the head stays up. A continuous downward plummet ending with the legs reaching down, braced just before impact."
     },
     "land": {
-      "category": "aerial", "directions": { "EAST": {} }, "length": 17,
-      "positive_prompt": "The character lands and absorbs the impact of a fall. The feet hit the ground and the knees bend deeply to cushion it, the torso compressing down and the heavy oversized head dipping low with the shock of landing. Then the legs straighten, the body springs back up, and it settles into a neutral standing stance. A sharp downward impact followed by a quick recovery."
+      "category": "aerial",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 17,
+      "start_from": {
+        "ref": "fall"
+      },
+      "end_at": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character lands and absorbs the impact of a fall. The feet hit the ground and the knees bend deeply to cushion it, the torso compressing down and the head dipping low with the shock of landing. Then the legs straighten, the body springs back up, and it settles into a neutral standing stance. A sharp downward impact followed by a quick recovery."
     },
     "double_jump": {
-      "category": "aerial", "directions": { "EAST": {} }, "length": 17,
-      "positive_prompt": "The character snaps into a second jump in mid-air. The body gives a sharp renewed upward burst as the legs kick down and then re-tuck beneath it, the thin arms swing up with the fresh lift, and the heavy oversized head rises again with the boost. A crisp, snappy mid-air second leap that re-launches the body upward."
+      "category": "aerial",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 17,
+      "start_from": {
+        "ref": "jump_tuck"
+      },
+      "end_at": {
+        "ref": "jump_tuck"
+      },
+      "positive_prompt": "The character snaps into a second jump in mid-air. From the airborne tuck the body gives a sharp renewed upward burst as the legs kick down and then re-tuck beneath it, the arms swing up with the fresh lift, and the head rises again with the boost. A crisp, snappy mid-air second leap that re-launches the body upward and returns to the tucked airborne pose."
     },
-
     "crouch_entry": {
-      "category": "stance", "directions": { "EAST": {} }, "length": 17,
-      "positive_prompt": "The character ducks from standing down into a low crouch. The knees bend deeply and the hips sink, the whole body folding and compacting downward, the torso leaning in over the legs and the heavy oversized head lowering toward the ground. It settles into a low, braced, hunkered pose and holds there."
+      "category": "stance",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 17,
+      "start_from": {
+        "ref": "base"
+      },
+      "end_at": {
+        "ref": "crouch"
+      },
+      "positive_prompt": "The character ducks from standing down into a low crouch. The knees bend deeply and the hips sink, the whole body folding and compacting downward, the torso leaning in over the legs and the head lowering toward the ground. It settles into a low, braced, hunkered pose and holds there."
     },
     "crouch_exit": {
-      "category": "stance", "directions": { "EAST": {} }, "length": 17,
-      "positive_prompt": "The character rises out of a low crouch back up to standing. The knees straighten and the hips lift, the torso extending upward and the heavy oversized head rising with it, until the body settles into a neutral upright standing stance."
+      "category": "stance",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 17,
+      "start_from": {
+        "ref": "crouch"
+      },
+      "end_at": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character rises out of a low crouch back up to standing. The knees straighten and the hips lift, the torso extending upward and the head rising with it, until the body settles into a neutral upright standing stance."
     },
     "standing_idle": {
-      "category": "stance", "directions": { "EAST": {} }, "length": 49,
-      "positive_prompt": "The character stands in place in a relaxed, settled stance. The chest rises and falls with slow, steady breathing and the body sways very gently from side to side. The thin arms hang loosely and almost still at its sides, and the heavy oversized head drifts in tiny, almost imperceptible movements. Only this quiet ambient idle motion, returning to the starting pose for a seamless loop."
+      "category": "stance",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 49,
+      "start_from": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character stands in place in a relaxed, settled stance. The chest rises and falls with slow, steady breathing and the body sways very gently from side to side. The arms hang loosely and almost still at its sides, and the head drifts in tiny, almost imperceptible movements. Only this quiet ambient idle motion, returning to the starting pose for a seamless loop."
     },
     "crouch_idle": {
-      "category": "stance", "directions": { "EAST": {} }, "length": 49,
-      "positive_prompt": "The character holds a low crouch in place, staying down with the knees bent and the hips low. The body breathes with a slow rise and fall and sways very gently. The thin arms hang loosely down between the knees and the heavy oversized head stays lowered. Calm, quiet, and holding low, returning to the starting pose for a seamless loop."
-    },
-
-    "fighting_stance_idle": {
-      "category": "combat", "directions": { "EAST": {} }, "length": 33,
-      "start_from": { "ref": "fighting_stance" },
-      "positive_prompt": "The character holds a ready fighting stance: weight low on staggered feet with the knees bent, both thin arms raised in a fists-up guard in front of the chest and head, the lead fist forward and lower and the rear fist tucked in close beside the head. It bobs and sways very gently in place with light, springy, ready energy, shifting its weight subtly between its feet, while both fists stay up and the guard stays intact throughout. The heavy oversized head stays level facing forward to the right. Only this small ready-stance bounce, returning to the starting pose for a seamless loop."
+      "category": "stance",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 49,
+      "start_from": {
+        "ref": "crouch"
+      },
+      "positive_prompt": "The character holds a low crouch in place, staying down with the knees bent and the hips low. The body breathes with a slow rise and fall and sways very gently. The arms hang loosely down between the knees and the head stays lowered. Calm, quiet, and holding low, returning to the starting pose for a seamless loop."
     },
     "fighting_stance_entry": {
-      "category": "combat", "directions": { "EAST": {} }, "length": 25,
-      "start_from": { "ref": "base" },
-      "end_at": { "ref": "fighting_stance_idle", "direction": "same" },
-      "positive_prompt": "The character shifts from a relaxed standing pose into a ready fighting stance. It steps one foot forward and the other back to stagger its footing, bends its knees to drop its weight low and springy, and squares its torso toward the right. Both thin arms lift from its sides and bend at the elbows, the fists rising into a guard in front of the chest and head, the lead fist held forward and a little lower and the rear fist tucked in close beside the head. The heavy oversized head stays level and settles facing forward to the right. It locks into the braced, poised guard and holds, weight balanced and ready. A clean, deliberate transition from rest into a combat-ready stance."
+      "category": "combat",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 25,
+      "start_from": {
+        "ref": "base"
+      },
+      "end_at": {
+        "ref": "fighting_stance_idle"
+      },
+      "positive_prompt": "The character shifts from a relaxed standing pose into a ready fighting stance. It steps one foot forward and the other back to stagger its footing, bends its knees to drop its weight low and springy, and squares its torso toward the right. Both arms lift from its sides and bend at the elbows, the fists rising into a guard in front of the chest and head, the lead fist held forward and a little lower and the rear fist tucked in close beside the head. The head stays level and settles facing forward to the right. It locks into the braced, poised guard and holds, weight balanced and ready. A clean, deliberate transition from rest into a combat-ready stance."
+    },
+    "fighting_stance_idle": {
+      "category": "combat",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 33,
+      "start_from": {
+        "ref": "fighting_stance"
+      },
+      "positive_prompt": "The character holds a ready fighting stance: weight low on staggered feet with the knees bent, both arms raised in a fists-up guard in front of the chest and head, the lead fist forward and lower and the rear fist tucked in close beside the head. It bobs and sways very gently in place with light, springy, ready energy, shifting its weight subtly between its feet, while both fists stay up and the guard stays intact throughout. The head stays level facing forward to the right. Only this small ready-stance bounce, returning to the starting pose for a seamless loop."
     },
     "fighting_stance_exit": {
       "category": "combat",
-      "directions": { "EAST": {} },
+      "directions": {
+        "EAST": {}
+      },
       "length": 25,
-      "start_from": { "ref": "fighting_stance_idle", "direction": "same" },
-      "end_at": { "ref": "base" },
-      "positive_prompt": "The character drops out of its fighting stance back into a relaxed standing pose. It lowers its fists, unstaggers its feet, and settles upright, the heavy oversized head returning to a level neutral rest."
+      "start_from": {
+        "ref": "fighting_stance_idle"
+      },
+      "end_at": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character drops out of its fighting stance back into a relaxed standing pose. It lowers its fists, unstaggers its feet, and settles upright, the head returning to a level neutral rest."
     },
     "punch": {
-      "category": "combat", "directions": { "EAST": {} }, "length": 21,
-      "start_from": { "ref": "fighting_stance_idle", "direction": "same" },
-      "end_at": { "ref": "fighting_stance_idle", "direction": "same" },
+      "category": "combat",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 21,
+      "start_from": {
+        "ref": "fighting_stance_idle"
+      },
+      "end_at": {
+        "ref": "fighting_stance_idle"
+      },
       "negative_prompt": "both arms extended, second arm raised, flailing arm, floating arm, waving arms, morphing arm, extra arm, off-hand punching, two-armed punch",
-      "positive_prompt": "The character throws a straight punch forward to the right. It winds up by rolling its lead shoulder back and loading its weight onto the rear leg, both thin arms drawing in close to the body. Then it explosively drives its lead arm straight forward into a sharp jab, the fist snapping out to full extension at speed, while the opposite arm stays pulled in and tucked tight against the chest as a fixed guard, held close to the body and never extending, raising, or flailing. The torso and hips pivot hard into the punch to drive the force, then the lead arm retracts and both arms resettle into a neutral guard. The heavy oversized head stays level and steady throughout. A powerful, committed strike with a clear wind-up, a single explosive arm extension, and a crisp recovery."
+      "positive_prompt": "The character throws a straight punch forward to the right. It winds up by rolling its lead shoulder back and loading its weight onto the rear leg, both arms drawing in close to the body. Then it explosively drives its lead arm straight forward into a sharp jab, the fist snapping out to full extension at speed, while the opposite arm stays pulled in and tucked tight against the chest as a fixed guard, held close to the body and never extending, raising, or flailing. The torso and hips pivot hard into the punch to drive the force, then the lead arm retracts and both arms resettle into a neutral guard. The head stays level and steady throughout. A powerful, committed strike with a clear wind-up, a single explosive arm extension, and a crisp recovery."
     },
     "kick": {
-      "category": "combat", "directions": { "EAST": {} }, "length": 21,
-      "start_from": { "ref": "fighting_stance_idle", "direction": "same" },
-      "end_at": { "ref": "fighting_stance_idle", "direction": "same" },
-      "positive_prompt": "The character throws a quick forward kick to the right. It shifts its weight back onto its rear leg, then snaps its front leg up and out in a sharp straight kick, the foot driving forward to full extension before retracting and planting back down as the body resettles into a neutral stance. The thin arms swing out slightly to counterbalance and the heavy oversized head stays level. A fast, snappy kick with a clean extension and recovery."
+      "category": "combat",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 21,
+      "start_from": {
+        "ref": "fighting_stance_idle"
+      },
+      "end_at": {
+        "ref": "fighting_stance_idle"
+      },
+      "positive_prompt": "The character throws a quick forward kick to the right. It shifts its weight back onto its rear leg, then snaps its front leg up and out in a sharp straight kick, the foot driving forward to full extension before retracting and planting back down as the body resettles into a neutral stance. The arms swing out slightly to counterbalance and the head stays level. A fast, snappy kick with a clean extension and recovery."
     },
     "headbutt": {
-      "category": "combat", "directions": { "EAST": {} }, "length": 25,
-      "start_from": { "ref": "fighting_stance_idle", "direction": "same" },
-      "end_at": { "ref": "fighting_stance_idle", "direction": "same" },
-      "positive_prompt": "The character lunges into a headbutt to the right. It rears the heavy oversized head back and drops its stance to load up the weight, then thrusts the entire head forward and slightly down in a powerful slam, the body and hips driving hard behind it to commit the full mass into the blow. It then snaps back upright and resettles into a neutral stance. A heavy, committed headbutt that leads with the head's full weight."
-    },
-    "stomp": {
-      "category": "combat", "directions": { "EAST": {} }, "length": 17,
-      "start_from": { "ref": "fighting_stance" },
-      "positive_prompt": "The character drops straight down in a hard ground stomp. It pulls both legs up beneath it, then drives both feet down hard to slam onto the ground, the body compressing on impact and the heavy oversized head dipping with the shock, before rebounding slightly upward and settling. A sharp, heavy downward stomp."
+      "category": "combat",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 25,
+      "start_from": {
+        "ref": "fighting_stance_idle"
+      },
+      "end_at": {
+        "ref": "fighting_stance_idle"
+      },
+      "positive_prompt": "The character lunges into a headbutt to the right. It rears the head back and drops its stance to load up the weight, then thrusts the entire head forward and slightly down in a powerful slam, the body and hips driving hard behind it to commit the full mass into the blow. It then snaps back upright and resettles into a neutral stance. A heavy, committed headbutt that leads with the head's full weight."
     },
     "block": {
-      "category": "combat", "directions": { "EAST": {} }, "length": 33,
-      "start_from": { "ref": "fighting_stance_idle", "direction": "same" },
-      "positive_prompt": "The character braces into a defensive guard. It plants its feet, tenses low and compact, and raises both thin arms crossed in front of the head and torso to shield itself, holding the braced, protective stance steady with only faint tension and breathing. A held guard pose, returning to the starting pose for a seamless loop."
+      "category": "combat",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 33,
+      "start_from": {
+        "ref": "fighting_stance_idle"
+      },
+      "positive_prompt": "The character braces into a defensive guard. It plants its feet, tenses low and compact, and raises both arms crossed in front of the head and torso to shield itself, holding the braced, protective stance steady with only faint tension and breathing. A held guard pose, returning to the starting pose for a seamless loop."
     },
-    "poo_fling": {
-      "category": "combat", "directions": { "EAST": {} }, "length": 25,
-      "start_from": { "ref": "fighting_stance" },
-      "positive_prompt": "The character reaches one thin arm back to the seat of its pants and scoops, then whips that arm forward and overhand in a sharp throwing motion to hurl a small projectile to the right. The torso twists back during the wind-up and rotates through the throw, following through across the body, before resettling into a neutral stance. A committed scoop-and-throw with full follow-through."
-    },
-    "fart_aoe": {
-      "category": "combat", "directions": { "EAST": {} }, "length": 25,
-      "start_from": { "ref": "fighting_stance" },
-      "positive_prompt": "The character plants both feet wide and bends its knees, sticking its rear end outward and leaning the torso forward to brace. It tenses, then releases with a sharp burst as a shockwave ripples outward in a ring around it, the body recoiling slightly upward from the force, before resettling into a neutral stance. A braced, committed area burst."
-    },
-
-    "hurt": {
-      "category": "reactions", "directions": { "EAST": {} }, "length": 17,
-      "positive_prompt": "The character flinches and recoils from a hit. The upper body jerks sharply backward and the heavy oversized head snaps back with the impact, the thin arms flailing out briefly, then the body rocks forward and recovers its balance back toward a neutral stance. A quick stagger-and-recover."
-    },
-    "defeat": {
-      "category": "reactions", "directions": { "EAST": {} }, "length": 33,
-      "positive_prompt": "The character is defeated. It staggers, the knees buckling and the legs giving way, the torso sagging and the heavy oversized head slumping forward, then the whole body folds downward and collapses limp to the ground. A final stagger into collapse."
-    },
-    "tier_up": {
-      "category": "reactions", "directions": { "EAST": {} }, "length": 21,
-      "positive_prompt": "The character reacts to a sudden jolt of wonder. The whole body stiffens and pops upward with a small hop, straightening tall, the thin arms flicking outward and the heavy oversized head rising sharply with the surprise, then everything settles back down into a neutral standing stance. A quick burst of energized surprise that resolves cleanly."
-    },
-    "meh_grab": {
-      "category": "reactions", "directions": { "EAST": {} }, "length": 25,
-      "positive_prompt": "The character deflates with disappointment. The body sags and the shoulders drop as the heavy oversized head droops slowly downward in a tired letdown, then it settles into a slumped neutral stance. A soft, gentle slump, lighter and slower than a flinch."
-    },
-    "edge_teeter": {
-      "category": "reactions", "directions": { "EAST": {} }, "length": 41,
-      "positive_prompt": "The character stands at the very edge of a ledge and wobbles to keep its balance. The body tips forward out over the drop and then rocks back, the thin arms windmilling and swinging to stay upright, never quite falling. The heavy oversized head sways with the off-balance motion. An unsteady teeter that loops back and forth."
-    },
-
-    "wall_slide": {
-      "category": "surface", "directions": { "EAST": {} }, "length": 25,
-      "positive_prompt": "The character presses flat against a vertical wall and slides slowly downward. The limbs are braced against the surface to drag and slow the descent, the body kept close and flat to the wall, sliding down at a steady controlled rate. A smooth, continuous downward slide that loops."
+    "stomp": {
+      "category": "combat",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 17,
+      "start_from": {
+        "ref": "jump_tuck"
+      },
+      "end_at": {
+        "ref": "jump_tuck"
+      },
+      "positive_prompt": "From an airborne tuck the character drops straight down in a hard ground stomp. It drives both feet down together to slam onto the surface below, the body compressing on impact and the head dipping with the shock, then it rebounds sharply upward off the impact and re-tucks its legs, returning to the airborne pose. A sharp, heavy downward stomp with a bouncing rebound."
     },
     "wall_cling": {
-      "category": "surface", "directions": { "EAST": {} }, "length": 33,
-      "positive_prompt": "The character clings to a vertical wall, gripping the surface and holding in place, the limbs braced against it and the body pressed close and flat. Almost no motion, only a faint shift of weight and slight tension as it maintains the grip. Holding steady."
+      "category": "surface",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 33,
+      "start_from": {
+        "ref": "wall_cling_pose"
+      },
+      "positive_prompt": "The character clings to a vertical wall, gripping the surface and holding in place, the limbs braced against it and the body pressed close and flat. Almost no motion, only a faint shift of weight and slight tension as it maintains the grip. Holding steady for a seamless loop."
+    },
+    "wall_slide": {
+      "category": "surface",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 25,
+      "start_from": {
+        "ref": "wall_cling_pose"
+      },
+      "positive_prompt": "The character presses flat against a vertical wall and slides slowly downward. The limbs are braced against the surface to drag and slow the descent, the body kept close and flat to the wall, sliding down at a steady controlled rate. A smooth, continuous downward slide that loops."
     },
     "wall_jump": {
-      "category": "surface", "directions": { "EAST": {} }, "length": 17,
-      "positive_prompt": "The character pushes off a vertical wall in a single explosive burst. Both legs coil and then kick hard against the wall surface to launch the body up and away from it, the thin arms swinging up with the leap as the body springs out into the air. A sharp launch off the wall."
+      "category": "surface",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 17,
+      "start_from": {
+        "ref": "wall_cling_pose"
+      },
+      "end_at": {
+        "ref": "jump_tuck"
+      },
+      "positive_prompt": "The character pushes off a vertical wall in a single explosive burst. Both legs coil and then kick hard against the wall surface to launch the body up and away from it, the arms swinging up with the leap as the body springs out into the air and tucks its legs beneath it. A sharp launch off the wall into an airborne tuck."
     },
     "climb": {
-      "category": "surface", "directions": { "EAST": {} }, "length": 33,
-      "positive_prompt": "The character climbs steadily upward. It reaches up with one thin arm to grip, pulls itself up as the legs push from below, then reaches with the opposite arm and repeats, hauling the body upward in a clear, even, alternating climb cycle. Continuous upward climbing motion that loops smoothly."
+      "category": "surface",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 33,
+      "start_from": {
+        "ref": "climb_reach"
+      },
+      "end_at": {
+        "ref": "climb_reach"
+      },
+      "positive_prompt": "The character climbs steadily upward. It reaches up with one arm to grip, pulls itself up as the legs push from below, then reaches with the opposite arm and repeats, hauling the body upward in a clear, even, alternating climb cycle. Continuous upward climbing motion that returns to the starting pose for a seamless loop."
     },
-
+    "hurt": {
+      "category": "reactions",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 17,
+      "start_from": {
+        "ref": "base"
+      },
+      "end_at": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character flinches and recoils from a hit. The upper body jerks sharply backward and the head snaps back with the impact, the arms flailing out briefly, then the body rocks forward and recovers its balance back toward a neutral stance. A quick stagger-and-recover."
+    },
+    "defeat": {
+      "category": "reactions",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 33,
+      "start_from": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character is defeated. It staggers, the knees buckling and the legs giving way, the torso sagging and the head slumping forward, then the whole body folds downward and collapses limp to the ground. A final stagger into collapse."
+    },
+    "surprise": {
+      "category": "reactions",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 21,
+      "start_from": {
+        "ref": "base"
+      },
+      "end_at": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character reacts to a sudden jolt of surprise. The whole body stiffens and pops upward with a small hop, straightening tall, the arms flicking outward and the head rising sharply with the surprise, then everything settles back down into a neutral standing stance. A quick burst of energized surprise that resolves cleanly."
+    },
+    "disappointment": {
+      "category": "reactions",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 25,
+      "start_from": {
+        "ref": "base"
+      },
+      "end_at": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character deflates with disappointment. The body sags and the shoulders drop as the head droops slowly downward in a tired letdown, then it settles into a slumped neutral stance. A soft, gentle slump, lighter and slower than a flinch."
+    },
+    "edge_teeter": {
+      "category": "reactions",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 41,
+      "start_from": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character stands at the very edge of a ledge and wobbles to keep its balance. The body tips forward out over the drop and then rocks back, the arms windmilling and swinging to stay upright, never quite falling. The head sways with the off-balance motion. An unsteady teeter that loops back and forth."
+    },
     "idle_break": {
-      "category": "expression", "directions": { "SOUTH_EAST": {} }, "length": 33,
-      "positive_prompt": "The character does a small idle fidget. It shifts its weight from one foot to the other and gives the body a brief loose settle, the thin arms swaying slightly and the heavy oversized head craning forward a little then easing back level, before returning to a relaxed neutral standing stance. A brief, subtle bored shuffle that resolves back to rest."
+      "category": "expression",
+      "directions": {
+        "SOUTH_EAST": {}
+      },
+      "length": 33,
+      "start_from": {
+        "ref": "base"
+      },
+      "end_at": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character does a small idle fidget. It shifts its weight from one foot to the other and gives the body a brief loose settle, the arms swaying slightly and the head craning forward a little then easing back level, before returning to a relaxed neutral standing stance. A brief, subtle bored shuffle that resolves back to rest."
     },
     "talk": {
-      "category": "expression", "directions": { "SOUTH_EAST": {} }, "length": 41,
-      "positive_prompt": "The character speaks animatedly in conversation. The heavy oversized head bobs and tilts gently with the rhythm of speech, the thin arms make small expressive gestures, and the body shifts its weight lightly from side to side. Lively conversational motion, returning to the starting pose for a seamless loop."
+      "category": "expression",
+      "directions": {
+        "SOUTH_EAST": {}
+      },
+      "length": 41,
+      "start_from": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character speaks animatedly in conversation. The head bobs and tilts gently with the rhythm of speech, the arms make small expressive gestures, and the body shifts its weight lightly from side to side. Lively conversational motion, returning to the starting pose for a seamless loop."
     },
-    "awe_reaction": {
-      "category": "expression", "directions": { "SOUTH_EAST": {} }, "length": 25,
-      "positive_prompt": "The character is struck with overwhelming awe. The body rears back and the heavy oversized head tips upward in astonishment as both thin arms fling wide and high, then it holds the wide-open, marvelling pose at full stretch. A big, breathless reaction of wonder."
+    "wonder": {
+      "category": "expression",
+      "directions": {
+        "SOUTH_EAST": {}
+      },
+      "length": 25,
+      "start_from": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character is struck with overwhelming wonder. The body rears back and the head tips upward in astonishment as both arms fling wide and high, then it holds the wide-open, marvelling pose at full stretch. A big, breathless reaction of wonder."
     },
     "cheer": {
-      "category": "expression", "directions": { "SOUTH_EAST": {} }, "length": 33,
-      "positive_prompt": "The character celebrates with excitement, bouncing up and down in place on its legs as both thin arms pump and wave triumphantly overhead and the heavy oversized head bobs with the joyful energy, then settling back down. Happy, victorious bouncing that returns to the starting pose for a seamless loop."
+      "category": "expression",
+      "directions": {
+        "SOUTH_EAST": {}
+      },
+      "length": 33,
+      "start_from": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character celebrates with excitement, bouncing up and down in place on its legs as both arms pump and wave triumphantly overhead and the head bobs with the joyful energy, then settling back down. Happy, victorious bouncing that returns to the starting pose for a seamless loop."
     },
     "turn_around": {
-      "category": "expression", "directions": { "EAST": {} }, "length": 21,
-      "positive_prompt": "The character pivots in place to face the opposite direction. The body rotates around as the legs step and reposition beneath it and the heavy oversized head swings through the turn, settling to face the other way. A clean, controlled in-place turnaround."
-    },
-    "idle_break_pants_check": {
-      "category": "expression", "directions": { "SOUTH_EAST": {} }, "length": 41,
-      "positive_prompt": "The character casually reaches one thin arm back, tugs the waistband at the seat of its pants out, and tips the heavy oversized head down to peek and check, pausing with a flicker of hope. Then it lets go of the waistband, straightens back up with a small disappointed shrug, and returns to a relaxed neutral standing stance. A quick, hopeful self-check that comes up empty."
-    },
-    "idle_break_shoe_tie": {
-      "category": "expression", "directions": { "SOUTH_EAST": {} }, "length": 49,
-      "positive_prompt": "The character kneels down on one knee and leans over to tie its shoelace, the thin arms making small busy fiddling movements near the foot and the heavy oversized head bowed down toward it. It finishes, pushes back up to standing, and settles into a relaxed neutral stance. An ordinary, mundane shoe-tie."
-    },
-    "idle_break_hype_bounce": {
-      "category": "expression", "directions": { "SOUTH_EAST": {} }, "length": 33,
-      "positive_prompt": "The character bounces lightly in place with small quick hops, shaking out and loosening both thin arms with restless energy as the heavy oversized head bobs along with the bouncing, hyping itself up, then settles back down into a relaxed neutral standing stance. Restless, energetic self-hype."
-    },
-    "idle_break_slouch": {
-      "category": "expression", "directions": { "SOUTH_EAST": {} }, "length": 41,
-      "positive_prompt": "The character slouches with bored attitude, dropping its shoulders and tipping the heavy oversized head to one side, then idly kicks at the ground in front of it with one foot a couple of times, before straightening back up into a relaxed neutral standing stance. Moody, dismissive boredom."
-    },
-
-    "blow_out": {
-      "category": "specials", "directions": { "EAST": {} }, "length": 33,
-      "positive_prompt": "The character braces low with its feet planted, the whole body tensing and swelling as it builds up pressure. Then it violently erupts in an explosive omnidirectional blast, the body thrown upward and back by the force as a massive burst radiates outward in all directions around it. It then slumps and recovers, hunching forward into a spent, drained stance. A total, catastrophic release."
-    },
-    "diarrhea_stream": {
-      "category": "specials", "directions": { "EAST": {} }, "length": 33,
-      "positive_prompt": "The character drops into a wide braced stance and leans back, angling its rear end forward to the right, then unleashes a sustained high-pressure stream firing continuously forward to the right. The body trembles and braces against the steady recoil as it holds the stream, before easing off and resettling into a neutral stance. A held, high-pressure directional blast."
+      "category": "expression",
+      "directions": {
+        "EAST": {}
+      },
+      "length": 21,
+      "start_from": {
+        "ref": "base"
+      },
+      "end_at": {
+        "ref": "base"
+      },
+      "positive_prompt": "The character pivots in place to face the opposite direction. The body rotates around as the legs step and reposition beneath it and the head swings through the turn, settling to face the other way. A clean, controlled in-place turnaround."
     }
   }
 }
