@@ -12,6 +12,8 @@ import os
 import re
 from typing import Any, Optional
 
+from andypack.manifest import node_kind
+
 Manifest = dict[str, Any]
 
 _WS = re.compile(r"\s+")
@@ -83,3 +85,87 @@ def compute_prompt_hash(
     positive, negative = merged_prompts(manifest, root, character, kind, entity_id, direction)
     raw = _normalize(positive) + _SEP + _normalize(negative)
     return "sha1:" + hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+# --- paths ------------------------------------------------------------------ #
+
+def _concept_png(root: str, character: str) -> str:
+    return os.path.join(root, character, "_concept.png")
+
+
+def _pose_basedir(root: str, character: str, pose_id: str) -> str:
+    return os.path.join(root, character, f"_{pose_id}")
+
+
+def _pose_png(root: str, character: str, pose_id: str, direction: str) -> str:
+    return os.path.join(_pose_basedir(root, character, pose_id), f"{direction}.png")
+
+
+def _pose_sidecar(root: str, character: str, pose_id: str, direction: str) -> str:
+    return os.path.join(_pose_basedir(root, character, pose_id), f"{direction}.json")
+
+
+def _anim_dir(root: str, character: str, anim_id: str, direction: str) -> str:
+    return os.path.join(root, character, anim_id, direction)
+
+
+def _anim_meta_path(root: str, character: str, anim_id: str, direction: str) -> str:
+    return os.path.join(_anim_dir(root, character, anim_id, direction), "meta.json")
+
+
+# --- direction resolution + completeness ------------------------------------ #
+
+def resolved_dir(dep: dict, selected_dir: str) -> str:
+    d = dep.get("direction", "same")
+    return selected_dir if d in (None, "same") else d
+
+
+def _count_frames(base: str) -> int:
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return 0
+    return sum(1 for n in names if n.startswith("frame_") and n.endswith(".png"))
+
+
+def concept_complete(root: str, character: str) -> bool:
+    return os.path.exists(_concept_png(root, character))
+
+
+def pose_complete(root: str, character: str, pose_id: str, direction: str) -> bool:
+    if not os.path.exists(_pose_png(root, character, pose_id, direction)):
+        return False
+    return _read_json(_pose_sidecar(root, character, pose_id, direction)) is not None
+
+
+def animation_complete(root: str, character: str, anim_id: str, direction: str) -> bool:
+    meta = _read_json(_anim_meta_path(root, character, anim_id, direction))
+    if not meta:
+        return False
+    try:
+        need = int(meta["frames"]["count"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return _count_frames(_anim_dir(root, character, anim_id, direction)) >= need
+
+
+def node_complete(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> bool:
+    kind = node_kind(manifest, ref)
+    if kind == "concept":
+        return concept_complete(root, character)
+    if kind == "pose":
+        return pose_complete(root, character, ref, direction)
+    return animation_complete(root, character, ref, direction)
+
+
+def read_rendered_hash(
+    manifest: Manifest, root: str, character: str, ref: str, direction: str
+) -> Optional[str]:
+    kind = node_kind(manifest, ref)
+    if kind == "concept":
+        return None
+    if kind == "pose":
+        meta = _read_json(_pose_sidecar(root, character, ref, direction))
+    else:
+        meta = _read_json(_anim_meta_path(root, character, ref, direction))
+    return meta.get("prompt_hash") if meta else None
