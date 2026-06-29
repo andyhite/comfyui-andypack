@@ -141,6 +141,16 @@ async function renderPreviews(node, cfg) {
 
 app.registerExtension({
   name: "andypack.animCoord",
+  async setup() {
+    const refreshAll = () => {
+      for (const node of app.graph?._nodes || []) {
+        const cfg = SELECTOR_NODES[node.comfyClass];
+        if (cfg) refreshOptions(node, cfg).then(() => renderPreviews(node, cfg));
+      }
+    };
+    api.addEventListener("execution_success", refreshAll);
+    api.addEventListener("executed", refreshAll);
+  },
   async nodeCreated(node) {
     const cfg = SELECTOR_NODES[node.comfyClass];
     if (!cfg) return;
