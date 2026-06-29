@@ -1,6 +1,14 @@
 import os
 
-from andypack.resolve import resolve_animation, resolve_pose, status
+import pytest
+
+from andypack.manifest import ManifestError
+from andypack.resolve import (
+    effective_manifest,
+    resolve_animation,
+    resolve_pose,
+    status,
+)
 
 
 def test_base_pose_ready_when_concept_present(manifest, tree):
@@ -73,3 +81,49 @@ def test_free_clip_blocked_until_base_then_starts_from_it(manifest, tree):
     assert r2["start_image"].endswith(os.path.join("_base", "EAST.png"))
     assert r2["end_image"] is None  # plain I2V, no FFLF
     assert status(manifest, tree.root, tree.char, "walk", "EAST") == "ready"
+
+
+def test_effective_manifest_merges_character_entities(manifest, tree):
+    tree.identity(
+        poses={"special_pose": {"from": {"ref": "base"}, "directions": {"EAST": {}}}},
+        animations={
+            "special_move": {
+                "category": "combat", "directions": {"EAST": {}},
+                "start_from": {"ref": "fighting_stance"},
+            }
+        },
+    )
+    eff = effective_manifest(manifest, tree.root, tree.char)
+    # character entities present alongside the main ones
+    assert "special_pose" in eff["poses"] and "base" in eff["poses"]
+    assert "special_move" in eff["animations"] and "punch" in eff["animations"]
+    # the base manifest is not mutated
+    assert "special_pose" not in manifest["poses"]
+
+
+def test_effective_manifest_no_character_entities_returns_same(manifest, tree):
+    tree.identity(prompt="just an identity prompt")  # no poses/animations
+    assert effective_manifest(manifest, tree.root, tree.char) is manifest
+
+
+def test_effective_manifest_rejects_bad_character_ref(manifest, tree):
+    # a character pose referencing an unknown ref must fail, not resolve silently
+    tree.identity(poses={"bad": {"from": {"ref": "nope"}, "directions": {"EAST": {}}}})
+    with pytest.raises(ManifestError):
+        effective_manifest(manifest, tree.root, tree.char)
+
+
+def test_character_animation_is_resolvable(manifest, tree):
+    tree.identity(
+        animations={
+            "special_move": {
+                "category": "combat", "directions": {"EAST": {}},
+                "start_from": {"ref": "base"}, "prompt": "a special move",
+            }
+        }
+    )
+    eff = effective_manifest(manifest, tree.root, tree.char)
+    tree.concept()
+    assert status(eff, tree.root, tree.char, "special_move", "EAST") == "blocked"
+    tree.pose("base", "EAST")
+    assert status(eff, tree.root, tree.char, "special_move", "EAST") == "ready"

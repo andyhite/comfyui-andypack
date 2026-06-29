@@ -10,9 +10,10 @@ import hashlib
 import json
 import os
 import re
+import warnings
 from typing import Any, Optional
 
-from andypack.manifest import node_kind
+from andypack.manifest import node_kind, validate_manifest
 
 Manifest = dict[str, Any]
 
@@ -68,6 +69,29 @@ def read_identity(root: str, character: str) -> dict:
     """Per-character identity layer from `_concept.json`, or {} if absent/corrupt."""
     data = _read_json(os.path.join(root, character, "_concept.json"))
     return data or {}
+
+
+def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifest:
+    """The manifest a character actually sees: the base manifest extended with
+    the character's own `poses`/`animations` from `_concept.json` (character
+    entries override/extend by id). Returns the base manifest unchanged when the
+    character defines none. The merged manifest is re-validated, so a bad
+    character ref or a cycle raises ManifestError instead of resolving silently
+    or looping."""
+    identity = read_identity(root, character)
+    char_poses = identity.get("poses") or {}
+    char_anims = identity.get("animations") or {}
+    if not char_poses and not char_anims:
+        return manifest
+    merged: Manifest = {
+        **manifest,
+        "poses": {**manifest.get("poses", {}), **char_poses},
+        "animations": {**manifest.get("animations", {}), **char_anims},
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # length warnings already surfaced at load
+        validate_manifest(merged)
+    return merged
 
 
 def merged_prompts(

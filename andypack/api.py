@@ -9,6 +9,7 @@ from urllib.parse import quote
 from andypack import io
 from andypack.manifest import node_kind
 from andypack.resolve import (
+    effective_manifest,
     read_rendered_hash,
     resolve_animation,
     resolve_pose,
@@ -144,7 +145,12 @@ def list_characters(root: str) -> list[dict]:
 
 
 def list_options(manifest: Manifest, root: str, character: str) -> list[dict]:
-    """Every (pose|animation, direction) with its UI status and blocked_by."""
+    """Every (pose|animation, direction) with its UI status and blocked_by.
+
+    Uses the character's effective manifest, so character-specific poses and
+    animations appear too.
+    """
+    manifest = effective_manifest(manifest, root, character)
     out: list[dict] = []
     for pid, pose in manifest.get("poses", {}).items():
         for direction in pose.get("directions", {}):
@@ -182,6 +188,7 @@ def _preview(
 
 def resolve_payload(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> dict:
     """Full resolve trimmed to UI fields, with source/dual anchor previews."""
+    manifest = effective_manifest(manifest, root, character)
     kind = node_kind(manifest, ref)
     if kind == "pose":
         r = resolve_pose(manifest, root, character, ref, direction)

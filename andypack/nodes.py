@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from andypack import api, images, io
 from andypack.manifest import load_manifest
-from andypack.resolve import resolve_animation, resolve_pose
+from andypack.resolve import effective_manifest, resolve_animation, resolve_pose
 
 
 def _utc_now() -> str:
@@ -126,6 +126,7 @@ class CharacterPoseSelector:
                 f"character_dir={character_dir!r}, pose={pose!r}, direction={direction!r}"
             )
         root, character = api.split_character_dir(character_dir)
+        manifest = effective_manifest(manifest, root, character)
         r = resolve_pose(manifest, root, character, pose, direction)
         if not r["selectable"]:
             raise RuntimeError(
@@ -192,6 +193,7 @@ class CharacterAnimationSelector:
                 f"character_dir={character_dir!r}, animation={animation!r}, direction={direction!r}"
             )
         root, character = api.split_character_dir(character_dir)
+        manifest = effective_manifest(manifest, root, character)
         r = resolve_animation(manifest, root, character, animation, direction)
         if not r["selectable"]:
             raise RuntimeError(

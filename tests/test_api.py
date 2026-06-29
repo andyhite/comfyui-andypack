@@ -32,6 +32,21 @@ def test_list_options_reports_status_and_blocked(manifest, tree):
     }
 
 
+def test_list_options_includes_character_specific_entities(manifest, tree):
+    tree.identity(
+        animations={
+            "special_move": {
+                "category": "combat", "directions": {"EAST": {}},
+                "start_from": {"ref": "base"},
+            }
+        }
+    )
+    tree.concept()
+    ids = {(o["kind"], o["id"]) for o in api.list_options(manifest, tree.root, tree.char)}
+    assert ("animation", "special_move") in ids  # character-defined
+    assert ("animation", "punch") in ids  # main manifest still present
+
+
 def test_resolve_payload_pose_has_source_preview(manifest, tree):
     tree.concept()
     p = api.resolve_payload(manifest, tree.root, tree.char, "base", "EAST")
