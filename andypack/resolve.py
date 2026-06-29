@@ -169,3 +169,55 @@ def read_rendered_hash(
     else:
         meta = _read_json(_anim_meta_path(root, character, ref, direction))
     return meta.get("prompt_hash") if meta else None
+
+
+# --- FFLF anchors ----------------------------------------------------------- #
+
+def _single_image(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> Optional[str]:
+    """A concept/pose dep's single image (used for either FFLF slot)."""
+    kind = node_kind(manifest, ref)
+    if kind == "concept":
+        return _concept_png(root, character)
+    if kind == "pose":
+        return _pose_png(root, character, ref, direction)
+    return None  # animations are not single-image
+
+
+def pose_source_image(
+    manifest: Manifest, root: str, character: str, pose_id: str, direction: str
+) -> Optional[str]:
+    """The image a pose's FLUX edit consumes — its `from` source."""
+    frm = manifest["poses"][pose_id]["from"]
+    return _single_image(manifest, root, character, frm["ref"], resolved_dir(frm, direction))
+
+
+def _animation_frame(
+    manifest: Manifest, root: str, character: str, ref: str, direction: str, key: str
+) -> Optional[str]:
+    meta = _read_json(_anim_meta_path(root, character, ref, direction))
+    if not meta or key not in meta:
+        return None
+    return os.path.join(_anim_dir(root, character, ref, direction), meta[key])
+
+
+def _anchor(
+    manifest: Manifest, root: str, character: str, anim_id: str, direction: str, slot: str, frame_key: str
+) -> Optional[str]:
+    dep = manifest["animations"][anim_id].get(slot)
+    if not dep:
+        return None
+    ddir = resolved_dir(dep, direction)
+    kind = node_kind(manifest, dep["ref"])
+    if kind in ("concept", "pose"):
+        return _single_image(manifest, root, character, dep["ref"], ddir)
+    return _animation_frame(manifest, root, character, dep["ref"], ddir, frame_key)
+
+
+def start_anchor(manifest: Manifest, root: str, character: str, anim_id: str, direction: str) -> Optional[str]:
+    """start_from -> dep's LAST frame (animation) or its single image (concept/pose)."""
+    return _anchor(manifest, root, character, anim_id, direction, "start_from", "last_frame")
+
+
+def end_anchor(manifest: Manifest, root: str, character: str, anim_id: str, direction: str) -> Optional[str]:
+    """end_at -> dep's FIRST frame (animation) or its single image (concept/pose)."""
+    return _anchor(manifest, root, character, anim_id, direction, "end_at", "start_frame")
