@@ -30,6 +30,8 @@ def test_list_options_reports_status_and_blocked(manifest, tree):
     assert {k for k in opts if k[0] == "pose" and k[1] == "base"} == {
         ("pose", "base", "EAST"), ("pose", "base", "SOUTH_EAST"), ("pose", "base", "SOUTH")
     }
+    # animation options carry their category for the multi-level UI
+    assert opts[("animation", "punch", "EAST")]["category"] == "combat"
 
 
 def test_list_options_includes_character_specific_entities(manifest, tree):

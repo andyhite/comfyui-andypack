@@ -11,7 +11,9 @@ const GLYPH = { generated: "✓", ready: "○", blocked: "⨯", stale: "▲" };
 // driven by the connected manifest + character. `kind` matches /options.
 const SELECTOR_NODES = {
   CharacterPoseSelector: { idWidget: "pose", kind: "pose" },
-  CharacterAnimationSelector: { idWidget: "animation", kind: "animation" },
+  // categorized -> animation combo values are "category/animation" so the
+  // dropdown nests by category (litegraph renders "/" paths as submenus).
+  CharacterAnimationSelector: { idWidget: "animation", kind: "animation", categorized: true },
 };
 
 const enc = encodeURIComponent;
@@ -222,10 +224,15 @@ async function refreshCombos(node, cfg) {
   for (const o of mine) (byId[o.id] ||= []).push(o);
   node.__anim_byId = byId;
 
-  const entries = Object.keys(byId).map((id) => ({
-    raw: id,
-    label: `${GLYPH[idStatus(byId[id])]} ${id}`,
-  }));
+  const entries = Object.keys(byId).map((id) => {
+    const opts = byId[id];
+    const leaf = `${GLYPH[idStatus(opts)]} ${id}`;
+    // Nest under category for the animation selector; flat for poses.
+    const label = cfg.categorized
+      ? `${opts[0].category || "uncategorized"}/${leaf}`
+      : leaf;
+    return { raw: id, label };
+  });
   applyCombo(node, cfg.idWidget, entries, () => refreshDirections(node, cfg));
   refreshDirections(node, cfg);
   node.setDirtyCanvas(true, true);

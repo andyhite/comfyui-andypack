@@ -176,6 +176,7 @@ def list_options(manifest: Manifest, root: str, character: str) -> list[dict]:
             r = resolve_animation(manifest, root, character, aid, direction)
             out.append({
                 "kind": "animation", "id": aid, "direction": direction,
+                "category": anim.get("category"),
                 "status": status(manifest, root, character, aid, direction),
                 "blocked_by": format_blocked(r["blocked_by"]),
             })
