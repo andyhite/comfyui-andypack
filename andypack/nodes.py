@@ -103,13 +103,42 @@ class CharacterPoseSelector:
         return (image, has_source, r["positive"], r["negative"], r["output_dir"], r["meta"])
 
 
+class PoseFrameWriter:
+    CATEGORY = "andypack"
+    FUNCTION = "write"
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("output_dir",)
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "output_dir": ("STRING",),
+                "meta": ("ANIM_META",),
+            }
+        }
+
+    def write(self, image, output_dir, meta):
+        # payload first (atomic), sidecar last (atomic) = completion sentinel
+        png_path = os.path.join(output_dir, meta["image"])
+        images.save_image_png(image, png_path)
+        sidecar = io.build_pose_sidecar(meta, created_utc=_utc_now())
+        sidecar_path = os.path.join(output_dir, f"{meta['direction']}.json")
+        io.atomic_write_json(sidecar_path, sidecar)
+        return (output_dir,)
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "ConceptImageWriter": ConceptImageWriter,
     "CharacterPoseSelector": CharacterPoseSelector,
+    "PoseFrameWriter": PoseFrameWriter,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
     "ConceptImageWriter": "Concept Image Writer",
     "CharacterPoseSelector": "Character Pose Selector",
+    "PoseFrameWriter": "Pose Frame Writer",
 }
