@@ -15,15 +15,48 @@ function widget(node, name) {
   return (node.widgets || []).find((w) => w.name === name);
 }
 
-// Turn a STRING widget into a combo over `values` (raw ids/directions — no glyph
-// prefixes, so the value the node receives is exactly the id/direction). Never
-// clobber to "": if there are no values, leave the widget as-is.
-function asCombo(w, values) {
-  if (!w || !values || values.length === 0) return;
-  w.type = "combo";
-  w.options = w.options || {};
-  w.options.values = values;
-  if (!values.includes(w.value)) w.value = values[0];
+// Replace the named widget with a REAL combo widget (or refresh an existing
+// one's values). The Python input stays STRING, so the server accepts whatever
+// the combo submits; we only change the client-side rendering. Just flipping
+// widget.type = "combo" does NOT render as a dropdown in @comfyorg/litegraph —
+// the widget has to be constructed as a combo via node.addWidget.
+function applyCombo(node, name, values, onChange) {
+  if (!values || values.length === 0) return null;
+  const widgets = node.widgets || (node.widgets = []);
+  const idx = widgets.findIndex((w) => w.name === name);
+  const existing = idx >= 0 ? widgets[idx] : null;
+
+  // Already our combo -> just update its option list, keep a valid selection.
+  if (existing && existing.__anim_combo) {
+    existing.options = existing.options || {};
+    existing.options.values = values;
+    if (!values.includes(existing.value)) existing.value = values[0];
+    return existing;
+  }
+
+  let value = existing ? existing.value : values[0];
+  if (!values.includes(value)) value = values[0];
+
+  if (typeof node.addWidget !== "function") {
+    // Fallback for older litegraph: best-effort in-place mutation.
+    if (existing) {
+      existing.type = "combo";
+      existing.options = { ...(existing.options || {}), values };
+      existing.value = value;
+    }
+    return existing;
+  }
+
+  if (idx >= 0) widgets.splice(idx, 1); // drop the STRING text widget
+  const w = node.addWidget("combo", name, value, (v) => onChange?.(v), { values });
+  w.__anim_combo = true;
+  // addWidget appends — move it back to the original slot to preserve layout.
+  const at = widgets.indexOf(w);
+  if (at >= 0 && idx >= 0 && at !== idx) {
+    widgets.splice(at, 1);
+    widgets.splice(idx, 0, w);
+  }
+  return w;
 }
 
 // litegraph's graph.links is a plain object in older versions and a Map in newer
@@ -36,8 +69,7 @@ function graphLink(linkId) {
 
 function getNode(id) {
   const g = app.graph;
-  if (!g) return null;
-  return (g.getNodeById ? g.getNodeById(id) : null) || null;
+  return (g && g.getNodeById && g.getNodeById(id)) || null;
 }
 
 // Trace the selector's `manifest` input link back to the AnimationManifestLoader
@@ -69,15 +101,17 @@ async function fetchManifestOptions(manifestName) {
   return res.json();
 }
 
+// Narrow the direction combo to the directions valid for the selected id.
 function refreshDirections(node, cfg) {
   const idW = widget(node, cfg.idWidget);
   const map = node.__anim_dirMap || {};
   const dirs = (idW && map[idW.value]) || [];
-  asCombo(widget(node, "direction"), dirs);
+  applyCombo(node, "direction", dirs);
+  node.setDirtyCanvas(true, true);
 }
 
-// Pull the manifest's selectable structure and turn the id + direction widgets
-// into combos. No-op (leaves plain text widgets) until the manifest is connected.
+// Pull the manifest's selectable structure and build the id + direction combos.
+// No-op (leaves the plain text widgets) until the manifest is connected.
 async function refreshCombos(node, cfg) {
   const manifestName = manifestNameFor(node);
   if (!manifestName) {
@@ -88,41 +122,28 @@ async function refreshCombos(node, cfg) {
   if (!data) return;
   const map = data[cfg.kind] || {};
   const ids = Object.keys(map);
-  console.warn(
-    `${TAG} ${node.comfyClass}: manifest='${manifestName}' -> ${ids.length} ${cfg.kind}`
-  );
   if (ids.length === 0) return;
   node.__anim_dirMap = map;
-  asCombo(widget(node, cfg.idWidget), ids);
+  applyCombo(node, cfg.idWidget, ids, () => refreshDirections(node, cfg));
   refreshDirections(node, cfg);
   node.setDirtyCanvas(true, true);
+  console.warn(
+    `${TAG} ${node.comfyClass}: ${cfg.idWidget} combo set (${ids.length}); ` +
+      `type now '${widget(node, cfg.idWidget)?.type}'`
+  );
 }
 
 function wire(node) {
   const cfg = SELECTOR_NODES[node.comfyClass];
   if (!cfg) return;
-  if (node.__anim_wired) {
-    refreshCombos(node, cfg).catch((e) => console.warn(`${TAG} refresh`, e));
-    return;
-  }
-  node.__anim_wired = true;
-
-  const idW = widget(node, cfg.idWidget);
-  if (idW) {
-    const prev = idW.callback;
-    idW.callback = (...a) => {
-      prev?.(...a);
-      refreshDirections(node, cfg);
-      node.setDirtyCanvas(true, true);
+  if (!node.__anim_wired) {
+    node.__anim_wired = true;
+    const prevOCC = node.onConnectionsChange;
+    node.onConnectionsChange = function (...args) {
+      prevOCC?.apply(this, args);
+      refreshCombos(node, cfg).catch((e) => console.warn(`${TAG} refresh`, e));
     };
   }
-
-  const prevOCC = node.onConnectionsChange;
-  node.onConnectionsChange = function (...args) {
-    prevOCC?.apply(this, args);
-    refreshCombos(node, cfg).catch((e) => console.warn(`${TAG} refresh`, e));
-  };
-
   refreshCombos(node, cfg).catch((e) => console.warn(`${TAG} refresh`, e));
 }
 
