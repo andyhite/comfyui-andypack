@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "directions": ["E", "SE", "S", "SW", "W", "NW", "N", "NE"],
+  "mirror_map": { "W": "E", "SW": "SE", "NW": "NE" },
+  "defaults": { "fps": 16, "length": 33 },
+  "globals": {
+    "animation": { "negative": "blurry, low quality, watermark" },
+    "pose": { "negative": "blurry, low quality" }
+  },
+  "poses": {
+    "base": {
+      "from": { "ref": "concept" },
+      "prompt": "neutral standing pose",
+      "directions": {
+        "E": { "prompt": "facing right in profile" },
+        "SE": { "prompt": "facing down-right at three-quarter" },
+        "S": { "prompt": "facing toward the viewer" }
+      }
+    },
+    "fighting_stance": {
+      "from": { "ref": "base", "direction": "same" },
+      "prompt": "ready fighting stance, fists up",
+      "directions": { "E": { "prompt": "guard facing right" } }
+    }
+  },
+  "animations": {
+    "fighting_stance_idle": {
+      "category": "combat", "loop": true, "length": 33,
+      "start_from": { "ref": "fighting_stance" },
+      "prompt": "bob gently in a ready guard",
+      "directions": { "E": {} }
+    },
+    "fighting_stance_entry": {
+      "category": "combat", "loop": false, "length": 25,
+      "start_from": { "ref": "base" },
+      "end_at": { "ref": "fighting_stance_idle" },
+      "prompt": "rise from standing into a guard",
+      "directions": { "E": {} }
+    },
+    "fighting_stance_exit": {
+      "category": "combat", "loop": false, "length": 25,
+      "start_from": { "ref": "fighting_stance_idle" },
+      "end_at": { "ref": "base" },
+      "prompt": "drop from guard back to standing",
+      "directions": { "E": {} }
+    },
+    "punch": {
+      "category": "combat", "loop": false, "length": 21,
+      "start_from": { "ref": "fighting_stance_idle" },
+      "end_at": { "ref": "fighting_stance_idle" },
+      "prompt": "throw a straight jab to the right",
+      "negative": "both arms extended, extra arm",
+      "directions": { "E": {} }
+    }
+  }
+}
