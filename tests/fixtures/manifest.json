@@ -25,27 +25,27 @@
   },
   "animations": {
     "fighting_stance_idle": {
-      "category": "combat", "loop": true, "length": 33,
+      "category": "combat", "length": 33,
       "start_from": { "ref": "fighting_stance" },
       "positive_prompt": "bob gently in a ready guard",
       "directions": { "EAST": {} }
     },
     "fighting_stance_entry": {
-      "category": "combat", "loop": false, "length": 25,
+      "category": "combat", "length": 25,
       "start_from": { "ref": "base" },
       "end_at": { "ref": "fighting_stance_idle" },
       "positive_prompt": "rise from standing into a guard",
       "directions": { "EAST": {} }
     },
     "fighting_stance_exit": {
-      "category": "combat", "loop": false, "length": 25,
+      "category": "combat", "length": 25,
       "start_from": { "ref": "fighting_stance_idle" },
       "end_at": { "ref": "base" },
       "positive_prompt": "drop from guard back to standing",
       "directions": { "EAST": {} }
     },
     "punch": {
-      "category": "combat", "loop": false, "length": 21,
+      "category": "combat", "length": 21,
       "start_from": { "ref": "fighting_stance_idle" },
       "end_at": { "ref": "fighting_stance_idle" },
       "positive_prompt": "throw a straight jab to the right",
@@ -53,7 +53,7 @@
       "directions": { "EAST": {} }
     },
     "walk": {
-      "category": "locomotion", "loop": true, "length": 25,
+      "category": "locomotion", "length": 25,
       "positive_prompt": "walk forward at a steady pace",
       "directions": { "EAST": {} }
     }

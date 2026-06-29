@@ -414,12 +414,19 @@ def resolve_animation(manifest: Manifest, root: str, character: str, anim_id: st
         if outdated(manifest, root, character, dep["ref"], ddir):
             stale.append(slot)
     positive, negative = merged_prompts(manifest, root, character, "animation", anim_id, direction)
+    start_image = start_anchor(manifest, root, character, anim_id, direction)
+    end_image = end_anchor(manifest, root, character, anim_id, direction)
+    # A clip loops when it begins and ends on the exact same frame — i.e. FFLF
+    # whose start and end anchors resolve to the same image. There is no manifest
+    # `loop` flag; looping is purely a consequence of the start/end anchors. The
+    # writer drops the duplicated final frame so such a clip plays seamlessly.
+    is_loop = start_image is not None and start_image == end_image
     return {
         "selectable": (direction in anim["directions"]) and not blocked_by,
         "blocked_by": blocked_by,
         "stale": stale,
-        "start_image": start_anchor(manifest, root, character, anim_id, direction),
-        "end_image": end_anchor(manifest, root, character, anim_id, direction),
+        "start_image": start_image,
+        "end_image": end_image,
         "positive": positive,
         "negative": negative,
         "output_dir": _anim_dir(root, character, anim_id, direction),
@@ -427,7 +434,7 @@ def resolve_animation(manifest: Manifest, root: str, character: str, anim_id: st
             "kind": "animation", "animation": anim_id, "direction": direction,
             "fps": anim.get("fps", defaults.get("fps")),
             "length": anim.get("length", defaults.get("length")),
-            "loop": anim.get("loop", False), "manifest_version": manifest["version"],
+            "loop": is_loop, "manifest_version": manifest["version"],
             "prompt_hash": compute_prompt_hash(manifest, root, character, "animation", anim_id, direction),
             "sources": recorded_sources(manifest, root, character, anim_id, direction),
         },

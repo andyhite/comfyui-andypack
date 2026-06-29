@@ -278,11 +278,10 @@ class AnimationFrameWriter:
             },
             "optional": {
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
-                "loop_closure": (["drop_last", "duplicate_first"],),
             },
         }
 
-    def write(self, frames, output_dir, meta, seed=0, loop_closure="drop_last"):
+    def write(self, frames, output_dir, meta, seed=0):
         os.makedirs(output_dir, exist_ok=True)
         # Re-render discipline: drop meta.json (the completion sentinel) FIRST and
         # clear any stale frames so an interrupted rewrite reads as incomplete and
@@ -293,8 +292,11 @@ class AnimationFrameWriter:
         io.clear_frames(output_dir)
         # frames: IMAGE batch [B, H, W, C] -> list of single-frame tensors
         batch = [frames[i:i + 1] for i in range(frames.shape[0])]
-        if meta.get("loop"):
-            batch = io.apply_loop_closure(batch, loop_closure)
+        # A loop (FFLF start==end) ends on a duplicate of its first frame; drop it
+        # so the clip plays seamlessly on repeat. `meta["loop"]` is derived by the
+        # resolver, not authored.
+        if meta.get("loop") and len(batch) > 1:
+            batch = io.apply_loop_closure(batch, "drop_last")
         for index, frame in enumerate(batch):
             images.save_image_png(frame, os.path.join(output_dir, io.frame_name(index)))
         count = len(batch)

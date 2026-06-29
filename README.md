@@ -46,6 +46,12 @@ optional — when present, the clip is FFLF. The cross-wiring is:
 - `end_at` consumes the dependency's **first** frame.
 - A single-image dep (concept/pose) resolves the same image for either slot.
 
+**Looping is a consequence of FFLF, not a flag.** There is no `loop` field. A
+clip loops when its start and end anchors resolve to the *same image* (e.g.
+`start_from` and `end_at` both pointing at one pose) — it begins and ends on the
+same frame. The Animation Frame Writer detects that and drops the duplicated
+final frame so the clip plays seamlessly on repeat.
+
 ### Cascading prompts
 
 Each render's final positive and negative are merged from layers, general →
@@ -123,7 +129,7 @@ result handed from a selector to its writer).
 | **Character Pose Selector** | Pick `character → category → pose → direction` (dynamic combos). Loads the `from`-source image, emits merged prompts + `OUTPUT_DIR` + `META`. Raises if the selection isn't selectable. |
 | **Pose Frame Writer** | Write `{dir}.png` then the `{dir}.json` sidecar last (atomic). Returns `OUTPUT_DIR`. |
 | **Character Animation Selector** | Pick an animation + direction. Emits `START_IMAGE`, `END_IMAGE`, `IS_FFLF`, `LENGTH`, `FPS`, merged prompts, `OUTPUT_DIR`, `META`. `LENGTH`/`FPS` wire straight into the WAN sampler. |
-| **Animation Frame Writer** | Write `frame_{:05d}.png`, apply loop closure, then write `meta.json` last (atomic). Returns `OUTPUT_DIR`. |
+| **Animation Frame Writer** | Write `frame_{:05d}.png`, trim the duplicate closing frame of a seamless loop, then write `meta.json` last (atomic). Returns `OUTPUT_DIR`. |
 | **Mirror Frame Writer** | Synthesize a `mirror_map` direction (e.g. WEST from EAST) by horizontally flipping the already-rendered payload — no sampling. |
 | **Coverage Report** | A status table over every `(entity, direction)` for a character: generated / ready / stale / blocked, plus a JSON blob. |
 | **Regen Queue** | The selectable-now (ready/stale) cells in dependency order — a work list for batch regeneration. |

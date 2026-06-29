@@ -37,6 +37,20 @@ def test_animation_rewrite_clears_stale_frames(tmp_path):
     assert full["last_frame"] == "frame_00002.png"
 
 
+def test_animation_writer_drops_last_frame_for_loop(tmp_path):
+    out = str(tmp_path / "spin" / "EAST")
+    meta = {
+        "kind": "animation", "animation": "spin", "direction": "EAST",
+        "fps": 16, "length": 5, "loop": True, "manifest_version": 1,
+        "prompt_hash": "sha1:abc",
+    }
+    nodes.AnimationFrameWriter().write(_batch(5), out, meta)
+    frames = sorted(n for n in os.listdir(out) if n.startswith("frame_"))
+    assert frames == ["frame_00000.png", "frame_00001.png", "frame_00002.png", "frame_00003.png"]
+    full = json.loads(open(os.path.join(out, "meta.json")).read())
+    assert full["frames"]["count"] == 4  # duplicate closing frame dropped
+
+
 def test_pose_rewrite_replaces_sidecar(tmp_path):
     out = str(tmp_path / "_base")
     meta = {

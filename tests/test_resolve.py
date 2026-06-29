@@ -83,6 +83,25 @@ def test_free_clip_blocked_until_base_then_starts_from_it(manifest, tree):
     assert status(manifest, tree.root, tree.char, "walk", "EAST") == "ready"
 
 
+def test_loop_is_derived_from_matching_anchors(manifest, tree):
+    # A clip whose start and end anchors are the SAME single image is a loop.
+    tree.identity(animations={
+        "spin_loop": {
+            "category": "x", "directions": {"EAST": {}},
+            "start_from": {"ref": "base"}, "end_at": {"ref": "base"},
+        }
+    })
+    tree.concept().pose("base", "EAST")
+    eff = effective_manifest(manifest, tree.root, tree.char)
+    r = resolve_animation(eff, tree.root, tree.char, "spin_loop", "EAST")
+    assert r["meta"]["loop"] is True
+
+    # punch starts on idle's last frame and ends on idle's first frame — different
+    # images, so it is NOT a loop (no manifest flag involved).
+    r2 = resolve_animation(manifest, tree.root, tree.char, "punch", "EAST")
+    assert r2["meta"]["loop"] is False
+
+
 def test_effective_manifest_merges_character_entities(manifest, tree):
     tree.identity(
         poses={"special_pose": {"from": {"ref": "base"}, "directions": {"EAST": {}}}},
