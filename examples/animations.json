@@ -126,6 +126,7 @@
     },
     "stomp": {
       "category": "combat", "directions": { "EAST": {} }, "loop": false, "length": 17,
+      "start_from": { "ref": "fighting_stance" },
       "prompt": "The character drops straight down in a hard ground stomp. It pulls both legs up beneath it, then drives both feet down hard to slam onto the ground, the body compressing on impact and the heavy oversized head dipping with the shock, before rebounding slightly upward and settling. A sharp, heavy downward stomp."
     },
     "block": {
@@ -135,10 +136,12 @@
     },
     "poo_fling": {
       "category": "combat", "directions": { "EAST": {} }, "loop": false, "length": 25,
+      "start_from": { "ref": "fighting_stance" },
       "prompt": "The character reaches one thin arm back to the seat of its pants and scoops, then whips that arm forward and overhand in a sharp throwing motion to hurl a small projectile to the right. The torso twists back during the wind-up and rotates through the throw, following through across the body, before resettling into a neutral stance. A committed scoop-and-throw with full follow-through."
     },
     "fart_aoe": {
       "category": "combat", "directions": { "EAST": {} }, "loop": false, "length": 25,
+      "start_from": { "ref": "fighting_stance" },
       "prompt": "The character plants both feet wide and bends its knees, sticking its rear end outward and leaning the torso forward to brace. It tenses, then releases with a sharp burst as a shockwave ripples outward in a ring around it, the body recoiling slightly upward from the force, before resettling into a neutral stance. A braced, committed area burst."
     },
 
