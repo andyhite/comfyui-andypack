@@ -1,3 +1,9 @@
+> **Superseded (2026-06-29):** the authoritative model is now
+> `docs/superpowers/specs/2026-06-29-cascading-pose-resolver-design.md`
+> (concept seed → poses → animations, cascading prompts, transitive staleness,
+> meta-as-completion-sentinel). This document is retained for history; where the
+> two disagree, the cascading-pose-resolver design wins.
+
 # ComfyUI Node Pack — Animation Coordinator (FFLF / dependency-aware)
 
 Build spec for `comfyui-anim-coord`. Target: a small node pack that drives a
