@@ -14,6 +14,19 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+_NO_CHARACTER = "(select character)"
+
+
+def _character_choices():
+    """Combo choices for a character dropdown: a placeholder + the folders in the
+    characters dir. The placeholder lets the cascade start unselected."""
+    return [_NO_CHARACTER, *api.list_subdirs(api.characters_dir())]
+
+
+def _characters_root():
+    return api.characters_dir() or "output/characters"
+
+
 class AnimationManifestLoader:
     CATEGORY = "andypack"
     FUNCTION = "load"
@@ -36,33 +49,6 @@ class AnimationManifestLoader:
 
     def load(self, manifest):
         return (load_manifest(api.resolve_manifest_path(manifest)),)
-
-
-class CharacterSelector:
-    CATEGORY = "andypack"
-    FUNCTION = "select"
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("CHARACTER_DIR",)
-
-    @classmethod
-    def _root(cls):
-        return api.characters_dir() or "output/characters"
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        # Combo of character folders found in <output>/characters.
-        names = api.list_subdirs(api.characters_dir()) or ["cortex"]
-        return {"required": {"character": (names,)}}
-
-    @classmethod
-    def IS_CHANGED(cls, character):
-        try:
-            return os.path.getmtime(os.path.join(cls._root(), character))
-        except OSError:
-            return float("nan")
-
-    def select(self, character):
-        return (os.path.join(self._root(), character),)
 
 
 class ConceptImageWriter:
@@ -110,22 +96,25 @@ class CharacterPoseSelector:
 
     @classmethod
     def INPUT_TYPES(cls):
+        # character is a real combo of character folders; category/pose/direction
+        # are STRING widgets the web extension turns into the cascading combos
+        # (category is a UI filter; the node resolves by pose + direction).
         return {
             "required": {
                 "manifest": ("ANIM_MANIFEST",),
-                "character_dir": ("STRING", {"default": "output/characters/cortex"}),
-                "pose": ("STRING", {"default": "base"}),
-                "direction": ("STRING", {"default": "EAST"}),
+                "character": (_character_choices(),),
+                "category": ("STRING", {"default": ""}),
+                "pose": ("STRING", {"default": ""}),
+                "direction": ("STRING", {"default": ""}),
             }
         }
 
-    def select(self, manifest, character_dir, pose, direction):
-        if not character_dir or not pose or not direction:
-            raise RuntimeError(
-                "CharacterPoseSelector needs character_dir/pose/direction; got "
-                f"character_dir={character_dir!r}, pose={pose!r}, direction={direction!r}"
-            )
-        root, character = api.split_character_dir(character_dir)
+    def select(self, manifest, character, category, pose, direction):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("CharacterPoseSelector: select a character first")
+        if not pose or not direction:
+            raise RuntimeError("CharacterPoseSelector: pick a pose and a direction")
+        root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
         r = resolve_pose(manifest, root, character, pose, direction)
         if not r["selectable"]:
@@ -180,19 +169,19 @@ class CharacterAnimationSelector:
         return {
             "required": {
                 "manifest": ("ANIM_MANIFEST",),
-                "character_dir": ("STRING", {"default": "output/characters/cortex"}),
-                "animation": ("STRING", {"default": "fighting_stance_idle"}),
-                "direction": ("STRING", {"default": "EAST"}),
+                "character": (_character_choices(),),
+                "category": ("STRING", {"default": ""}),
+                "animation": ("STRING", {"default": ""}),
+                "direction": ("STRING", {"default": ""}),
             }
         }
 
-    def select(self, manifest, character_dir, animation, direction):
-        if not character_dir or not animation or not direction:
-            raise RuntimeError(
-                "CharacterAnimationSelector needs character_dir/animation/direction; got "
-                f"character_dir={character_dir!r}, animation={animation!r}, direction={direction!r}"
-            )
-        root, character = api.split_character_dir(character_dir)
+    def select(self, manifest, character, category, animation, direction):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("CharacterAnimationSelector: select a character first")
+        if not animation or not direction:
+            raise RuntimeError("CharacterAnimationSelector: pick an animation and a direction")
+        root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
         r = resolve_animation(manifest, root, character, animation, direction)
         if not r["selectable"]:
@@ -256,7 +245,6 @@ class AnimationFrameWriter:
 
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
-    "CharacterSelector": CharacterSelector,
     "ConceptImageWriter": ConceptImageWriter,
     "CharacterPoseSelector": CharacterPoseSelector,
     "PoseFrameWriter": PoseFrameWriter,
@@ -265,7 +253,6 @@ NODE_CLASS_MAPPINGS = {
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
-    "CharacterSelector": "Character Selector",
     "ConceptImageWriter": "Concept Image Writer",
     "CharacterPoseSelector": "Character Pose Selector",
     "PoseFrameWriter": "Pose Frame Writer",

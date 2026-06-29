@@ -57,6 +57,16 @@ def test_resolve_payload_pose_has_source_preview(manifest, tree):
     assert "/anim_coord/frame?" in p["source_preview"]["url"]
 
 
+def test_resolve_payload_free_clip_has_default_start_preview(manifest, tree):
+    # walk has no explicit start_from -> default base; its start preview must
+    # still resolve to the base image once base is generated.
+    tree.concept().pose("base", "EAST")
+    p = api.resolve_payload(manifest, tree.root, tree.char, "walk", "EAST")
+    assert p["selectable"] is True
+    assert p["start_preview"]["ref"] == "base"
+    assert p["end_preview"] is None  # plain I2V
+
+
 def test_resolve_payload_animation_has_dual_previews(manifest, tree):
     tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST").animation(
         "fighting_stance_idle", "EAST", frames=3

@@ -10,6 +10,7 @@ from andypack import io
 from andypack.manifest import node_kind
 from andypack.resolve import (
     effective_manifest,
+    effective_start_dep,
     read_rendered_hash,
     resolve_animation,
     resolve_pose,
@@ -168,6 +169,7 @@ def list_options(manifest: Manifest, root: str, character: str) -> list[dict]:
             r = resolve_pose(manifest, root, character, pid, direction)
             out.append({
                 "kind": "pose", "id": pid, "direction": direction,
+                "category": pose.get("category"),
                 "status": status(manifest, root, character, pid, direction),
                 "blocked_by": format_blocked(r["blocked_by"]),
             })
@@ -217,7 +219,9 @@ def resolve_payload(manifest: Manifest, root: str, character: str, ref: str, dir
     anim = manifest["animations"][ref]
     previews: dict[str, Any] = {"start_preview": None, "end_preview": None}
     for slot, key in (("start_from", "start_preview"), ("end_at", "end_preview")):
-        dep = anim.get(slot)
+        # start_from falls back to the manifest default (so free clips preview
+        # their I2V seed too); end_at is only ever explicit.
+        dep = effective_start_dep(manifest, ref) if slot == "start_from" else anim.get(slot)
         if not dep:
             continue
         ddir = resolved_dir(dep, direction)
