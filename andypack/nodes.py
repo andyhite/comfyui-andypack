@@ -50,8 +50,8 @@ class ConceptImageWriter:
         return {
             "required": {
                 "image": ("IMAGE",),
-                "root_dir": ("STRING", {"default": "output/anim"}),
-                "character": ("STRING", {"default": "Cortex"}),
+                "root_dir": ("STRING", {"default": "output/characters"}),
+                "character": ("STRING", {"default": "cortex"}),
             },
             "optional": {
                 "identity_positive": ("STRING", {"default": "", "multiline": True}),
@@ -60,7 +60,8 @@ class ConceptImageWriter:
         }
 
     def write(self, image, root_dir, character, identity_positive="", identity_negative=""):
-        char_dir = os.path.join(root_dir, character)
+        # Character names become path segments — force lowercase snake_case.
+        char_dir = os.path.join(root_dir, io.to_snake_case(character))
         images.save_image_png(image, os.path.join(char_dir, "_concept.png"))
         layer = {}
         if identity_positive.strip():
@@ -75,35 +76,32 @@ class ConceptImageWriter:
 class CharacterPoseSelector:
     CATEGORY = "andypack"
     FUNCTION = "select"
-    RETURN_TYPES = ("IMAGE", "BOOLEAN", "STRING", "STRING", "STRING", "ANIM_META")
-    RETURN_NAMES = ("source_image", "has_source", "positive", "negative", "output_dir", "meta")
+    RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING", "ANIM_META")
+    RETURN_NAMES = ("source_image", "positive", "negative", "output_dir", "meta")
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "manifest": ("ANIM_MANIFEST",),
-                "root_dir": ("STRING", {"default": "output/anim"}),
-                "character": ("STRING", {"default": "Cortex"}),
+                "character_dir": ("STRING", {"default": "output/characters/cortex"}),
                 "pose": ("STRING", {"default": "base"}),
                 "direction": ("STRING", {"default": "E"}),
             }
         }
 
-    def select(self, manifest, root_dir, character, pose, direction):
-        r = resolve_pose(manifest, root_dir, character, pose, direction)
+    def select(self, manifest, character_dir, pose, direction):
+        root, character = os.path.split(os.path.normpath(character_dir))
+        r = resolve_pose(manifest, root, character, pose, direction)
         if not r["selectable"]:
             raise RuntimeError(
                 f"pose {pose}@{direction} not selectable: blocked_by={r['blocked_by']}"
             )
+        # On a successful select the `from`-source is always complete, so
+        # source_image is always a real image (never the empty sentinel).
         src = r["source_image"]
-        if src:
-            image = images.load_image_tensor(src)
-            has_source = True
-        else:
-            image = images.empty_image()
-            has_source = False
-        return (image, has_source, r["positive"], r["negative"], r["output_dir"], r["meta"])
+        image = images.load_image_tensor(src) if src else images.empty_image()
+        return (image, r["positive"], r["negative"], r["output_dir"], r["meta"])
 
 
 class PoseFrameWriter:
@@ -147,8 +145,7 @@ class CharacterAnimationSelector:
         return {
             "required": {
                 "manifest": ("ANIM_MANIFEST",),
-                "root_dir": ("STRING", {"default": "output/anim"}),
-                "character": ("STRING", {"default": "Cortex"}),
+                "character_dir": ("STRING", {"default": "output/characters/cortex"}),
                 "animation": ("STRING", {"default": "fighting_stance_idle"}),
                 "direction": ("STRING", {"default": "E"}),
             }
@@ -159,8 +156,9 @@ class CharacterAnimationSelector:
             return images.load_image_tensor(path), True
         return images.empty_image(), False
 
-    def select(self, manifest, root_dir, character, animation, direction):
-        r = resolve_animation(manifest, root_dir, character, animation, direction)
+    def select(self, manifest, character_dir, animation, direction):
+        root, character = os.path.split(os.path.normpath(character_dir))
+        r = resolve_animation(manifest, root, character, animation, direction)
         if not r["selectable"]:
             raise RuntimeError(
                 f"animation {animation}@{direction} not selectable: blocked_by={r['blocked_by']}"

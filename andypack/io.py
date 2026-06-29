@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from typing import Any, Optional
+
+_NON_SNAKE = re.compile(r"[^a-z0-9]+")
 
 
 def atomic_write_json(path: str, data: dict) -> None:
@@ -64,6 +67,19 @@ def build_animation_meta(
         "created_utc": created_utc,
     }
     return full
+
+
+def to_snake_case(name: str) -> str:
+    """Normalize a character name to a lowercase snake_case path segment.
+
+    Lowercases, replaces every run of non-`[a-z0-9]` with a single underscore,
+    and trims leading/trailing underscores. Raises ValueError if nothing usable
+    remains (so we never build a path from an empty segment).
+    """
+    slug = _NON_SNAKE.sub("_", name.strip().lower()).strip("_")
+    if not slug:
+        raise ValueError(f"character name {name!r} has no usable characters")
+    return slug
 
 
 def list_json_names(directory: Optional[str]) -> list[str]:

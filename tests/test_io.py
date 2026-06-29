@@ -94,3 +94,23 @@ def test_list_json_names_sorted_basenames(tmp_path):
 def test_list_json_names_missing_or_none_returns_empty(tmp_path):
     assert io.list_json_names(None) == []
     assert io.list_json_names(str(tmp_path / "nope")) == []
+
+
+def test_to_snake_case_lowercases_and_separates():
+    assert io.to_snake_case("Cortex") == "cortex"
+    assert io.to_snake_case("My Character") == "my_character"
+    assert io.to_snake_case("boss-fight 2") == "boss_fight_2"
+
+
+def test_to_snake_case_trims_and_collapses():
+    assert io.to_snake_case("  Spaced Out  ") == "spaced_out"
+    assert io.to_snake_case("a__b--c") == "a_b_c"
+    assert io.to_snake_case("Águila!") == "guila"  # non-ascii/punct dropped
+
+
+def test_to_snake_case_rejects_empty_result():
+    import pytest
+    with pytest.raises(ValueError):
+        io.to_snake_case("!!!")
+    with pytest.raises(ValueError):
+        io.to_snake_case("")
