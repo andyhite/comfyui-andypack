@@ -221,3 +221,28 @@ def start_anchor(manifest: Manifest, root: str, character: str, anim_id: str, di
 def end_anchor(manifest: Manifest, root: str, character: str, anim_id: str, direction: str) -> Optional[str]:
     """end_at -> dep's FIRST frame (animation) or its single image (concept/pose)."""
     return _anchor(manifest, root, character, anim_id, direction, "end_at", "start_frame")
+
+
+# --- transitive staleness --------------------------------------------------- #
+
+def outdated(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> bool:
+    """A COMPLETE node is stale if its own merged-prompt hash drifted or any
+    ancestor is outdated. Incompleteness is handled by `blocked`, not here."""
+    kind = node_kind(manifest, ref)
+    if kind == "concept":
+        return False
+    if not node_complete(manifest, root, character, ref, direction):
+        return False
+    rendered = read_rendered_hash(manifest, root, character, ref, direction)
+    current = compute_prompt_hash(manifest, root, character, kind, ref, direction)
+    if rendered != current:
+        return True
+    if kind == "pose":
+        frm = manifest["poses"][ref]["from"]
+        return outdated(manifest, root, character, frm["ref"], resolved_dir(frm, direction))
+    anim = manifest["animations"][ref]
+    for slot in ("start_from", "end_at"):
+        dep = anim.get(slot)
+        if dep and outdated(manifest, root, character, dep["ref"], resolved_dir(dep, direction)):
+            return True
+    return False
