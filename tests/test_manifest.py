@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from andypack.manifest import ManifestError, load_manifest, node_kind, validate_manifest
+from andypack.manifest import (
+    ManifestError,
+    collect_warnings,
+    load_manifest,
+    node_kind,
+    topo_order,
+    validate_manifest,
+)
 
 FIX = Path(__file__).parent / "fixtures" / "manifest.json"
 
@@ -69,3 +76,23 @@ def test_validate_warns_on_non_4n_plus_1_length():
         warnings.simplefilter("always")
         validate_manifest(m)
     assert any("4n+1" in str(w.message) or "length" in str(w.message) for w in caught)
+
+
+def test_collect_warnings_flags_unknown_direction():
+    m = base_manifest()
+    m["poses"]["base"]["directions"]["UP"] = {}  # not in canonical 'directions'
+    findings = collect_warnings(m)
+    assert any("UP" in f and "canonical" in f for f in findings)
+
+
+def test_collect_warnings_clean_manifest_is_empty():
+    assert collect_warnings(base_manifest()) == []
+
+
+def test_topo_order_places_dependencies_first():
+    order = topo_order(base_manifest())
+    pos = {ref: i for i, ref in enumerate(order)}
+    # base -> fighting_stance -> fighting_stance_idle -> punch
+    assert pos["base"] < pos["fighting_stance"] < pos["fighting_stance_idle"] < pos["punch"]
+    # walk has no explicit start_from -> depends on defaults.start_from (base)
+    assert pos["base"] < pos["walk"]

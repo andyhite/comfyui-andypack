@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 
-from andypack import api, images, io
-from andypack.manifest import load_manifest
+from andypack import api, images, io, resolve
+from andypack.manifest import collect_warnings, load_manifest
 from andypack.resolve import effective_manifest, resolve_animation, resolve_pose
 
 
@@ -196,10 +197,12 @@ class PoseFrameWriter:
 class CharacterAnimationSelector:
     CATEGORY = "andypack"
     FUNCTION = "select"
-    RETURN_TYPES = ("IMAGE", "IMAGE", "STRING", "STRING", "BOOLEAN", "STRING", "ANIM_META")
+    RETURN_TYPES = (
+        "IMAGE", "IMAGE", "STRING", "STRING", "BOOLEAN", "INT", "INT", "STRING", "ANIM_META",
+    )
     RETURN_NAMES = (
-        "START_IMAGE", "END_IMAGE",
-        "POSITIVE_PROMPT", "NEGATIVE_PROMPT", "IS_FFLF", "OUTPUT_DIR", "META",
+        "START_IMAGE", "END_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT",
+        "IS_FFLF", "LENGTH", "FPS", "OUTPUT_DIR", "META",
     )
 
     @classmethod
@@ -247,9 +250,14 @@ class CharacterAnimationSelector:
             end_image, is_fflf = images.load_image_tensor(r["end_image"]), True
         else:
             end_image, is_fflf = images.empty_image(), False
+        # Surface the manifest's generation params (length/fps) as wireable INTs
+        # so they drive the WAN sampler directly, not just ride along in META.
+        meta = r["meta"]
+        length = int(meta["length"]) if meta.get("length") is not None else 0
+        fps = int(meta["fps"]) if meta.get("fps") is not None else 0
         return (
-            start_image, end_image,
-            r["positive"], r["negative"], is_fflf, r["output_dir"], r["meta"],
+            start_image, end_image, r["positive"], r["negative"], is_fflf,
+            length, fps, r["output_dir"], meta,
         )
 
 
@@ -302,19 +310,229 @@ class AnimationFrameWriter:
         return (output_dir,)
 
 
+class ConceptImageLoader:
+    """Load a character's existing `_concept.png` back as an IMAGE (plus its
+    identity layer), for re-editing or feeding a refinement pass."""
+
+    CATEGORY = "andypack"
+    FUNCTION = "load"
+    RETURN_TYPES = ("IMAGE", "BOOLEAN", "STRING", "STRING")
+    RETURN_NAMES = ("CONCEPT_IMAGE", "HAS_CONCEPT", "IDENTITY_POSITIVE", "IDENTITY_NEGATIVE")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"character": (_character_choices(),)}}
+
+    @classmethod
+    def IS_CHANGED(cls, character):
+        if character in ("", _NO_CHARACTER):
+            return float("nan")
+        return _mtime(resolve.concept_image_path(_characters_root(), character))
+
+    def load(self, character):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("ConceptImageLoader: select a character first")
+        root = _characters_root()
+        identity = resolve.read_identity(root, character)
+        path = resolve.concept_image_path(root, character)
+        if os.path.exists(path):
+            image, has = images.load_image_tensor(path), True
+        else:
+            image, has = images.empty_image(), False
+        return (
+            image, has,
+            identity.get("positive_prompt", ""), identity.get("negative_prompt", ""),
+        )
+
+
+class ManifestLint:
+    """Surface the manifest's non-fatal lint findings (Wan-unfriendly lengths,
+    directions outside the canonical list) as text in the graph."""
+
+    CATEGORY = "andypack"
+    FUNCTION = "lint"
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("REPORT",)
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"manifest": ("ANIM_MANIFEST",)}}
+
+    def lint(self, manifest):
+        findings = collect_warnings(manifest)
+        report = (
+            "OK — no lint findings"
+            if not findings else "\n".join(f"⚠ {f}" for f in findings)
+        )
+        return (report,)
+
+
+class CoverageReport:
+    """A status table over every (entity, direction) for a character: what's
+    generated, ready, stale, or blocked. Re-runs every queue so it reflects the
+    current rendered tree."""
+
+    CATEGORY = "andypack"
+    FUNCTION = "report"
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("REPORT", "JSON")
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+            }
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character):
+        return float("nan")  # disk-backed report: always recompute
+
+    def report(self, manifest, character):
+        char = "" if character == _NO_CHARACTER else character
+        data = api.coverage_report(manifest, _characters_root(), char)
+        return (api.format_coverage_table(data), json.dumps(data, indent=2))
+
+
+class RegenQueue:
+    """The selectable-now (ready/stale) (entity, direction) cells in dependency
+    order — the work list for a batch regeneration pass."""
+
+    CATEGORY = "andypack"
+    FUNCTION = "build"
+    RETURN_TYPES = ("STRING", "INT")
+    RETURN_NAMES = ("QUEUE", "COUNT")
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+            }
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character):
+        return float("nan")  # disk-backed: always recompute
+
+    def build(self, manifest, character):
+        char = "" if character == _NO_CHARACTER else character
+        queue = api.regen_queue(manifest, _characters_root(), char)
+        text = "\n".join(
+            f"{item['id']}@{item['direction']} [{item['status']}] ({item['kind']})"
+            for item in queue
+        )
+        return (text, len(queue))
+
+
+class MirrorFrameWriter:
+    """Synthesize a mirror-mapped direction from its already-generated source
+    (e.g. WEST from EAST) by horizontally flipping the rendered payload — no
+    sampling. Honors `mirror_map`; writes the completion sentinel last (atomic)."""
+
+    CATEGORY = "andypack"
+    FUNCTION = "write"
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("OUTPUT_DIR",)
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+                "kind": (["pose", "animation"],),
+                "id": ("STRING", {"default": ""}),
+                "direction": ("STRING", {"default": ""}),
+            }
+        }
+
+    def write(self, manifest, character, kind, id, direction):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("MirrorFrameWriter: select a character first")
+        if not id or not direction:
+            raise RuntimeError("MirrorFrameWriter: pick an id and a (mirrored) direction")
+        root = _characters_root()
+        manifest = effective_manifest(manifest, root, character)
+        src_dir = (manifest.get("mirror_map") or {}).get(direction)
+        if not src_dir:
+            raise RuntimeError(
+                f"direction {direction!r} is not in mirror_map; nothing to mirror from"
+            )
+        if kind == "pose":
+            return (self._mirror_pose(manifest, root, character, id, direction, src_dir),)
+        return (self._mirror_animation(manifest, root, character, id, direction, src_dir),)
+
+    def _mirror_pose(self, manifest, root, character, pose_id, direction, src_dir):
+        src_png = resolve.pose_image_path(root, character, pose_id, src_dir)
+        if not os.path.exists(src_png):
+            raise RuntimeError(f"source pose {pose_id}@{src_dir} is not generated")
+        dst_png = resolve.pose_image_path(root, character, pose_id, direction)
+        dst_sidecar = resolve.pose_sidecar_path(root, character, pose_id, direction)
+        io.remove_if_exists(dst_sidecar)  # incomplete-first
+        images.mirror_png(src_png, dst_png)
+        r = resolve_pose(manifest, root, character, pose_id, direction)
+        meta = {**r["meta"], "mirrored_from": {"direction": src_dir}}
+        io.atomic_write_json(dst_sidecar, io.build_pose_sidecar(meta, created_utc=_utc_now()))
+        return r["output_dir"]
+
+    def _mirror_animation(self, manifest, root, character, anim_id, direction, src_dir):
+        src_meta = resolve.read_node_meta(manifest, root, character, anim_id, src_dir)
+        src_d = resolve.animation_frame_dir(root, character, anim_id, src_dir)
+        if not src_meta:
+            raise RuntimeError(f"source animation {anim_id}@{src_dir} is not generated")
+        frames = sorted(
+            n for n in os.listdir(src_d) if n.startswith("frame_") and n.endswith(".png")
+        )
+        dst_d = resolve.animation_frame_dir(root, character, anim_id, direction)
+        os.makedirs(dst_d, exist_ok=True)
+        meta_path = resolve.animation_meta_path(root, character, anim_id, direction)
+        io.remove_if_exists(meta_path)  # incomplete-first
+        io.clear_frames(dst_d)
+        for name in frames:
+            images.mirror_png(os.path.join(src_d, name), os.path.join(dst_d, name))
+        r = resolve_animation(manifest, root, character, anim_id, direction)
+        count = len(frames)
+        meta = {**r["meta"], "mirrored_from": {"direction": src_dir}}
+        full = io.build_animation_meta(
+            meta, count=count, start_frame=io.frame_name(0),
+            last_frame=io.frame_name(max(count - 1, 0)),
+            seed=src_meta.get("seed"), created_utc=_utc_now(),
+        )
+        io.atomic_write_json(meta_path, full)
+        return dst_d
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "ConceptImageWriter": ConceptImageWriter,
+    "ConceptImageLoader": ConceptImageLoader,
     "CharacterPoseSelector": CharacterPoseSelector,
     "PoseFrameWriter": PoseFrameWriter,
     "CharacterAnimationSelector": CharacterAnimationSelector,
     "AnimationFrameWriter": AnimationFrameWriter,
+    "MirrorFrameWriter": MirrorFrameWriter,
+    "ManifestLint": ManifestLint,
+    "CoverageReport": CoverageReport,
+    "RegenQueue": RegenQueue,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
     "ConceptImageWriter": "Concept Image Writer",
+    "ConceptImageLoader": "Concept Image Loader",
     "CharacterPoseSelector": "Character Pose Selector",
     "PoseFrameWriter": "Pose Frame Writer",
     "CharacterAnimationSelector": "Character Animation Selector",
     "AnimationFrameWriter": "Animation Frame Writer",
+    "MirrorFrameWriter": "Mirror Frame Writer",
+    "ManifestLint": "Manifest Lint",
+    "CoverageReport": "Coverage Report",
+    "RegenQueue": "Regen Queue",
 }

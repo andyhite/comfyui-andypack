@@ -119,10 +119,15 @@ result handed from a selector to its writer).
 |---|---|
 | **Animation Manifest Loader** | Load + validate `animations.json` (ref typing, cycle detection, `4n+1` length warnings). Cached by file mtime. |
 | **Concept Image Writer** | Write a character's `_concept.png` and optional `_concept.json` identity layer from an uploaded image. |
+| **Concept Image Loader** | Load an existing `_concept.png` back as an IMAGE (plus `HAS_CONCEPT` and the identity prompts) for re-editing or a refinement pass. |
 | **Character Pose Selector** | Pick `character → category → pose → direction` (dynamic combos). Loads the `from`-source image, emits merged prompts + `OUTPUT_DIR` + `META`. Raises if the selection isn't selectable. |
 | **Pose Frame Writer** | Write `{dir}.png` then the `{dir}.json` sidecar last (atomic). Returns `OUTPUT_DIR`. |
-| **Character Animation Selector** | Pick an animation + direction. Emits `START_IMAGE`, `END_IMAGE`, `IS_FFLF`, merged prompts, `OUTPUT_DIR`, `META`. |
+| **Character Animation Selector** | Pick an animation + direction. Emits `START_IMAGE`, `END_IMAGE`, `IS_FFLF`, `LENGTH`, `FPS`, merged prompts, `OUTPUT_DIR`, `META`. `LENGTH`/`FPS` wire straight into the WAN sampler. |
 | **Animation Frame Writer** | Write `frame_{:05d}.png`, apply loop closure, then write `meta.json` last (atomic). Returns `OUTPUT_DIR`. |
+| **Mirror Frame Writer** | Synthesize a `mirror_map` direction (e.g. WEST from EAST) by horizontally flipping the already-rendered payload — no sampling. |
+| **Coverage Report** | A status table over every `(entity, direction)` for a character: generated / ready / stale / blocked, plus a JSON blob. |
+| **Regen Queue** | The selectable-now (ready/stale) cells in dependency order — a work list for batch regeneration. |
+| **Manifest Lint** | Surface non-fatal manifest findings (Wan-unfriendly lengths, directions outside the canonical list). |
 
 ### Typical graph
 

@@ -86,6 +86,32 @@ def test_frame_path_confines_to_root(tree):
     assert api.frame_path(tree.root, "Cortex/missing.png") is None  # 404: doesn't exist
 
 
+def test_coverage_report_counts_by_status(manifest, tree):
+    tree.concept()  # only concept -> base ready, deeper poses/anims blocked
+    rep = api.coverage_report(manifest, tree.root, tree.char)
+    assert rep["total"] == len(rep["rows"])
+    assert rep["summary"]["ready"] >= 1   # base@{EAST,SOUTH_EAST,SOUTH}
+    assert rep["summary"]["blocked"] >= 1  # fighting_stance / punch
+    table = api.format_coverage_table(rep)
+    assert "STATUS" in table and "base" in table
+
+
+def test_regen_queue_is_dependency_ordered_and_skips_blocked(manifest, tree):
+    tree.concept()
+    queue = api.regen_queue(manifest, tree.root, tree.char)
+    cells = [(q["id"], q["direction"]) for q in queue]
+    # only base (ready) is actionable now; blocked downstream is omitted
+    assert ("base", "EAST") in cells
+    assert ("fighting_stance", "EAST") not in cells
+    assert all(q["status"] in ("ready", "stale") for q in queue)
+
+    # after base is generated, fighting_stance becomes actionable and follows base
+    tree.pose("base", "EAST")
+    q2 = api.regen_queue(manifest, tree.root, tree.char)
+    ids = [q["id"] for q in q2]
+    assert "fighting_stance" in ids
+
+
 def test_frame_path_rejects_root_outside_output(tmp_path, monkeypatch):
     # Simulate running inside ComfyUI: the output tree is `tmp_path/output`.
     output = tmp_path / "output"

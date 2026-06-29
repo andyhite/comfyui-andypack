@@ -56,7 +56,9 @@ def _validate_refs(manifest: Manifest) -> None:
             raise ManifestError(f"animation {aid!r} missing 'directions' map")
 
 
-def _detect_cycles(manifest: Manifest) -> None:
+def _dependency_edges(manifest: Manifest) -> dict[str, list[str]]:
+    """Adjacency `node -> [dependency ids]` over poses + animations. The `concept`
+    seed is a leaf (it depends on nothing) and is omitted from edge targets."""
     edges: dict[str, list[str]] = {}
 
     def add(node: str, ref: str | None) -> None:
@@ -64,14 +66,22 @@ def _detect_cycles(manifest: Manifest) -> None:
         if ref and ref != "concept":
             edges[node].append(ref)
 
+    default_start = manifest.get("defaults", {}).get("start_from")
     for pid, pose in manifest.get("poses", {}).items():
         add(pid, pose.get("from", {}).get("ref"))
     for aid, anim in manifest.get("animations", {}).items():
         edges.setdefault(aid, [])
-        for slot in ("start_from", "end_at"):
-            dep = anim.get(slot)
+        # An animation with no explicit start_from depends on defaults.start_from
+        # (its I2V seed), so fold that into the graph for ordering + cycle checks.
+        start = anim.get("start_from") or default_start
+        for dep in (start, anim.get("end_at")):
             if dep:
                 add(aid, dep.get("ref"))
+    return edges
+
+
+def _detect_cycles(manifest: Manifest) -> None:
+    edges = _dependency_edges(manifest)
 
     WHITE, GRAY, BLACK = 0, 1, 2
     color = {n: WHITE for n in edges}
@@ -90,12 +100,50 @@ def _detect_cycles(manifest: Manifest) -> None:
             dfs(node)
 
 
-def _warn_lengths(manifest: Manifest) -> None:
+def collect_warnings(manifest: Manifest) -> list[str]:
+    """Non-fatal lint findings: Wan-unfriendly lengths and directions declared on
+    an entity but absent from the canonical top-level `directions` list. Pure
+    (returns strings); `validate_manifest` emits these via `warnings.warn`, and
+    the ManifestLint node surfaces them in the graph."""
+    out: list[str] = []
     default_len = manifest.get("defaults", {}).get("length")
     for aid, anim in manifest.get("animations", {}).items():
         length = anim.get("length", default_len)
         if isinstance(length, int) and (length - 1) % 4 != 0:
-            warnings.warn(f"animation {aid!r} length {length} is not 4n+1 (Wan-unfriendly)")
+            out.append(f"animation {aid!r} length {length} is not 4n+1 (Wan-unfriendly)")
+
+    canonical = manifest.get("directions")
+    if isinstance(canonical, list) and canonical:
+        known = set(canonical)
+        for kind, collection in (("pose", "poses"), ("animation", "animations")):
+            for eid, entity in manifest.get(collection, {}).items():
+                for direction in entity.get("directions", {}) or {}:
+                    if direction not in known:
+                        out.append(
+                            f"{kind} {eid!r} direction {direction!r} is not in the "
+                            "canonical 'directions' list"
+                        )
+    return out
+
+
+def topo_order(manifest: Manifest) -> list[str]:
+    """Pose + animation ids in dependency order (a node appears after every node
+    it depends on). Assumes the manifest is acyclic (validate_manifest enforces)."""
+    edges = _dependency_edges(manifest)
+    order: list[str] = []
+    seen: set[str] = set()
+
+    def visit(node: str) -> None:
+        if node in seen:
+            return
+        seen.add(node)
+        for dep in edges.get(node, []):
+            visit(dep)
+        order.append(node)
+
+    for node in edges:
+        visit(node)
+    return order
 
 
 def validate_manifest(manifest: Manifest) -> None:
@@ -107,7 +155,8 @@ def validate_manifest(manifest: Manifest) -> None:
             raise ManifestError(f"manifest missing '{key}' object")
     _validate_refs(manifest)
     _detect_cycles(manifest)
-    _warn_lengths(manifest)
+    for message in collect_warnings(manifest):
+        warnings.warn(message)
 
 
 def load_manifest(path: str) -> Manifest:

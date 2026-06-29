@@ -2,7 +2,23 @@
 name = "comfyui-andypack"
 version = "0.1.0"
 description = "ComfyUI Animation Coordinator — dependency-aware FFLF resolver."
+authors = [{ name = "Andy Hite", email = "andy@andyhite.com" }]
+readme = "README.md"
 requires-python = ">=3.10"
+keywords = ["comfyui", "animation", "fflf", "wan", "flux", "sprite"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Framework :: ComfyUI",
+  "Intended Audience :: Developers",
+]
+
+[project.urls]
+Repository = "https://github.com/andyhite/comfyui-andypack"
+
+# ComfyUI Registry metadata (https://docs.comfy.org/registry/overview).
+[tool.comfy]
+PublisherId = "andyhite"
+DisplayName = "Animation Coordinator (andypack)"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
