@@ -29,7 +29,9 @@ addopts = "-q"
 target-version = "py310"
 
 [tool.mypy]
-python_version = "3.10"
+# No python_version pin: mypy targets the running interpreter, so it parses the
+# installed stdlib/3rd-party stubs (which may use newer syntax under 3.12) rather
+# than rejecting them against an older target.
 ignore_missing_imports = true
 # The repo root has an __init__.py (ComfyUI custom-node entry point), which would
 # otherwise make mypy treat the hyphenated repo dir as a package. Pin the package

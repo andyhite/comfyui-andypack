@@ -67,7 +67,7 @@ def mirror_png(src: str, dst: str) -> None:
     composites correctly downstream.
     """
     with Image.open(src) as img:
-        flipped = img.transpose(Image.FLIP_LEFT_RIGHT)
+        flipped = img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
         flipped.load()
     directory = os.path.dirname(dst) or "."
     os.makedirs(directory, exist_ok=True)
