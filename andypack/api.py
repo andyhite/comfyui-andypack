@@ -49,16 +49,30 @@ def resolve_manifest_path(manifest_path: str) -> str:
     return io.resolve_under(manifests_dir(), manifest_path)
 
 
+def output_dir() -> Optional[str]:
+    """ComfyUI's output directory, or None when not running in ComfyUI."""
+    try:
+        import folder_paths
+    except Exception:
+        return None
+    return folder_paths.get_output_directory()
+
+
+def under_output(rel: str) -> str:
+    """Resolve `rel` under ComfyUI's output dir; absolute paths pass through.
+
+    Outside ComfyUI (no output dir) `rel` falls back to itself (CWD-relative).
+    """
+    return io.resolve_under(output_dir(), rel)
+
+
 def characters_dir() -> Optional[str]:
     """The root that holds per-character directories: `<output>/characters`.
 
     None when not running in ComfyUI.
     """
-    try:
-        import folder_paths
-    except Exception:
-        return None
-    return os.path.join(folder_paths.get_output_directory(), "characters")
+    base = output_dir()
+    return None if base is None else os.path.join(base, "characters")
 
 
 def list_subdirs(directory: Optional[str]) -> list[str]:

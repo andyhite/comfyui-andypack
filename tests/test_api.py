@@ -79,6 +79,13 @@ def test_characters_dir_is_none_outside_comfyui():
     assert api.characters_dir() is None
 
 
+def test_under_output_passthrough_without_comfyui():
+    # No ComfyUI output dir available -> relative path falls back to itself.
+    assert api.output_dir() is None
+    assert api.under_output("characters/cortex") == "characters/cortex"
+    assert api.under_output("/abs/x") == "/abs/x"
+
+
 def test_list_subdirs(tmp_path):
     (tmp_path / "cortex").mkdir()
     (tmp_path / "boss").mkdir()

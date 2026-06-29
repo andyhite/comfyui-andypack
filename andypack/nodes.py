@@ -77,7 +77,8 @@ class ConceptImageWriter:
         return {
             "required": {
                 "image": ("IMAGE",),
-                "root_dir": ("STRING", {"default": api.characters_dir() or "output/characters"}),
+                # A directory name under ComfyUI's output dir (joined below).
+                "root_dir": ("STRING", {"default": "characters"}),
                 "character": ("STRING", {"default": "cortex"}),
             },
             "optional": {
@@ -88,7 +89,8 @@ class ConceptImageWriter:
 
     def write(self, image, root_dir, character, identity_positive="", identity_negative=""):
         # Character names become path segments — force lowercase snake_case.
-        char_dir = os.path.join(root_dir, io.to_snake_case(character))
+        # root_dir is resolved under ComfyUI's output dir (absolute paths pass through).
+        char_dir = api.under_output(os.path.join(root_dir, io.to_snake_case(character)))
         images.save_image_png(image, os.path.join(char_dir, "_concept.png"))
         layer = {}
         if identity_positive.strip():
