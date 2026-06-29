@@ -168,9 +168,9 @@ class PoseFrameWriter:
 class CharacterAnimationSelector:
     CATEGORY = "andypack"
     FUNCTION = "select"
-    RETURN_TYPES = ("IMAGE", "BOOLEAN", "IMAGE", "BOOLEAN", "STRING", "STRING", "STRING", "ANIM_META")
+    RETURN_TYPES = ("IMAGE", "IMAGE", "BOOLEAN", "STRING", "STRING", "STRING", "ANIM_META")
     RETURN_NAMES = (
-        "start_image", "has_start", "end_image", "has_end",
+        "start_image", "end_image", "has_end",
         "positive", "negative", "output_dir", "meta",
     )
 
@@ -185,11 +185,6 @@ class CharacterAnimationSelector:
             }
         }
 
-    def _anchor(self, path):
-        if path:
-            return images.load_image_tensor(path), True
-        return images.empty_image(), False
-
     def select(self, manifest, character_dir, animation, direction):
         if not character_dir or not animation or not direction:
             raise RuntimeError(
@@ -202,10 +197,15 @@ class CharacterAnimationSelector:
             raise RuntimeError(
                 f"animation {animation}@{direction} not selectable: blocked_by={r['blocked_by']}"
             )
-        start_image, has_start = self._anchor(r["start_image"])
-        end_image, has_end = self._anchor(r["end_image"])
+        # start_image is always present (every selectable animation has a start
+        # source — the I2V seed). end_image is the FFLF target when declared.
+        start_image = images.load_image_tensor(r["start_image"])
+        if r["end_image"]:
+            end_image, has_end = images.load_image_tensor(r["end_image"]), True
+        else:
+            end_image, has_end = images.empty_image(), False
         return (
-            start_image, has_start, end_image, has_end,
+            start_image, end_image, has_end,
             r["positive"], r["negative"], r["output_dir"], r["meta"],
         )
 

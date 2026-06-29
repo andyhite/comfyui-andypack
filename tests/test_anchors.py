@@ -56,3 +56,12 @@ def test_entry_and_exit_anchors_mix_pose_and_animation(manifest, tree):
 def test_anchor_none_when_dep_absent(manifest, tree):
     # idle has no end_at
     assert end_anchor(manifest, tree.root, tree.char, "fighting_stance_idle", "EAST") is None
+
+
+def test_animation_without_start_from_defaults_to_base(manifest, tree):
+    # walk declares no start_from -> uses defaults.start_from (base) as the I2V seed
+    tree.concept().pose("base", "EAST")
+    s = start_anchor(manifest, tree.root, tree.char, "walk", "EAST")
+    assert s.endswith(os.path.join("_base", "EAST.png"))
+    # walk has no end_at -> plain I2V, no FFLF end anchor
+    assert end_anchor(manifest, tree.root, tree.char, "walk", "EAST") is None

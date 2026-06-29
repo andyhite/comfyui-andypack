@@ -57,3 +57,19 @@ def test_direction_outside_map_not_selectable(manifest, tree):
     )
     r = resolve_animation(manifest, tree.root, tree.char, "punch", "SOUTH")
     assert r["selectable"] is False  # punch.directions only has EAST
+
+
+def test_free_clip_blocked_until_base_then_starts_from_it(manifest, tree):
+    # walk has no start_from -> default base. It must be blocked until base exists
+    # (I2V needs a start image), then it starts from base with no FFLF end.
+    tree.concept()
+    r = resolve_animation(manifest, tree.root, tree.char, "walk", "EAST")
+    assert r["selectable"] is False
+    assert status(manifest, tree.root, tree.char, "walk", "EAST") == "blocked"
+
+    tree.pose("base", "EAST")
+    r2 = resolve_animation(manifest, tree.root, tree.char, "walk", "EAST")
+    assert r2["selectable"] is True
+    assert r2["start_image"].endswith(os.path.join("_base", "EAST.png"))
+    assert r2["end_image"] is None  # plain I2V, no FFLF
+    assert status(manifest, tree.root, tree.char, "walk", "EAST") == "ready"

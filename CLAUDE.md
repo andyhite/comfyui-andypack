@@ -13,6 +13,9 @@ disagree, the cascading design wins. Example manifest +
 schema-by-example: `examples/animations.json`.
 
 ## Non-negotiables (these are where it goes wrong)
+- Every animation needs a START image (the I2V initial latent): its explicit
+  `start_from`, else manifest `defaults.start_from`. The loader rejects an
+  animation with neither. `end_at` is optional — when present, it's FFLF.
 - FFLF cross-wiring: `start_from` consumes the dep's LAST frame;
   `end_at` consumes the dep's FIRST frame. Do not invert.
   Single-image deps (concept/pose) resolve the same image for either slot.

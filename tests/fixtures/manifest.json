@@ -2,7 +2,7 @@
   "version": 1,
   "directions": ["EAST", "SOUTH_EAST", "SOUTH", "SOUTH_WEST", "WEST", "NORTH_WEST", "NORTH", "NORTH_EAST"],
   "mirror_map": { "WEST": "EAST", "SOUTH_WEST": "SOUTH_EAST", "NORTH_WEST": "NORTH_EAST" },
-  "defaults": { "fps": 16, "length": 33 },
+  "defaults": { "fps": 16, "length": 33, "start_from": { "ref": "base" } },
   "globals": {
     "animation": { "negative": "blurry, low quality, watermark" },
     "pose": { "negative": "blurry, low quality" }
@@ -50,6 +50,11 @@
       "end_at": { "ref": "fighting_stance_idle" },
       "prompt": "throw a straight jab to the right",
       "negative": "both arms extended, extra arm",
+      "directions": { "EAST": {} }
+    },
+    "walk": {
+      "category": "locomotion", "loop": true, "length": 25,
+      "prompt": "walk forward at a steady pace",
       "directions": { "EAST": {} }
     }
   }

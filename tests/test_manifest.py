@@ -53,6 +53,15 @@ def test_validate_detects_cycle():
         validate_manifest(m)
 
 
+def test_validate_rejects_animation_without_any_start():
+    m = base_manifest()
+    # walk has no explicit start_from; removing the default leaves it with no
+    # I2V start image at all -> must be rejected.
+    del m["defaults"]["start_from"]
+    with pytest.raises(ManifestError):
+        validate_manifest(m)
+
+
 def test_validate_warns_on_non_4n_plus_1_length():
     m = base_manifest()
     m["animations"]["punch"]["length"] = 20  # 20 is not 4n+1

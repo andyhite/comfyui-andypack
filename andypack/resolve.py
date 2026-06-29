@@ -200,10 +200,29 @@ def _animation_frame(
     return os.path.join(_anim_dir(root, character, ref, direction), meta[key])
 
 
-def _anchor(
-    manifest: Manifest, root: str, character: str, anim_id: str, direction: str, slot: str, frame_key: str
+def effective_start_dep(manifest: Manifest, anim_id: str) -> Optional[dict]:
+    """An animation's start anchor: its explicit `start_from`, else the
+    manifest-level `defaults.start_from` (the I2V seed every animation needs)."""
+    anim = manifest["animations"][anim_id]
+    return anim.get("start_from") or manifest.get("defaults", {}).get("start_from")
+
+
+def animation_deps(manifest: Manifest, anim_id: str) -> list[tuple[str, dict]]:
+    """(slot, dep) pairs for an animation: the effective start_from (always
+    present) plus end_at when declared (FFLF)."""
+    deps: list[tuple[str, dict]] = []
+    start = effective_start_dep(manifest, anim_id)
+    if start:
+        deps.append(("start_from", start))
+    end = manifest["animations"][anim_id].get("end_at")
+    if end:
+        deps.append(("end_at", end))
+    return deps
+
+
+def _anchor_from_dep(
+    manifest: Manifest, root: str, character: str, dep: Optional[dict], direction: str, frame_key: str
 ) -> Optional[str]:
-    dep = manifest["animations"][anim_id].get(slot)
     if not dep:
         return None
     ddir = resolved_dir(dep, direction)
@@ -214,13 +233,15 @@ def _anchor(
 
 
 def start_anchor(manifest: Manifest, root: str, character: str, anim_id: str, direction: str) -> Optional[str]:
-    """start_from -> dep's LAST frame (animation) or its single image (concept/pose)."""
-    return _anchor(manifest, root, character, anim_id, direction, "start_from", "last_frame")
+    """start_from (or the default) -> dep's LAST frame (animation) or its single image."""
+    dep = effective_start_dep(manifest, anim_id)
+    return _anchor_from_dep(manifest, root, character, dep, direction, "last_frame")
 
 
 def end_anchor(manifest: Manifest, root: str, character: str, anim_id: str, direction: str) -> Optional[str]:
     """end_at -> dep's FIRST frame (animation) or its single image (concept/pose)."""
-    return _anchor(manifest, root, character, anim_id, direction, "end_at", "start_frame")
+    dep = manifest["animations"][anim_id].get("end_at")
+    return _anchor_from_dep(manifest, root, character, dep, direction, "start_frame")
 
 
 # --- transitive staleness --------------------------------------------------- #
@@ -240,10 +261,8 @@ def outdated(manifest: Manifest, root: str, character: str, ref: str, direction:
     if kind == "pose":
         frm = manifest["poses"][ref]["from"]
         return outdated(manifest, root, character, frm["ref"], resolved_dir(frm, direction))
-    anim = manifest["animations"][ref]
-    for slot in ("start_from", "end_at"):
-        dep = anim.get(slot)
-        if dep and outdated(manifest, root, character, dep["ref"], resolved_dir(dep, direction)):
+    for _slot, dep in animation_deps(manifest, ref):
+        if outdated(manifest, root, character, dep["ref"], resolved_dir(dep, direction)):
             return True
     return False
 
@@ -278,10 +297,7 @@ def resolve_animation(manifest: Manifest, root: str, character: str, anim_id: st
     defaults = manifest.get("defaults", {})
     blocked_by: list[dict] = []
     stale: list[str] = []
-    for slot in ("start_from", "end_at"):
-        dep = anim.get(slot)
-        if not dep:
-            continue
+    for slot, dep in animation_deps(manifest, anim_id):
         ddir = resolved_dir(dep, direction)
         if not node_complete(manifest, root, character, dep["ref"], ddir):
             blocked_by.append({slot: dep, "dir": ddir})

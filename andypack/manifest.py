@@ -33,6 +33,11 @@ def _validate_refs(manifest: Manifest) -> None:
             raise ManifestError(f"pose {pid!r} 'from' must reference concept or a pose")
         if not isinstance(pose.get("directions"), dict):
             raise ManifestError(f"pose {pid!r} missing 'directions' map")
+    default_start = manifest.get("defaults", {}).get("start_from")
+    if default_start is not None:
+        if not isinstance(default_start, dict) or "ref" not in default_start:
+            raise ManifestError("defaults.start_from missing 'ref'")
+        node_kind(manifest, default_start["ref"])  # raises on unknown
     for aid, anim in manifest.get("animations", {}).items():
         for slot in ("start_from", "end_at"):
             dep = anim.get(slot)
@@ -40,6 +45,13 @@ def _validate_refs(manifest: Manifest) -> None:
                 if not isinstance(dep, dict) or "ref" not in dep:
                     raise ManifestError(f"animation {aid!r} {slot} missing 'ref'")
                 node_kind(manifest, dep["ref"])  # raises on unknown
+        # Every animation needs a start image for I2V: explicit start_from or the
+        # manifest-level defaults.start_from.
+        if anim.get("start_from") is None and default_start is None:
+            raise ManifestError(
+                f"animation {aid!r} has no 'start_from' and no defaults.start_from "
+                "(I2V needs a start image)"
+            )
         if not isinstance(anim.get("directions"), dict):
             raise ManifestError(f"animation {aid!r} missing 'directions' map")
 
