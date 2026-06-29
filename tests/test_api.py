@@ -30,3 +30,30 @@ def test_list_options_reports_status_and_blocked(manifest, tree):
     assert {k for k in opts if k[0] == "pose" and k[1] == "base"} == {
         ("pose", "base", "E"), ("pose", "base", "SE"), ("pose", "base", "S")
     }
+
+
+def test_resolve_payload_pose_has_source_preview(manifest, tree):
+    tree.concept()
+    p = api.resolve_payload(manifest, tree.root, tree.char, "base", "E")
+    assert p["selectable"] is True
+    assert p["source_preview"]["ref"] == "concept"
+    assert "/anim_coord/frame?" in p["source_preview"]["url"]
+
+
+def test_resolve_payload_animation_has_dual_previews(manifest, tree):
+    tree.concept().pose("base", "E").pose("fighting_stance", "E").animation(
+        "fighting_stance_idle", "E", frames=3
+    )
+    p = api.resolve_payload(manifest, tree.root, tree.char, "punch", "E")
+    assert p["selectable"] is True
+    assert p["start_preview"]["ref"] == "fighting_stance_idle"
+    assert p["end_preview"]["ref"] == "fighting_stance_idle"
+    assert p["start_preview"]["url"].count("path=") == 1
+
+
+def test_frame_path_confines_to_root(tree):
+    tree.concept()
+    ok = api.frame_path(tree.root, os.path.join("Cortex", "_concept.png"))
+    assert ok is not None and ok.endswith("_concept.png")
+    assert api.frame_path(tree.root, "../escape.png") is None
+    assert api.frame_path(tree.root, "Cortex/missing.png") is None  # 404: doesn't exist
