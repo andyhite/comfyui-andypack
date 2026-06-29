@@ -5,7 +5,9 @@ const TAG = "[andypack]";
 console.debug(`${TAG} anim_coord.js loaded`);
 
 const NO_CHARACTER = "(select character)"; // must match nodes._NO_CHARACTER
-const GLYPH = { generated: "✓", ready: "○", blocked: "⨯", stale: "▲" };
+// Status indicators prefixed onto combo options.
+//   ✅ generated · 🟢 ready · 🟠 stale · 🔴 blocked
+const GLYPH = { generated: "✅", ready: "🟢", blocked: "🔴", stale: "🟠" };
 
 // Inputs stay disabled until the extension is live AND the pack's routes answer.
 let READY = false;
