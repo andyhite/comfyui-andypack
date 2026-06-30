@@ -18,6 +18,7 @@ from andypack.manifest import (
 )
 from andypack.resolve import (
     effective_manifest,
+    effective_start_dep,
     invalidate_character,
     merged_prompts,
     resolve_animation,
@@ -517,6 +518,71 @@ def format_merged_prompts(rows: list[dict]) -> str:
         lines.append(f"[{r['kind']}] {r['id']} @ {r['direction']}{cat}")
         lines.append(f"  + {r['positive'] or '(empty)'}")
         lines.append(f"  - {r['negative'] or '(empty)'}")
+    return "\n".join(lines)
+
+
+def state_machine(manifest: Manifest, root: str, character: str) -> dict:
+    """The implicit state machine encoded in the FFLF animation graph.
+
+    For each animation, reads its start_from (the 'from' state) and end_at (the
+    'to' state). A clip with no end_at is treated as returning to / staying at its
+    start state, so 'to' equals the start ref — a pure I2V clip with one anchor
+    implicitly stays at its origin. A clip is a self-loop ('loop'=True) iff end_at
+    is present AND start ref equals end ref (i.e. it begins and ends on the same
+    state, e.g. an idle cycle). Runs inside a resolution_pass(); all reads are
+    manifest-only (no disk I/O).
+    """
+    eff = _safe_effective(manifest, root, character)
+    transitions: list[dict] = []
+    states: set[str] = set()
+
+    with resolution_pass():
+        for aid, anim in eff.get("animations", {}).items():
+            start_dep = effective_start_dep(eff, aid)
+            from_ref: Optional[str] = start_dep.get("ref") if start_dep else None
+            end_at = anim.get("end_at")
+            to_ref: Optional[str] = end_at.get("ref") if end_at else from_ref
+            loop = bool(end_at is not None and from_ref is not None and from_ref == to_ref)
+            if from_ref:
+                states.add(from_ref)
+            if to_ref:
+                states.add(to_ref)
+            transitions.append({
+                "from": from_ref,
+                "clip": aid,
+                "to": to_ref,
+                "loop": loop,
+                "category": anim.get("category"),
+                "directions": list((anim.get("directions") or {}).keys()),
+            })
+
+    return {
+        "character": character,
+        "states": sorted(s for s in states if s is not None),
+        "transitions": transitions,
+    }
+
+
+def format_state_machine(sm: dict) -> str:
+    """Render a state_machine dict as a human-readable transition table."""
+    char = sm.get("character") or "(none)"
+    states = sm.get("states", [])
+    transitions = sm.get("transitions", [])
+    lines = [
+        f"state machine for {char} — {len(states)} states, {len(transitions)} transitions",
+        "",
+        "States: " + (", ".join(states) if states else "(none)"),
+        "",
+        "Transitions:",
+    ]
+    for t in transitions:
+        loop_tag = " [loop]" if t.get("loop") else ""
+        cat = f" ({t['category']})" if t.get("category") else ""
+        dirs = ", ".join(t.get("directions") or [])
+        dir_tag = f" [{dirs}]" if dirs else ""
+        lines.append(
+            f"  {t['from']} -> {t['clip']} -> {t['to']}{loop_tag}{cat}{dir_tag}"
+        )
     return "\n".join(lines)
 
 

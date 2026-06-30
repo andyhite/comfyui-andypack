@@ -739,6 +739,37 @@ class MergedPromptReport:
         return (api.format_merged_prompts(rows), json.dumps(rows, indent=2))
 
 
+class StateMachineReport:
+    """The implicit state machine encoded in the FFLF animation graph: each
+    animation's start_from/end_at encodes a state transition (from-state → clip →
+    to-state). Self-loop clips (start and end on the same state, e.g. an idle
+    cycle) are marked [loop]. Always recomputes so it reflects manifest edits."""
+
+    CATEGORY = "andypack/Diagnostics"
+    FUNCTION = "report"
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("REPORT", "JSON")
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+            }
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character):
+        return float("nan")  # manifest/graph-derived: always recompute
+
+    def report(self, manifest, character):
+        char = "" if character == _NO_CHARACTER else character
+        sm = api.state_machine(manifest, _characters_root(), char)
+        return (api.format_state_machine(sm), json.dumps(sm, indent=2))
+
+
 class RegenQueue:
     """The selectable-now (ready/stale) (entity, direction) cells in dependency
     order — the work list for a batch regeneration pass."""
@@ -1586,6 +1617,7 @@ NODE_CLASS_MAPPINGS = {
     "ManifestLint": ManifestLint,
     "CoverageReport": CoverageReport,
     "MergedPromptReport": MergedPromptReport,
+    "StateMachineReport": StateMachineReport,
     "RegenQueue": RegenQueue,
     "SpriteTrimPivot": SpriteTrimPivot,
     "SpritesheetPacker": SpritesheetPacker,
@@ -1613,6 +1645,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ManifestLint": "Animation Manifest Lint",
     "CoverageReport": "Coverage Report",
     "MergedPromptReport": "Prompt Report",
+    "StateMachineReport": "State Machine Report",
     "RegenQueue": "Regen Queue",
     "SpriteTrimPivot": "Sprite Trim & Pivot",
     "SpritesheetPacker": "Spritesheet Packer",

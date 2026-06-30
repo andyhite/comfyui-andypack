@@ -405,6 +405,16 @@ def test_next_actionable_skip_mirrored(tmp_path):
     assert job_skip["direction"] == "EAST"
 
 
+def test_state_machine_marks_self_loop(tmp_path):
+    manifest = {"version": 1, "poses": {"stand": {"directions": {"EAST": {}}}},
+        "animations": {"idle": {"start_from": {"ref": "stand"}, "end_at": {"ref": "stand"},
+            "directions": {"EAST": {}}, "length": 5, "fps": 8, "width": 16, "height": 16}},
+        "defaults": {}}
+    sm = api.state_machine(manifest, str(tmp_path), "")
+    t = [x for x in sm["transitions"] if x["clip"] == "idle"][0]
+    assert t["loop"] is True and t["from"] == "stand" and t["to"] == "stand"
+
+
 def test_next_actionable_category_filters(tmp_path):
     # Two ready animations in different categories; the category param must
     # return only the matching one.

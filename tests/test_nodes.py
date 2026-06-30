@@ -182,6 +182,17 @@ def test_merged_prompt_report_node(manifest, tree, monkeypatch):
     assert any(r["id"] == "punch" and r["negative"] for r in data)
 
 
+def test_state_machine_report_node(manifest, monkeypatch, tmp_path):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    report, blob = nodes.StateMachineReport().report(manifest, nodes._NO_CHARACTER)
+    assert "state machine" in report.lower()
+    data = json.loads(blob)
+    assert "states" in data and "transitions" in data
+    # The fixture manifest has animations (punch, fighting_stance_idle, etc.)
+    # so the state machine must contain transitions.
+    assert len(data["transitions"]) > 0
+
+
 def test_regen_queue_node(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
