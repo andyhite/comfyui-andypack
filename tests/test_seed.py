@@ -58,3 +58,60 @@ def test_seed_uses_character_prompt_token_not_identity():
     raw = open("examples/animations.json", encoding="utf-8").read()
     assert "{identity_prompt}" not in raw
     assert "{character_prompt}" in raw
+
+
+ALL_DIRS = {
+    "EAST", "SOUTH_EAST", "SOUTH", "SOUTH_WEST",
+    "WEST", "NORTH_WEST", "NORTH", "NORTH_EAST",
+}
+
+
+def _seed():
+    import json as _json
+    return _json.loads(open("examples/animations.json", encoding="utf-8").read())
+
+
+def test_seed_every_pose_and_animation_lists_all_eight_directions():
+    # The intended workflow generates EVERY anchor pose and animation in EVERY one
+    # of the 8 directions, so every entity must list all 8 (lean on view_phrases +
+    # entity prose, not per-direction layers).
+    m = _seed()
+    for kind in ("poses", "animations"):
+        for eid, entity in m[kind].items():
+            assert set(entity["directions"]) == ALL_DIRS, f"{kind} {eid!r}"
+
+
+def test_seed_view_phrases_cover_all_eight_directions():
+    m = _seed()
+    assert set(m["view_phrases"]) == ALL_DIRS
+    # No lint findings (every canonical direction has a phrase; lengths are 4n+1).
+    from andypack.manifest import collect_warnings
+    assert collect_warnings(m) == []
+
+
+def test_seed_poses_carry_no_klein_hostile_negatives():
+    # FLUX.2 Klein has no negative path: the pose globals carry no negative layer
+    # and no pose authors a per-direction/entity negative.
+    m = _seed()
+    assert not m["globals"].get("pose", {}).get("negative_prompt")
+    for pid, pose in m["poses"].items():
+        assert "negative_prompt" not in pose, pid
+        for d, layer in pose["directions"].items():
+            assert "negative_prompt" not in layer, f"{pid}@{d}"
+
+
+def test_seed_animation_globals_carry_standard_wan_negative():
+    m = _seed()
+    neg = m["globals"]["animation"]["negative_prompt"]
+    # Hallmarks of the standard Wan 2.2 block that fight frozen/reversed clips.
+    for term in ("still picture", "walking backwards", "{character_prompt}"):
+        assert term in neg
+
+
+def test_seed_every_animation_has_a_start_image_source():
+    # Every animation needs an I2V start image: an explicit start_from or the
+    # manifest default. validate_manifest enforces it, but assert here too.
+    m = _seed()
+    default_start = m["defaults"].get("start_from")
+    for aid, anim in m["animations"].items():
+        assert anim.get("start_from") or default_start, aid
