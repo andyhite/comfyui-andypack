@@ -6,7 +6,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from andypack import api, images, io, manikins, resolve, sprites
+from andypack import api, atlas as _atlas_mod, images, io, manikins, resolve, sprites
 from andypack.manifest import collect_warnings, load_manifest
 from andypack.resolve import effective_manifest, resolve_animation, resolve_pose
 
@@ -1057,7 +1057,7 @@ class SpritesheetPacker:
         fps=None,
         names="",
     ):
-        sheet, atlas = sprites.pack_sheet(
+        sheet, atlas_dict = sprites.pack_sheet(
             image,
             layout=layout,
             columns=columns,
@@ -1068,9 +1068,57 @@ class SpritesheetPacker:
         )
         if fps is not None:
             duration_ms = round(1000 / max(fps, 1))
-            for frame in atlas["frames"]:
+            for frame in atlas_dict["frames"]:
                 frame["duration_ms"] = duration_ms
-        return (sheet, atlas)
+        return (sheet, atlas_dict)
+
+
+class AtlasMetadataWriter:
+    CATEGORY = "andypack/Export"
+    FUNCTION = "export"
+    OUTPUT_NODE = True
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("OUTPUT_DIR",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "atlas": ("ANIM_ATLAS",),
+                "sheet": ("IMAGE",),
+                "format": (["json_hash", "json_array", "aseprite",
+                             "godot_spriteframes", "unity", "texturepacker", "css"],),
+                "name": ("STRING", {"default": ""}),
+            },
+            "optional": {
+                "output_subdir": ("STRING", {"default": "atlas"}),
+                "animation": ("ANIM_ANIMATION", {"forceInput": True}),
+            },
+        }
+
+    def export(
+        self,
+        atlas,
+        sheet,
+        format,
+        name,
+        output_subdir="atlas",
+        animation=None,
+    ):
+        output_dir = os.path.join(api.output_dir() or "output", output_subdir)
+        png_path = os.path.join(output_dir, f"{name}.png")
+        images.save_image_png(sheet, png_path)
+        text, ext = _atlas_mod.serialize(atlas, name, format)
+        meta_path = os.path.join(output_dir, f"{name}{ext}")
+        io.atomic_write_text(meta_path, text)
+        if animation is not None:
+            prompt_hash = animation.get("_meta", {}).get("prompt_hash")
+            if prompt_hash is not None:
+                prov = {"prompt_hash": prompt_hash}
+                io.atomic_write_json(
+                    os.path.join(output_dir, f"{name}.provenance.json"), prov
+                )
+        return {"ui": {}, "result": (output_dir,)}
 
 
 NODE_CLASS_MAPPINGS = {
@@ -1093,6 +1141,7 @@ NODE_CLASS_MAPPINGS = {
     "RegenQueue": RegenQueue,
     "SpriteTrimPivot": SpriteTrimPivot,
     "SpritesheetPacker": SpritesheetPacker,
+    "AtlasMetadataWriter": AtlasMetadataWriter,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
@@ -1114,4 +1163,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "RegenQueue": "Regen Queue",
     "SpriteTrimPivot": "Sprite Trim & Pivot",
     "SpritesheetPacker": "Spritesheet Packer",
+    "AtlasMetadataWriter": "Atlas Metadata Writer",
 }

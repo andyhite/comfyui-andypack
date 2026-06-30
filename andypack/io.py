@@ -40,6 +40,23 @@ def atomic_write_json(path: str, data: dict) -> None:
         raise
 
 
+def atomic_write_text(path: str, text: str) -> None:
+    """Write text to a temp file in the same dir, then atomically replace `path`."""
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def frame_name(index: int) -> str:
     return f"frame_{index:05d}.png"
 

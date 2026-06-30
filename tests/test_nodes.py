@@ -559,3 +559,18 @@ def test_spritesheet_packer_node():
     sheet, atlas = nodes.SpritesheetPacker().pack(batch, layout="grid", columns=2,
         padding=1, extrude=0, power_of_two=False, fps=8)
     assert sheet.shape[0] == 1 and atlas["frames"][0]["duration_ms"] == 125
+
+
+# --- AtlasMetadataWriter node ----------------------------------------------- #
+
+def test_atlas_metadata_writer(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes.api, "output_dir", lambda: str(tmp_path))
+    atlas_d = {"sheet_size": [12, 6], "columns": 2, "frames": [
+        {"rect": [0, 0, 6, 6], "source_size": [6, 6], "offset": [0, 0],
+         "pivot": [3, 6], "duration_ms": 125}]}
+    out = nodes.AtlasMetadataWriter().export(
+        atlas_d, torch.ones((1, 6, 12, 4)),
+        "aseprite", "walk", output_subdir="atlas")
+    d = out["result"][0] if isinstance(out, dict) else out[0]
+    assert os.path.exists(os.path.join(d, "walk.png"))
+    assert os.path.exists(os.path.join(d, "walk.json"))
