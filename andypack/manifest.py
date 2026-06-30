@@ -157,11 +157,23 @@ def collect_warnings(manifest: Manifest) -> list[str]:
     (returns strings); `validate_manifest` emits these via `warnings.warn`, and
     the ManifestLint node surfaces them in the graph."""
     out: list[str] = []
-    default_len = manifest.get("defaults", {}).get("length")
+    defaults = manifest.get("defaults", {})
+    default_len = defaults.get("length")
+    default_w = defaults.get("width")
+    default_h = defaults.get("height")
     for aid, anim in manifest.get("animations", {}).items():
         length = anim.get("length", default_len)
         if isinstance(length, int) and (length - 1) % 4 != 0:
             out.append(f"animation {aid!r} length {length} is not 4n+1 (Wan-unfriendly)")
+        # Wan downsamples 8x in the VAE and uses 2x2 patches, so width/height must
+        # be divisible by 16 or the latent shape is wrong.
+        for field, default in (("width", default_w), ("height", default_h)):
+            val = anim.get(field, default)
+            if isinstance(val, int) and val % 16 != 0:
+                out.append(
+                    f"animation {aid!r} {field} {val} is not divisible by 16 "
+                    "(Wan-unfriendly)"
+                )
 
     canonical = manifest.get("directions")
     if isinstance(canonical, list) and canonical:

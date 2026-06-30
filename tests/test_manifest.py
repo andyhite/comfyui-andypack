@@ -59,6 +59,15 @@ def test_view_phrases_missing_canonical_direction_warns():
     assert any("view_phrases" in f and "SOUTH" in f for f in findings)
 
 
+def test_lint_warns_on_non_divisible_16_dimensions():
+    m = base_manifest()
+    m["animations"]["walk"]["width"] = 830  # not divisible by 16
+    m["animations"]["walk"]["height"] = 480
+    findings = collect_warnings(m)
+    assert any("width" in f and "830" in f and "16" in f for f in findings)
+    assert not any("height" in f for f in findings)  # 480 is fine
+
+
 def test_node_kind_unknown_ref_raises():
     with pytest.raises(ManifestError):
         node_kind(base_manifest(), "does_not_exist")
