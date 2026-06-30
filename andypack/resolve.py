@@ -72,10 +72,22 @@ def _read_json(path: str) -> Optional[dict]:
 
 
 _IDENTITY_CACHE: dict[str, tuple[float, dict]] = {}
-# Validated character-effective manifests, keyed on the identities of the two
-# inputs that produced them (base manifest + cached identity dict) — see
-# effective_manifest. Cleared by invalidate_character.
-_EFFECTIVE_CACHE: dict[tuple[int, int], Manifest] = {}
+# Validated character-effective manifests, keyed on a content-derived tuple
+# (see _effective_cache_key). Cleared by invalidate_character.
+_EFFECTIVE_CACHE: dict[tuple, Manifest] = {}
+
+
+def _effective_cache_key(manifest: Manifest, identity: dict) -> tuple:
+    """A cache key tied to CONTENT, not id(). A base-manifest edit changes the
+    serialized poses/animations/globals/defaults/view_phrases, so the key
+    changes and a stale merge can't be served. identity is keyed by its id()
+    (stable per file version via read_character's mtime cache) plus its size."""
+    payload = json.dumps(
+        {k: manifest.get(k) for k in
+         ("version", "poses", "animations", "globals", "defaults", "view_phrases")},
+        sort_keys=True, default=str,
+    )
+    return (hashlib.sha1(payload.encode("utf-8")).hexdigest(), id(identity), len(identity))
 
 
 def read_character(root: str, character: str) -> dict:
@@ -139,7 +151,7 @@ def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifes
     # validate_manifest's ref/cycle DFS off the IS_CHANGED hot path, which
     # re-derives the effective manifest on every graph evaluation. The cache is
     # dropped wholesale by invalidate_character when the character layer changes.
-    key = (id(manifest), id(identity))
+    key = _effective_cache_key(manifest, identity)
     cached = _EFFECTIVE_CACHE.get(key)
     if cached is not None:
         return cached

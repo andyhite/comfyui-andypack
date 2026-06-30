@@ -1,6 +1,7 @@
 import os
 
 from andypack import resolve
+from andypack import io
 
 
 def _render_pose(root, char, pose, direction, manifest):
@@ -46,3 +47,31 @@ def test_swapping_anchor_ref_restales_animation(tmp_path):
     # swap the anchor to poseB (already rendered, prompts unchanged)
     manifest["animations"]["walk"]["start_from"] = {"ref": "poseB"}
     assert resolve.outdated(manifest, root, char, "walk", "EAST") is True
+
+
+def test_effective_cache_key_is_content_derived():
+    from andypack.resolve import _effective_cache_key
+    a = {"version": 1, "poses": {}, "animations": {}, "globals": {"x": 1}}
+    b = {"version": 1, "poses": {}, "animations": {}, "globals": {"x": 2}}
+    assert _effective_cache_key(a, {}) != _effective_cache_key(b, {})
+
+
+def test_effective_manifest_reflects_base_edit_with_overlay(tmp_path):
+    root = str(tmp_path)
+    char = "hero"
+    os.makedirs(os.path.join(root, char), exist_ok=True)
+    # character overlay so effective_manifest does the merge+cache path
+    io.atomic_write_json(os.path.join(root, char, "character.json"),
+        {"poses": {"wave": {"from": {"ref": "base"}, "directions": {"EAST": {}}}}})
+    resolve.invalidate_character(root, char)
+    base1 = {"version": 1, "poses": {"base": {"directions": {"EAST": {}}}},
+             "animations": {}, "defaults": {},
+             "globals": {"pose": {"positive_prompt": "v1"}}}
+    eff1 = resolve.effective_manifest(base1, root, char)
+    assert eff1["globals"]["pose"]["positive_prompt"] == "v1"
+    # a DIFFERENT base object (simulating a reload) with edited content
+    base2 = {"version": 1, "poses": {"base": {"directions": {"EAST": {}}}},
+             "animations": {}, "defaults": {},
+             "globals": {"pose": {"positive_prompt": "v2"}}}
+    eff2 = resolve.effective_manifest(base2, root, char)
+    assert eff2["globals"]["pose"]["positive_prompt"] == "v2"
