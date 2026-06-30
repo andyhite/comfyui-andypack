@@ -272,6 +272,17 @@ def animation_meta_path(root: str, character: str, anim_id: str, direction: str)
     return _anim_meta_path(root, character, anim_id, direction)
 
 
+def reference_image_path(root: str, character: str) -> str:
+    """The optional persisted character reference art (`<char>/_reference.png`).
+
+    The reference is the concept image the Character Creator edits into the base
+    directions. Persisting it (opt-in on the creator node) lets a character be
+    reloaded and its base re-generated later without hunting for the original art.
+    It is NOT a render node and carries no provenance — base sidecars still root
+    the tree's staleness."""
+    return os.path.join(root, character, "_reference.png")
+
+
 # --- direction resolution + completeness ------------------------------------ #
 
 def resolved_dir(dep: dict, selected_dir: str) -> str:

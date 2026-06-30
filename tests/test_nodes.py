@@ -449,6 +449,43 @@ def test_pose_selector_rejects_root_pose(manifest, tree, monkeypatch):
         nodes.CharacterPoseSelector().select(manifest, tree.char, "", "base", "EAST")
 
 
+# --- reference persistence + CharacterReferenceLoader ----------------------- #
+
+def test_character_creator_persists_reference_by_default(manifest, tmp_path, monkeypatch):
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    nodes.CharacterCreator().create(manifest, _img(3, 4), "cortex", "EAST")
+    ref = resolve.reference_image_path(root, "cortex")
+    assert os.path.isfile(ref)  # _reference.png written so base can be re-generated
+
+
+def test_character_creator_can_skip_reference_persistence(manifest, tmp_path, monkeypatch):
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    nodes.CharacterCreator().create(manifest, _img(), "cortex", "EAST", save_reference=False)
+    assert not os.path.exists(resolve.reference_image_path(root, "cortex"))
+
+
+def test_reference_loader_roundtrips_the_saved_image(manifest, tmp_path, monkeypatch):
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    nodes.CharacterCreator().create(manifest, _img(5, 6), "cortex", "EAST")
+    (img,) = nodes.CharacterReferenceLoader().load("cortex")
+    assert img.shape[0] == 1 and img.shape[1] == 5 and img.shape[2] == 6
+
+
+def test_reference_loader_raises_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    with pytest.raises(RuntimeError, match="reference"):
+        nodes.CharacterReferenceLoader().load("ghost")
+
+
+def test_reference_loader_requires_a_character(monkeypatch, tmp_path):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    with pytest.raises(RuntimeError, match="character"):
+        nodes.CharacterReferenceLoader().load("(select character)")
+
+
 def test_pose_selector_sets_empty_pose_reference(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.pose("base", "EAST")

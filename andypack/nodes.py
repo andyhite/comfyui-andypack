@@ -115,12 +115,16 @@ class CharacterCreator:
             "optional": {
                 "character_positive": ("STRING", {"default": "", "multiline": True}),
                 "character_negative": ("STRING", {"default": "", "multiline": True}),
+                # Persist the reference art to `<char>/_reference.png` so the
+                # character can be reloaded (CharacterReferenceLoader) and its base
+                # re-generated later without re-supplying the original image.
+                "save_reference": ("BOOLEAN", {"default": True}),
             },
         }
 
     @classmethod
     def IS_CHANGED(cls, manifest, image, character, direction,
-                   character_positive="", character_negative=""):
+                   character_positive="", character_negative="", save_reference=True):
         # Re-resolve the base pose so the fingerprint reflects prompt edits going
         # stale, plus the character-layer widgets that this node persists.
         if not character or not direction:
@@ -138,7 +142,7 @@ class CharacterCreator:
         ])
 
     def create(self, manifest, image, character, direction,
-               character_positive="", character_negative=""):
+               character_positive="", character_negative="", save_reference=True):
         if direction not in manikins.CANONICAL_DIRECTIONS:
             raise RuntimeError(f"CharacterCreator: unknown direction {direction!r}")
         root = _characters_root()
@@ -157,6 +161,11 @@ class CharacterCreator:
         # Drop the cached character layer so the resolve below (and descendants)
         # see this write even within the filesystem's mtime resolution window.
         resolve.invalidate_character(root, char_name)
+        # Optionally persist the reference art so the character can be reloaded and
+        # its base re-generated later (CharacterReferenceLoader) without the user
+        # re-supplying the original image. Not a render node — no provenance.
+        if save_reference:
+            images.save_image_png(image, resolve.reference_image_path(root, char_name))
 
         eff = effective_manifest(manifest, root, char_name)
         if "base" not in eff.get("poses", {}):
@@ -174,6 +183,42 @@ class CharacterCreator:
             "_meta": r["meta"],
         }
         return (pose,)
+
+
+class CharacterReferenceLoader:
+    """Reload a character's persisted reference art (`<char>/_reference.png`, saved
+    by the Character Creator) as an IMAGE. Feed it back into the Character Creator
+    to re-generate base directions later without re-supplying the original concept
+    art. Raises if the character has no persisted reference (it was created with
+    save_reference off, or predates persistence)."""
+
+    CATEGORY = "andypack/Character"
+    FUNCTION = "load"
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("REFERENCE_IMAGE",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"character": (_character_choices(),)}}
+
+    @classmethod
+    def IS_CHANGED(cls, character):
+        if character in ("", _NO_CHARACTER):
+            return float("nan")
+        path = resolve.reference_image_path(_characters_root(), character)
+        return f"{path}:{_mtime(path)}"
+
+    def load(self, character):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("CharacterReferenceLoader: select a character first")
+        path = resolve.reference_image_path(_characters_root(), character)
+        if not os.path.exists(path):
+            raise RuntimeError(
+                f"CharacterReferenceLoader: {character!r} has no persisted reference "
+                f"image (expected {path}); re-run the Character Creator with "
+                "save_reference enabled, or supply the reference art directly"
+            )
+        return (images.load_image_tensor(path),)
 
 
 class CharacterPoseSelector:
@@ -796,6 +841,7 @@ class MirrorFrameWriter:
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
+    "CharacterReferenceLoader": CharacterReferenceLoader,
     "CharacterPoseSelector": CharacterPoseSelector,
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
@@ -812,6 +858,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
     "CharacterCreator": "Character Creator",
+    "CharacterReferenceLoader": "Character Reference Loader",
     "CharacterPoseSelector": "Character Pose Selector",
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",

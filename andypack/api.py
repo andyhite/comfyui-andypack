@@ -299,6 +299,8 @@ def _is_character(root: str, name: str) -> bool:
         return False
     if os.path.exists(os.path.join(d, "character.json")):
         return True
+    if os.path.exists(os.path.join(d, "_reference.png")):
+        return True
     try:
         return any(os.path.isdir(os.path.join(d, c)) for c in os.listdir(d))
     except OSError:
