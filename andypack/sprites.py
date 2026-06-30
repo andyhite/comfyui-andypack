@@ -529,9 +529,17 @@ def _nearest_color_np(
 
 
 def _pil_palette_image(palette: list[tuple[int, int, int]]) -> Image.Image:
-    """Build a 1×1 P-mode PIL image carrying *palette* (padded to 256 colors)."""
+    """Build a 1×1 P-mode PIL image carrying *palette* (padded to 256 colors).
+
+    Unused palette slots are filled with the last real palette color so that
+    Floyd-Steinberg dithering never maps a pixel to an off-palette entry like
+    ``(0, 0, 0)`` (what zero-padding would produce for non-black palettes).
+    """
     flat: list[int] = [v for c in palette for v in c]
-    flat += [0] * (768 - len(flat))
+    last_color: list[int] = list(palette[-1]) if palette else [0, 0, 0]
+    remaining = 768 - len(flat)
+    repeats = remaining // 3
+    flat += last_color * repeats
     pal_img: Image.Image = Image.new("P", (1, 1))
     pal_img.putpalette(flat)
     return pal_img
