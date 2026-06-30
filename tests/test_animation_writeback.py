@@ -24,7 +24,7 @@ def _write_animation(manifest, root, char, anim_id, direction, count):
 
 def test_writing_idle_unlocks_punch(manifest, tree):
     root, char = tree.root, tree.char
-    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST")
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST")
     assert status(manifest, root, char, "punch", "EAST") == "blocked"
 
     _write_animation(manifest, root, char, "fighting_stance_idle", "EAST", count=3)

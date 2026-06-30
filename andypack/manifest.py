@@ -14,9 +14,7 @@ class ManifestError(Exception):
 
 
 def node_kind(manifest: Manifest, ref: str) -> str:
-    """Classify a ref as 'concept', 'pose', or 'animation'."""
-    if ref == "concept":
-        return "concept"
+    """Classify a ref as 'pose' or 'animation' (raises on an unknown ref)."""
     if ref in manifest.get("poses", {}):
         return "pose"
     if ref in manifest.get("animations", {}):
@@ -55,10 +53,11 @@ def _validate_gen_params(label: str, obj: dict) -> None:
 def _validate_refs(manifest: Manifest) -> None:
     for pid, pose in manifest.get("poses", {}).items():
         frm = pose.get("from")
-        if not isinstance(frm, dict) or "ref" not in frm:
-            raise ManifestError(f"pose {pid!r} missing 'from.ref'")
-        if node_kind(manifest, frm["ref"]) == "animation":
-            raise ManifestError(f"pose {pid!r} 'from' must reference concept or a pose")
+        if frm is not None:
+            if not isinstance(frm, dict) or "ref" not in frm:
+                raise ManifestError(f"pose {pid!r} 'from' must be an object with a 'ref'")
+            if node_kind(manifest, frm["ref"]) == "animation":
+                raise ManifestError(f"pose {pid!r} 'from' must reference a pose")
         _validate_directions(f"pose {pid!r}", pose)
     _validate_gen_params("defaults", manifest.get("defaults", {}))
     default_start = manifest.get("defaults", {}).get("start_from")
@@ -85,18 +84,18 @@ def _validate_refs(manifest: Manifest) -> None:
 
 
 def _dependency_edges(manifest: Manifest) -> dict[str, list[str]]:
-    """Adjacency `node -> [dependency ids]` over poses + animations. The `concept`
-    seed is a leaf (it depends on nothing) and is omitted from edge targets."""
+    """Adjacency `node -> [dependency ids]` over poses + animations. A root pose
+    (no `from`) is a leaf and contributes no edge target."""
     edges: dict[str, list[str]] = {}
 
     def add(node: str, ref: str | None) -> None:
         edges.setdefault(node, [])
-        if ref and ref != "concept":
+        if ref:
             edges[node].append(ref)
 
     default_start = manifest.get("defaults", {}).get("start_from")
     for pid, pose in manifest.get("poses", {}).items():
-        add(pid, pose.get("from", {}).get("ref"))
+        add(pid, (pose.get("from") or {}).get("ref"))
     for aid, anim in manifest.get("animations", {}).items():
         edges.setdefault(aid, [])
         # An animation with no explicit start_from depends on defaults.start_from

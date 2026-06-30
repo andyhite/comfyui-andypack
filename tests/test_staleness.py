@@ -6,21 +6,23 @@ from andypack.resolve import outdated
 
 def _full_stance_tree(tree):
     return (
-        tree.concept()
+        tree.character()
         .pose("base", "EAST")
         .pose("fighting_stance", "EAST")
         .animation("fighting_stance_idle", "EAST", frames=3)
     )
 
 
-def test_concept_never_outdated(manifest, tree):
-    tree.concept()
-    assert outdated(manifest, tree.root, tree.char, "concept", "EAST") is False
+def test_root_pose_never_outdated_via_ancestors(manifest, tree):
+    # base is the tree root: with a matching prompt hash it is never outdated
+    # (it has no ancestor to inherit staleness from).
+    tree.pose("base", "EAST")
+    assert outdated(manifest, tree.root, tree.char, "base", "EAST") is False
 
 
 def test_incomplete_node_is_not_outdated(manifest, tree):
     # nothing rendered -> base is incomplete -> not "stale" (that's blocked territory)
-    tree.concept()
+    tree.character()
     assert outdated(manifest, tree.root, tree.char, "base", "EAST") is False
 
 
@@ -39,13 +41,13 @@ def test_own_hash_drift_marks_outdated(manifest, tree):
 def test_malformed_sources_key_does_not_raise(manifest, tree):
     # A sources key lacking '@' (older/hand-edited meta) must be skipped, not crash
     # outdated() — the transitive-hash walk still covers that dependency.
-    tree.concept().pose("base", "EAST")
+    tree.pose("base", "EAST")
     sidecar_path = resolve.pose_sidecar_path(tree.root, tree.char, "base", "EAST")
     side = json.loads(open(sidecar_path).read())
     side["sources"] = {"concept_no_at_sign": "rid:whatever"}  # malformed key
     with open(sidecar_path, "w") as fh:
         json.dump(side, fh)
-    # base's own hash still matches and its only ancestor (concept) is never stale.
+    # base's own hash still matches and, as the root pose, it has no ancestor.
     assert outdated(manifest, tree.root, tree.char, "base", "EAST") is False
 
 
@@ -54,7 +56,7 @@ def test_staleness_is_transitive(manifest, tree):
     # `outdated` is the staleness predicate for a COMPLETE node (spec §6), so
     # punch must be rendered for its transitive staleness to be observable here
     # (an unrendered punch is the `blocked`/`ready` axis, never `outdated`).
-    tree.concept().pose("base", "EAST", stale=True).pose("fighting_stance", "EAST").animation(
+    tree.pose("base", "EAST", stale=True).pose("fighting_stance", "EAST").animation(
         "fighting_stance_idle", "EAST", frames=3
     ).animation("punch", "EAST", frames=3)
     # fighting_stance's own hash is fine, but its ancestor (base) is outdated

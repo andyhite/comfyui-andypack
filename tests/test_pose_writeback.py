@@ -6,7 +6,7 @@ from andypack.resolve import status
 
 def test_writing_base_sidecar_unlocks_fighting_stance(manifest, tree):
     root, char = tree.root, tree.char
-    tree.concept()
+    tree.character()
     assert status(manifest, root, char, "fighting_stance", "EAST") == "blocked"
 
     # Simulate PoseFrameWriter's write-back for base@EAST: payload then sidecar last.
@@ -16,7 +16,7 @@ def test_writing_base_sidecar_unlocks_fighting_stance(manifest, tree):
     from andypack.resolve import compute_prompt_hash
     meta = {
         "kind": "pose", "pose": "base", "direction": "EAST",
-        "from": manifest["poses"]["base"]["from"], "image": "EAST.png",
+        "from": manifest["poses"]["base"].get("from"), "image": "EAST.png",
         "manifest_version": manifest["version"],
         "prompt_hash": compute_prompt_hash(manifest, root, char, "pose", "base", "EAST"),
     }

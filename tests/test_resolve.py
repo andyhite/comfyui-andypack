@@ -14,35 +14,37 @@ from andypack.resolve import (
 )
 
 
-def test_base_pose_ready_when_concept_present(manifest, tree):
-    tree.concept()
+def test_root_base_pose_is_ready_with_no_source(manifest, tree):
+    # base is the tree root: ready for any declared direction, nothing to block
+    # on, and no disk source (the creator node supplies the reference image).
     r = resolve_pose(manifest, tree.root, tree.char, "base", "EAST")
     assert r["selectable"] is True
     assert r["blocked_by"] == []
-    assert r["source_image"].endswith(os.path.join("Cortex", "_concept.png"))
+    assert r["source_image"] is None
     assert status(manifest, tree.root, tree.char, "base", "EAST") == "ready"
 
 
-def test_base_pose_blocked_when_concept_missing(manifest, tree):
-    r = resolve_pose(manifest, tree.root, tree.char, "base", "EAST")
+def test_base_pose_not_selectable_for_undeclared_direction(manifest, tree):
+    # WEST is not in the fixture base.directions, so even a root pose isn't
+    # selectable there.
+    r = resolve_pose(manifest, tree.root, tree.char, "base", "WEST")
     assert r["selectable"] is False
-    assert status(manifest, tree.root, tree.char, "base", "EAST") == "blocked"
 
 
 def test_pose_generated_status(manifest, tree):
-    tree.concept().pose("base", "EAST")
+    tree.pose("base", "EAST")
     assert status(manifest, tree.root, tree.char, "base", "EAST") == "generated"
 
 
 def test_fighting_stance_unlocks_after_base(manifest, tree):
-    tree.concept()
+    tree.character()
     assert status(manifest, tree.root, tree.char, "fighting_stance", "EAST") == "blocked"
     tree.pose("base", "EAST")
     assert status(manifest, tree.root, tree.char, "fighting_stance", "EAST") == "ready"
 
 
 def test_punch_blocked_until_idle(manifest, tree):
-    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST")
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST")
     r = resolve_animation(manifest, tree.root, tree.char, "punch", "EAST")
     assert r["selectable"] is False
     slots = {k for entry in r["blocked_by"] for k in entry if k != "dir"}
@@ -51,7 +53,7 @@ def test_punch_blocked_until_idle(manifest, tree):
 
 
 def test_punch_ready_with_anchors_after_idle(manifest, tree):
-    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST").animation(
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST").animation(
         "fighting_stance_idle", "EAST", frames=3
     )
     r = resolve_animation(manifest, tree.root, tree.char, "punch", "EAST")
@@ -63,7 +65,7 @@ def test_punch_ready_with_anchors_after_idle(manifest, tree):
 
 
 def test_direction_outside_map_not_selectable(manifest, tree):
-    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST").animation(
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST").animation(
         "fighting_stance_idle", "EAST", frames=3
     )
     r = resolve_animation(manifest, tree.root, tree.char, "punch", "SOUTH")
@@ -73,7 +75,7 @@ def test_direction_outside_map_not_selectable(manifest, tree):
 def test_free_clip_blocked_until_base_then_starts_from_it(manifest, tree):
     # walk has no start_from -> default base. It must be blocked until base exists
     # (I2V needs a start image), then it starts from base with no FFLF end.
-    tree.concept()
+    tree.character()
     r = resolve_animation(manifest, tree.root, tree.char, "walk", "EAST")
     assert r["selectable"] is False
     assert status(manifest, tree.root, tree.char, "walk", "EAST") == "blocked"
@@ -88,13 +90,13 @@ def test_free_clip_blocked_until_base_then_starts_from_it(manifest, tree):
 
 def test_loop_is_derived_from_matching_anchors(manifest, tree):
     # A clip whose start and end anchors are the SAME single image is a loop.
-    tree.identity(animations={
+    tree.character(animations={
         "spin_loop": {
             "category": "x", "directions": {"EAST": {}},
             "start_from": {"ref": "base"}, "end_at": {"ref": "base"},
         }
     })
-    tree.concept().pose("base", "EAST")
+    tree.pose("base", "EAST")
     eff = effective_manifest(manifest, tree.root, tree.char)
     r = resolve_animation(eff, tree.root, tree.char, "spin_loop", "EAST")
     assert r["meta"]["loop"] is True
@@ -106,7 +108,7 @@ def test_loop_is_derived_from_matching_anchors(manifest, tree):
 
 
 def test_effective_manifest_merges_character_entities(manifest, tree):
-    tree.identity(
+    tree.character(
         poses={"special_pose": {"from": {"ref": "base"}, "directions": {"EAST": {}}}},
         animations={
             "special_move": {
@@ -124,26 +126,26 @@ def test_effective_manifest_merges_character_entities(manifest, tree):
 
 
 def test_effective_manifest_no_character_entities_returns_same(manifest, tree):
-    tree.identity(positive_prompt="just an identity prompt")  # no poses/animations
+    tree.character(positive_prompt="just an identity prompt")  # no poses/animations
     assert effective_manifest(manifest, tree.root, tree.char) is manifest
 
 
 def test_effective_manifest_tolerates_malformed_poses(manifest, tree):
-    # `_concept.json` is user-authored; a `poses`/`animations` that isn't an
+    # `character.json` is user-authored; a `poses`/`animations` that isn't an
     # object (here a list) must be ignored, not crash the `{**...}` merge.
-    tree.identity(poses=["oops"], animations="nope")
+    tree.character(poses=["oops"], animations="nope")
     assert effective_manifest(manifest, tree.root, tree.char) is manifest
 
 
 def test_effective_manifest_rejects_bad_character_ref(manifest, tree):
     # a character pose referencing an unknown ref must fail, not resolve silently
-    tree.identity(poses={"bad": {"from": {"ref": "nope"}, "directions": {"EAST": {}}}})
+    tree.character(poses={"bad": {"from": {"ref": "nope"}, "directions": {"EAST": {}}}})
     with pytest.raises(ManifestError):
         effective_manifest(manifest, tree.root, tree.char)
 
 
 def test_character_animation_is_resolvable(manifest, tree):
-    tree.identity(
+    tree.character(
         animations={
             "special_move": {
                 "category": "combat", "directions": {"EAST": {}},
@@ -152,7 +154,7 @@ def test_character_animation_is_resolvable(manifest, tree):
         }
     )
     eff = effective_manifest(manifest, tree.root, tree.char)
-    tree.concept()
+    tree.character()
     assert status(eff, tree.root, tree.char, "special_move", "EAST") == "blocked"
     tree.pose("base", "EAST")
     assert status(eff, tree.root, tree.char, "special_move", "EAST") == "ready"
@@ -161,7 +163,7 @@ def test_character_animation_is_resolvable(manifest, tree):
 def test_status_from_resolved_matches_status(manifest, tree):
     # status_from_resolved (used to avoid a second resolve on report paths) must
     # agree with status() across the lifecycle states.
-    tree.concept()  # base ready, fighting_stance blocked
+    tree.character()  # base ready, fighting_stance blocked
     for ref in ("base", "fighting_stance", "punch"):
         r = resolve_pose(manifest, tree.root, tree.char, ref, "EAST") if ref != "punch" \
             else resolve_animation(manifest, tree.root, tree.char, ref, "EAST")
@@ -181,42 +183,42 @@ def test_animation_fps_floor_is_one(manifest):
     assert animation_fps(manifest, "punch") == 1
 
 
-def test_read_identity_cache_refreshes_on_rewrite(tree):
+def test_read_character_cache_refreshes_on_rewrite(tree):
     # The identity cache is keyed by mtime, so a rewrite is observed (never stale).
-    tree.identity(positive_prompt="first")
-    assert resolve.read_identity(tree.root, tree.char) == {"positive_prompt": "first"}
-    path = os.path.join(tree.root, tree.char, "_concept.json")
+    tree.character(positive_prompt="first")
+    assert resolve.read_character(tree.root, tree.char) == {"positive_prompt": "first"}
+    path = os.path.join(tree.root, tree.char, "character.json")
     with open(path, "w") as fh:
         fh.write('{"positive_prompt": "second"}')
     os.utime(path, (10**9 + 100, 10**9 + 100))  # force a distinct mtime
-    assert resolve.read_identity(tree.root, tree.char) == {"positive_prompt": "second"}
+    assert resolve.read_character(tree.root, tree.char) == {"positive_prompt": "second"}
 
 
-def test_invalidate_identity_defeats_unchanged_mtime(tree):
+def test_invalidate_character_defeats_unchanged_mtime(tree):
     # The coarse-mtime case: a rewrite that lands on the SAME mtime would be served
     # stale by the mtime cache; explicit invalidation forces a fresh read.
-    tree.identity(positive_prompt="first")
-    path = os.path.join(tree.root, tree.char, "_concept.json")
+    tree.character(positive_prompt="first")
+    path = os.path.join(tree.root, tree.char, "character.json")
     mtime = os.path.getmtime(path)
-    assert resolve.read_identity(tree.root, tree.char) == {"positive_prompt": "first"}
+    assert resolve.read_character(tree.root, tree.char) == {"positive_prompt": "first"}
     with open(path, "w") as fh:
         fh.write('{"positive_prompt": "second"}')
     os.utime(path, (mtime, mtime))  # pin mtime: cache alone can't see the change
-    assert resolve.read_identity(tree.root, tree.char) == {"positive_prompt": "first"}
-    resolve.invalidate_identity(tree.root, tree.char)
-    assert resolve.read_identity(tree.root, tree.char) == {"positive_prompt": "second"}
+    assert resolve.read_character(tree.root, tree.char) == {"positive_prompt": "first"}
+    resolve.invalidate_character(tree.root, tree.char)
+    assert resolve.read_character(tree.root, tree.char) == {"positive_prompt": "second"}
 
 
 def test_effective_manifest_caches_until_invalidated(manifest, tree):
-    tree.identity(poses={
-        "char_pose": {"from": {"ref": "concept"}, "directions": {"EAST": {}}},
+    tree.character(poses={
+        "char_pose": {"from": {"ref": "base"}, "directions": {"EAST": {}}},
     })
     first = resolve.effective_manifest(manifest, tree.root, tree.char)
     assert "char_pose" in first["poses"]
     # A second call returns the same validated object (no re-merge / re-validate).
     assert resolve.effective_manifest(manifest, tree.root, tree.char) is first
-    # Invalidation (a concept re-render) rebuilds it from the current identity.
-    resolve.invalidate_identity(tree.root, tree.char)
+    # Invalidation (a character-layer change) rebuilds it from the current layer.
+    resolve.invalidate_character(tree.root, tree.char)
     rebuilt = resolve.effective_manifest(manifest, tree.root, tree.char)
     assert rebuilt is not first and "char_pose" in rebuilt["poses"]
 
@@ -224,7 +226,7 @@ def test_effective_manifest_caches_until_invalidated(manifest, tree):
 def test_resolution_pass_memoizes_without_changing_results(manifest, tree):
     # The memo must be transparent: same result inside and outside a pass, and it
     # must not leak past the context.
-    tree.concept().pose("base", "EAST", stale=True)
+    tree.pose("base", "EAST", stale=True)
     bare = resolve.outdated(manifest, tree.root, tree.char, "base", "EAST")
     with resolve.resolution_pass():
         assert resolve._OUTDATED_MEMO is not None

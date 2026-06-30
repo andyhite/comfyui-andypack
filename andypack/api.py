@@ -23,7 +23,7 @@ Manifest = dict[str, Any]
 
 def _safe_effective(manifest: Manifest, root: str, character: str) -> Manifest:
     """`effective_manifest`, but degrade to the base manifest if the character's
-    `_concept.json` overlay is structurally invalid (bad ref / cycle). The
+    `character.json` overlay is structurally invalid (bad ref / cycle). The
     diagnostics + options reads are read-only views: surfacing the base manifest
     is better than aborting the queued graph with a ManifestError traceback (the
     selector IS_CHANGED hooks already swallow the same raise)."""
@@ -169,7 +169,7 @@ def _is_character(root: str, name: str) -> bool:
     d = os.path.join(root, name)
     if not os.path.isdir(d):
         return False
-    if os.path.exists(os.path.join(d, "_concept.png")):
+    if os.path.exists(os.path.join(d, "character.json")):
         return True
     try:
         return any(os.path.isdir(os.path.join(d, c)) for c in os.listdir(d))

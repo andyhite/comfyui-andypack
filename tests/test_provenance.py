@@ -12,7 +12,7 @@ def _pose_sidecar(tree, pose_id, direction, *, rid, sources=None):
     open(os.path.join(base, f"{direction}.png"), "w").close()
     data = {
         "kind": "pose", "pose": pose_id, "direction": direction,
-        "from": tree.m["poses"][pose_id]["from"], "image": f"{direction}.png",
+        "from": tree.m["poses"][pose_id].get("from"), "image": f"{direction}.png",
         "manifest_version": tree.m["version"],
         "prompt_hash": resolve.compute_prompt_hash(
             tree.m, tree.root, tree.char, "pose", pose_id, direction
@@ -32,7 +32,7 @@ def test_render_id_changes_on_rerender_same_prompt():
 
 
 def test_provenance_flags_rerendered_ancestor(manifest, tree):
-    tree.concept()
+    tree.character()
     _pose_sidecar(tree, "base", "EAST", rid="rid:A")
     _pose_sidecar(tree, "fighting_stance", "EAST", rid="rid:X", sources={"base@EAST": "rid:A"})
     # Recorded source render_id matches base's -> not stale.
@@ -44,23 +44,15 @@ def test_provenance_flags_rerendered_ancestor(manifest, tree):
     assert resolve.outdated(manifest, tree.root, tree.char, "fighting_stance", "EAST") is True
 
 
-def test_provenance_flags_rerendered_concept(manifest, tree):
-    # The concept is the tree root; re-rendering it must mark descendants stale even
-    # though the concept itself is never "outdated". A pose records the concept's
-    # render_id (from _concept.json), so a new render_id ripples down.
-    tree.concept()
-    concept_json = os.path.join(tree.root, tree.char, "_concept.json")
-    io.atomic_write_json(concept_json, {"render_id": "rid:A"})
-    _pose_sidecar(tree, "base", "EAST", rid="rid:base", sources={"concept@EAST": "rid:A"})
-    assert resolve.outdated(manifest, tree.root, tree.char, "base", "EAST") is False
-
-    # Concept re-rendered with a new render_id; base recorded the old one -> stale.
-    io.atomic_write_json(concept_json, {"render_id": "rid:B"})
-    assert resolve.outdated(manifest, tree.root, tree.char, "base", "EAST") is True
+def test_root_pose_has_no_recorded_sources(manifest, tree):
+    # base is the tree root (no `from`): it records no provenance sources, and its
+    # staleness is governed solely by its own prompt hash.
+    r = resolve.resolve_pose(manifest, tree.root, tree.char, "base", "EAST")
+    assert r["meta"]["sources"] == {}
 
 
 def test_pre_provenance_meta_falls_back_to_transitive(manifest, tree):
     # Sidecars without a `sources` key (older renders) must still resolve via the
     # transitive-hash walk, not crash.
-    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST")
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST")
     assert resolve.outdated(manifest, tree.root, tree.char, "fighting_stance", "EAST") is False

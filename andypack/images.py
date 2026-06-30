@@ -130,7 +130,7 @@ def assemble_playback(segments: list) -> torch.Tensor:
     seam boundary frame(s); `hold` segments repeat a single image `count` times.
     Segments with no readable frames are skipped.
 
-    Segments may differ in resolution — a held pose/concept anchor is often
+    Segments may differ in resolution — a held pose anchor is often
     authored at a different size than the action frames. Every segment is conformed
     to a single target (the first `anim` segment's size — the action's own frames —
     else the first part) so torch.cat doesn't crash on mismatched H/W."""

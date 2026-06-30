@@ -8,7 +8,7 @@ from andypack.resolve import (
     merge_layers,
     merge_negative,
     merged_prompts,
-    read_identity,
+    read_character,
 )
 
 FIX = Path(__file__).parent / "fixtures" / "manifest.json"
@@ -49,21 +49,21 @@ def test_merge_negative_is_empty_for_no_layers():
     assert merge_negative(None, "", "   ") == ""
 
 
-def test_read_identity_absent_returns_empty(tmp_path):
-    assert read_identity(str(tmp_path), "Cortex") == {}
+def test_read_character_absent_returns_empty(tmp_path):
+    assert read_character(str(tmp_path), "Cortex") == {}
 
 
-def test_read_identity_reads_concept_sidecar(tmp_path):
+def test_read_character_reads_concept_sidecar(tmp_path):
     char_dir = tmp_path / "Cortex"
     char_dir.mkdir()
-    (char_dir / "_concept.json").write_text(json.dumps({"positive_prompt": "a mouthless hero"}))
-    assert read_identity(str(tmp_path), "Cortex") == {"positive_prompt": "a mouthless hero"}
+    (char_dir / "character.json").write_text(json.dumps({"positive_prompt": "a mouthless hero"}))
+    assert read_character(str(tmp_path), "Cortex") == {"positive_prompt": "a mouthless hero"}
 
 
 def _identity(tmp_path, **layer):
     char_dir = tmp_path / "Cortex"
     char_dir.mkdir()
-    (char_dir / "_concept.json").write_text(json.dumps(layer))
+    (char_dir / "character.json").write_text(json.dumps(layer))
     return str(tmp_path)
 
 
@@ -93,8 +93,8 @@ def test_direction_prompt_and_name_inject_into_positive(tmp_path):
 def test_identity_prompt_resolves_by_field_context(tmp_path):
     root = _identity(tmp_path, positive_prompt="a mouthless hero", negative_prompt="ugly")
     m = base_manifest()
-    m["poses"]["base"]["positive_prompt"] = "a wide shot of {identity_prompt} standing"
-    m["globals"]["pose"]["negative_prompt"] = "{identity_prompt}, low quality"
+    m["poses"]["base"]["positive_prompt"] = "a wide shot of {character_prompt} standing"
+    m["globals"]["pose"]["negative_prompt"] = "{character_prompt}, low quality"
     pos, neg = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
     assert pos == "a wide shot of a mouthless hero standing"  # positive -> concept positive
     assert "ugly" in neg and "a mouthless hero" not in neg    # negative -> concept negative
@@ -102,11 +102,11 @@ def test_identity_prompt_resolves_by_field_context(tmp_path):
 
 
 def test_identity_negative_expands_then_dedupes(tmp_path):
-    # In a negative field {identity_prompt} expands to the concept negative,
+    # In a negative field {character_prompt} expands to the concept negative,
     # then the term-merge dedupes it against siblings ("blurry" shared).
     root = _identity(tmp_path, negative_prompt="blurry, ugly")
     m = base_manifest()
-    m["animations"]["punch"]["negative_prompt"] = "{identity_prompt}, extra arm"
+    m["animations"]["punch"]["negative_prompt"] = "{character_prompt}, extra arm"
     _, neg = merged_prompts(m, root, "Cortex", "animation", "punch", "EAST")
     # globals.animation(blurry, low quality, watermark) + punch(blurry, ugly, extra arm)
     assert neg == "blurry, low quality, watermark, ugly, extra arm"
@@ -127,7 +127,7 @@ def test_variables_resolve_inside_globals(tmp_path):
     # Substitution runs on the merged text, so a global may reference variables.
     root = _identity(tmp_path, negative_prompt="signature-flaw")
     m = base_manifest()
-    m["globals"]["pose"]["negative_prompt"] = "{identity_prompt}, {direction_name}-artifact"
+    m["globals"]["pose"]["negative_prompt"] = "{character_prompt}, {direction_name}-artifact"
     _, neg = merged_prompts(m, root, "Cortex", "pose", "base", "SOUTH")
     assert neg == "signature-flaw, SOUTH-artifact"
 
@@ -135,7 +135,7 @@ def test_variables_resolve_inside_globals(tmp_path):
 def test_unknown_tokens_and_empty_sources_survive(tmp_path):
     root = _identity(tmp_path)  # no identity fields
     m = base_manifest()
-    m["poses"]["base"]["positive_prompt"] = "{identity_prompt}shot of {unknown} {thing}"
+    m["poses"]["base"]["positive_prompt"] = "{character_prompt}shot of {unknown} {thing}"
     pos, _ = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
     assert pos == "shot of {unknown} {thing}"  # identity empty; unknown tokens untouched
 
@@ -143,11 +143,11 @@ def test_unknown_tokens_and_empty_sources_survive(tmp_path):
 def test_injected_value_token_is_not_re_expanded(tmp_path):
     # A literal token stored INSIDE an injected value must survive verbatim — the
     # substitution is a single pass, not a recursive one. Here the identity carries
-    # a literal "{direction_name}", which {identity_prompt} injects; it must NOT be
+    # a literal "{direction_name}", which {character_prompt} injects; it must NOT be
     # rewritten to the direction by the same call.
     root = _identity(tmp_path, positive_prompt="hero {direction_name}")
     m = base_manifest()
-    m["poses"]["base"]["positive_prompt"] = "a shot of {identity_prompt}"
+    m["poses"]["base"]["positive_prompt"] = "a shot of {character_prompt}"
     pos, _ = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
     assert pos == "a shot of hero {direction_name}"  # injected token left literal
 
@@ -157,7 +157,7 @@ def test_tokens_in_the_layer_text_still_expand(tmp_path):
     # tokens that ARRIVE via an injected value are left alone.
     root = _identity(tmp_path, positive_prompt="hero")
     m = base_manifest()
-    m["poses"]["base"]["positive_prompt"] = "{identity_prompt} from the {direction_name}"
+    m["poses"]["base"]["positive_prompt"] = "{character_prompt} from the {direction_name}"
     pos, _ = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
     assert pos == "hero from the EAST"
 

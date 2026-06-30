@@ -91,55 +91,6 @@ class AnimationManifestLoader:
         return (load_manifest(api.resolve_manifest_path(manifest)),)
 
 
-class ConceptImageWriter:
-    CATEGORY = "andypack/Concept"
-    FUNCTION = "write"
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("CHARACTER_DIR",)
-    OUTPUT_NODE = True
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "image": ("IMAGE",),
-                "character": ("STRING", {"default": "cortex"}),
-            },
-            "optional": {
-                "identity_positive": ("STRING", {"default": "", "multiline": True}),
-                "identity_negative": ("STRING", {"default": "", "multiline": True}),
-            },
-        }
-
-    def write(self, image, character, identity_positive="", identity_negative=""):
-        # Character names become path segments — force lowercase snake_case. Write
-        # under the same characters root the selectors read from, so a written
-        # concept always shows up in their character dropdowns.
-        root = _characters_root()
-        char_name = io.to_snake_case(character)
-        char_dir = os.path.join(root, char_name)
-        images.save_image_png(image, os.path.join(char_dir, "_concept.png"))
-        layer = {}
-        if identity_positive.strip():
-            layer["positive_prompt"] = identity_positive.strip()
-        if identity_negative.strip():
-            layer["negative_prompt"] = identity_negative.strip()
-        # Always write the sidecar — even with no identity — so the concept carries a
-        # render_id. That makes re-rendering the concept (the root of the tree)
-        # propagate staleness to every pose/animation that recorded it. Read-merge
-        # over any existing sidecar so character-authored fields (poses/animations
-        # that effective_manifest reads) survive a concept re-render. The payload
-        # (_concept.png) is written first, the sidecar last (atomic).
-        existing = resolve.read_identity(root, char_name)
-        sidecar = io.build_concept_sidecar(layer, created_utc=_utc_now(), existing=existing)
-        io.atomic_write_json(os.path.join(char_dir, "_concept.json"), sidecar)
-        # Drop the cached identity so descendants re-resolve against this render's
-        # new render_id even if the rewrite landed within the filesystem's mtime
-        # resolution (read_identity's mtime check alone could miss it).
-        resolve.invalidate_identity(root, char_name)
-        return (char_dir,)
-
-
 class CharacterPoseSelector:
     CATEGORY = "andypack/Pose"
     FUNCTION = "select"
@@ -466,7 +417,7 @@ def _animated_preview(frames, fps) -> dict:
 class AnimationPlayback:
     """Play a rendered animation at the manifest fps, chaining its dependent clips:
     the start_from dep is prepended and the end_at dep appended (an animation dep
-    plays its frames; a pose/concept dep is held for `fps` frames ~1s). An action
+    plays its frames; a pose dep is held for `fps` frames ~1s). An action
     that returns to its start state loops `loops` times before the exit. Uses the
     same cascading selectors as the Character Animation Selector. Shows an in-node
     animated preview and outputs the assembled frame batch + fps."""
@@ -529,41 +480,6 @@ class AnimationPlayback:
                 f"AnimationPlayback: no rendered frames for {animation}@{direction}"
             )
         return {"ui": _animated_preview(frames, fps), "result": (frames, fps)}
-
-
-class ConceptImageLoader:
-    """Load a character's existing `_concept.png` back as an IMAGE (plus its
-    identity layer), for re-editing or feeding a refinement pass."""
-
-    CATEGORY = "andypack/Concept"
-    FUNCTION = "load"
-    RETURN_TYPES = ("IMAGE", "BOOLEAN", "STRING", "STRING")
-    RETURN_NAMES = ("CONCEPT_IMAGE", "HAS_CONCEPT", "IDENTITY_POSITIVE", "IDENTITY_NEGATIVE")
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {"required": {"character": (_character_choices(),)}}
-
-    @classmethod
-    def IS_CHANGED(cls, character):
-        if character in ("", _NO_CHARACTER):
-            return float("nan")
-        return _mtime(resolve.concept_image_path(_characters_root(), character))
-
-    def load(self, character):
-        if character in ("", _NO_CHARACTER):
-            raise RuntimeError("ConceptImageLoader: select a character first")
-        root = _characters_root()
-        identity = resolve.read_identity(root, character)
-        path = resolve.concept_image_path(root, character)
-        if os.path.exists(path):
-            image, has = images.load_image_tensor(path), True
-        else:
-            image, has = images.empty_image(), False
-        return (
-            image, has,
-            identity.get("positive_prompt", ""), identity.get("negative_prompt", ""),
-        )
 
 
 class ManifestLint:
@@ -774,8 +690,6 @@ class MirrorFrameWriter:
 
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
-    "ConceptImageWriter": ConceptImageWriter,
-    "ConceptImageLoader": ConceptImageLoader,
     "CharacterPoseSelector": CharacterPoseSelector,
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
@@ -791,8 +705,6 @@ NODE_CLASS_MAPPINGS = {
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
-    "ConceptImageWriter": "Concept Image Writer",
-    "ConceptImageLoader": "Concept Image Loader",
     "CharacterPoseSelector": "Character Pose Selector",
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",

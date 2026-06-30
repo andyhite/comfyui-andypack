@@ -5,7 +5,7 @@ def test_chain_unlocks_step_by_step(manifest, tree):
     root, char = tree.root, tree.char
 
     # Only concept present -> only base@EAST/SOUTH_EAST/SOUTH selectable; nothing combat yet.
-    tree.concept()
+    tree.character()
     assert status(manifest, root, char, "base", "EAST") == "ready"
     assert status(manifest, root, char, "fighting_stance", "EAST") == "blocked"
     assert status(manifest, root, char, "fighting_stance_idle", "EAST") == "blocked"
@@ -30,7 +30,7 @@ def test_chain_unlocks_step_by_step(manifest, tree):
 def test_editing_base_prompt_makes_whole_subtree_stale_but_selectable(manifest, tree):
     root, char = tree.root, tree.char
     # Fully render the chain fresh.
-    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST").animation(
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST").animation(
         "fighting_stance_idle", "EAST", frames=3
     )
     assert status(manifest, root, char, "punch", "EAST") == "ready"

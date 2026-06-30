@@ -9,7 +9,6 @@
   },
   "poses": {
     "base": {
-      "from": { "ref": "concept" },
       "positive_prompt": "neutral standing pose",
       "directions": {
         "EAST": { "positive_prompt": "facing right in profile" },
