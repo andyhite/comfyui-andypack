@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import warnings
 from typing import Any
 
@@ -11,6 +12,11 @@ Manifest = dict[str, Any]
 
 class ManifestError(Exception):
     """Raised when a manifest is structurally invalid or has a dependency cycle."""
+
+
+def _is_safe_segment(name: str) -> bool:
+    return bool(name) and name not in (".", "..") and not os.path.isabs(name) \
+        and "/" not in name and "\\" not in name and ".." not in name
 
 
 def node_kind(manifest: Manifest, ref: str) -> str:
@@ -31,6 +37,8 @@ def _validate_directions(label: str, entity: dict) -> None:
     if not isinstance(directions, dict):
         raise ManifestError(f"{label} missing 'directions' map")
     for dname, dlayer in directions.items():
+        if not _is_safe_segment(dname):
+            raise ManifestError(f"{label} direction name {dname!r} is unsafe (path segment)")
         if not isinstance(dlayer, dict):
             raise ManifestError(
                 f"{label} direction {dname!r} must be an object, got "
@@ -76,6 +84,8 @@ def _validate_view_phrases(manifest: Manifest) -> None:
 
 def _validate_refs(manifest: Manifest) -> None:
     for pid, pose in manifest.get("poses", {}).items():
+        if not _is_safe_segment(pid):
+            raise ManifestError(f"pose id {pid!r} is unsafe (path segment)")
         frm = pose.get("from")
         if frm is not None:
             if not isinstance(frm, dict) or "ref" not in frm:
@@ -90,6 +100,8 @@ def _validate_refs(manifest: Manifest) -> None:
             raise ManifestError("defaults.start_from missing 'ref'")
         node_kind(manifest, default_start["ref"])  # raises on unknown
     for aid, anim in manifest.get("animations", {}).items():
+        if not _is_safe_segment(aid):
+            raise ManifestError(f"animation id {aid!r} is unsafe (path segment)")
         for slot in ("start_from", "end_at"):
             dep = anim.get(slot)
             if dep is not None:

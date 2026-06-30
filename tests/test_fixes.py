@@ -1,9 +1,12 @@
 import os
 
+import pytest
+
 from andypack import api
 from andypack import resolve
 from andypack import io
 from andypack import nodes
+from andypack.manifest import validate_manifest, ManifestError
 
 
 def _render_pose(root, char, pose, direction, manifest):
@@ -102,3 +105,18 @@ def test_safe_manifest_path_rejects_traversal(tmp_path, monkeypatch):
     assert api.safe_manifest_path("../../etc/passwd.json") is None
     assert api.safe_manifest_path("/etc/passwd.json") is None
     assert api.safe_manifest_path("default.json") is not None  # bare name ok
+
+
+def test_unsafe_entity_id_rejected():
+    m = {"version": 1, "animations": {"../escape": {"start_from": {"ref": "base"},
+         "directions": {"EAST": {}}}},
+         "poses": {"base": {"directions": {"EAST": {}}}}, "defaults": {}}
+    with pytest.raises(ManifestError):
+        validate_manifest(m)
+
+
+def test_unsafe_direction_name_rejected():
+    m = {"version": 1, "poses": {"base": {"directions": {"../x": {}}}},
+         "animations": {}, "defaults": {}}
+    with pytest.raises(ManifestError):
+        validate_manifest(m)
