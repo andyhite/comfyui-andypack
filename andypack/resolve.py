@@ -484,6 +484,33 @@ def outdated(manifest: Manifest, root: str, character: str, ref: str, direction:
     return memo[key]
 
 
+def _sources_drifted(
+    manifest: Manifest, root: str, character: str, ref: str, direction: str, meta: Optional[dict]
+) -> bool:
+    """True if the recorded `sources` key-set differs from the current dep set
+    (an anchor ref was swapped / added / removed), OR a recorded source's
+    render_id drifted (re-rendered). Catches anchor identity changes the
+    prompt_hash can't see.
+
+    Malformed keys (no '@', from hand-edited or older metas) are excluded from
+    the key-set comparison and the render_id check — the transitive walk covers
+    those deps."""
+    recorded = (meta or {}).get("sources")
+    if not isinstance(recorded, dict):
+        return False  # pre-provenance meta: transitive walk still covers deps
+    # Only consider well-formed "@"-bearing keys; skip malformed ones as the
+    # old per-key loop did (transitive walk below covers those deps).
+    recorded_valid = {k: v for k, v in recorded.items() if "@" in k}
+    current = recorded_sources(manifest, root, character, ref, direction)
+    if set(recorded_valid.keys()) != set(current.keys()):
+        return True
+    for key, rid in recorded_valid.items():
+        dep_ref, ddir = key.rsplit("@", 1)
+        if read_render_id(manifest, root, character, dep_ref, ddir) != rid:
+            return True
+    return False
+
+
 def stale_locally(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> bool:
     """True if a COMPLETE node is stale for its OWN reasons — its merged prompt hash
     drifted, or a recorded source's `render_id` changed — so re-rendering THIS node
@@ -499,14 +526,8 @@ def stale_locally(manifest: Manifest, root: str, character: str, ref: str, direc
         manifest, root, character, kind, ref, direction
     ):
         return True
-    sources = (meta or {}).get("sources")
-    if isinstance(sources, dict):
-        for key, recorded in sources.items():
-            if "@" not in key:
-                continue
-            dep_ref, ddir = key.rsplit("@", 1)
-            if read_render_id(manifest, root, character, dep_ref, ddir) != recorded:
-                return True
+    if _sources_drifted(manifest, root, character, ref, direction, meta):
+        return True
     return False
 
 
@@ -519,20 +540,11 @@ def _outdated(manifest: Manifest, root: str, character: str, ref: str, direction
     if (meta or {}).get("prompt_hash") != current:
         return True
     # Provenance: if this node recorded the render_id of each source it consumed,
-    # a source whose current render_id differs (re-rendered, even with an
-    # unchanged prompt) makes this node stale. Absent on pre-provenance metas, in
-    # which case we fall back to the transitive-hash walk below.
-    sources = (meta or {}).get("sources")
-    if isinstance(sources, dict):
-        for key, recorded in sources.items():
-            # Keys are written as "dep_ref@dir"; tolerate a malformed key (no '@',
-            # from a hand-edited or older meta) by skipping it rather than raising
-            # — the transitive-hash walk below still covers that dependency.
-            if "@" not in key:
-                continue
-            dep_ref, ddir = key.rsplit("@", 1)
-            if read_render_id(manifest, root, character, dep_ref, ddir) != recorded:
-                return True
+    # or if the dep key-set changed (anchor ref swapped / end_at added/removed),
+    # this node is stale. Absent on pre-provenance metas, in which case we fall
+    # back to the transitive-hash walk below.
+    if _sources_drifted(manifest, root, character, ref, direction, meta):
+        return True
     if kind == "pose":
         frm = manifest["poses"][ref].get("from")
         if not frm:
