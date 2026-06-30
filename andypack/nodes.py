@@ -611,32 +611,42 @@ class AnimationPlayback:
                 "animation": ("STRING", {"default": ""}),
                 "direction": ("STRING", {"default": ""}),
                 "loops": ("INT", {"default": 1, "min": 1, "max": 64}),
+                "mode": (["loop", "ping_pong", "once", "hold_last"],),
+                "hold_frames": ("INT", {"default": 0, "min": 0, "max": 240}),
             }
         }
 
     @classmethod
-    def IS_CHANGED(cls, manifest, character, category, animation, direction, loops):
+    def IS_CHANGED(
+        cls, manifest, character, category, animation, direction, loops,
+        mode, hold_frames,
+    ):
         # Re-resolve so the cache reflects the rendered tree (the action and its
-        # chained clips being (re)rendered), plus the loop count.
+        # chained clips being (re)rendered), plus the loop count and mode.
         if character in ("", _NO_CHARACTER) or not animation or not direction:
             return float("nan")
         root = _characters_root()
         try:
             eff = effective_manifest(manifest, root, character)
             fps = resolve.animation_fps(eff, animation)
+            effective_loops = 1 if mode == "once" else int(loops)
             segs = resolve.playback_segments(
-                eff, root, character, animation, direction, loops=int(loops), fps=fps
+                eff, root, character, animation, direction,
+                loops=effective_loops, fps=fps,
             )
         except Exception:
             return float("nan")
-        parts = [str(loops)]
+        parts = [str(loops), mode, str(hold_frames)]
         for s in segs:
             src = s["dir"] if s["kind"] == "anim" else s["image"]
             n = s.get("repeat", s.get("count"))
             parts.append(f"{s['kind']}:{n}:{src}:{_mtime(src)}")
         return "|".join(parts)
 
-    def play(self, manifest, character, category, animation, direction, loops):
+    def play(
+        self, manifest, character, category, animation, direction, loops,
+        mode, hold_frames,
+    ):
         if character in ("", _NO_CHARACTER):
             raise RuntimeError("AnimationPlayback: select a character first")
         if not animation or not direction:
@@ -644,10 +654,13 @@ class AnimationPlayback:
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
         fps = resolve.animation_fps(manifest, animation)
+        effective_loops = 1 if mode == "once" else int(loops)
         segs = resolve.playback_segments(
-            manifest, root, character, animation, direction, loops=int(loops), fps=fps
+            manifest, root, character, animation, direction,
+            loops=effective_loops, fps=fps,
         )
         frames = images.assemble_playback(segs)
+        frames = images.apply_play_mode(frames, mode, hold_frames)
         if images.is_empty(frames):
             raise RuntimeError(
                 f"AnimationPlayback: no rendered frames for {animation}@{direction}"

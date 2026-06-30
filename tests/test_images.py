@@ -110,3 +110,10 @@ def test_contact_sheet_infers_cell_from_tile_max():
     tile = torch.zeros((1, 10, 20, 3))
     sheet = images.contact_sheet([tile, None], columns=2)
     assert sheet.shape[1] == 10 and sheet.shape[2] == 40
+
+
+def test_ping_pong_appends_reversed_interior():
+    import torch
+    f = torch.arange(4).float().reshape(4, 1, 1, 1).repeat(1, 2, 2, 3)
+    out = images.apply_play_mode(f, "ping_pong")
+    assert out.shape[0] == 6  # 0,1,2,3,2,1

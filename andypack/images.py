@@ -247,6 +247,31 @@ def assemble_playback(segments: list) -> torch.Tensor:
     return torch.cat(parts, dim=0)
 
 
+def apply_play_mode(
+    frames: torch.Tensor, mode: str, hold_frames: int = 0
+) -> torch.Tensor:
+    """Post-process an assembled IMAGE batch [N, H, W, C] according to playback mode.
+
+    - ``loop``      — return frames unchanged (looping is handled by the player).
+    - ``ping_pong`` — append the reversed interior so the clip plays forward then
+                      backward: [0,1,2,3] → [0,1,2,3,2,1] (6 frames). For <=2
+                      frames the interior is empty; return unchanged.
+    - ``once``      — return frames unchanged (the node passes loops=1 upstream).
+    - ``hold_last`` — repeat the final frame ``hold_frames`` times when
+                      hold_frames > 0; otherwise return unchanged.
+    """
+    if frames.shape[0] <= 1:
+        return frames
+    if mode == "ping_pong":
+        interior = frames[1:-1]
+        if interior.shape[0] == 0:
+            return frames
+        return torch.cat([frames, interior.flip(0)])
+    if mode == "hold_last" and hold_frames > 0:
+        return torch.cat([frames, frames[-1:].repeat(hold_frames, 1, 1, 1)])
+    return frames
+
+
 def save_animated_webp(frames: torch.Tensor, path: str, fps: int) -> None:
     """Encode an IMAGE batch [N, H, W, C] as an animated WEBP at `path`, played at
     `fps`. A single frame writes a still WEBP."""

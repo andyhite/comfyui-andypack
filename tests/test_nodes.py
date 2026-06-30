@@ -332,7 +332,9 @@ def test_animation_playback_chains_and_loops(manifest, tree, monkeypatch):
         for i in range(3):
             images.save_image_png(_img(), os.path.join(d, f"frame_{i:05d}.png"))
 
-    out = nodes.AnimationPlayback().play(manifest, tree.char, "", "punch", "EAST", 3)
+    out = nodes.AnimationPlayback().play(
+        manifest, tree.char, "", "punch", "EAST", 3, mode="loop", hold_frames=0
+    )
     frames, fps = out["result"]
     assert fps == manifest["defaults"]["fps"]  # punch inherits the default fps (16)
     # idle(3) + punch(1x, drop_first+drop_last = 1) + idle(3) = 7
@@ -346,7 +348,9 @@ def test_animation_playback_raises_when_unrendered(manifest, tree, monkeypatch):
     # not emit a bogus 1x1 black frame (the old `shape[0] == 0` guard never fired).
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     with pytest.raises(RuntimeError, match="no rendered frames"):
-        nodes.AnimationPlayback().play(manifest, tree.char, "", "punch", "EAST", 1)
+        nodes.AnimationPlayback().play(
+            manifest, tree.char, "", "punch", "EAST", 1, mode="loop", hold_frames=0
+        )
 
 
 def test_leaf_output_keys_exclude_private_meta():
