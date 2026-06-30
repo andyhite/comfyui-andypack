@@ -2083,6 +2083,56 @@ class ColorVariantBatcher:
         return dst_d
 
 
+class VariantLayerComposer:
+    """Merge an outfit/equipment prompt fragment into an ANIM_POSE bundle at
+    wire time, retargeting output_dir to a sibling variant directory so the
+    variant renders to its own gated target while preserving FFLF anchors.
+
+    Pure transform — no disk I/O, no IS_CHANGED needed."""
+
+    CATEGORY = "andypack/Pose"
+    FUNCTION = "compose"
+    RETURN_TYPES = ("ANIM_POSE",)
+    RETURN_NAMES = ("POSE",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "pose": ("ANIM_POSE",),
+                "variant_id": ("STRING", {"default": ""}),
+                "variant_positive": ("STRING", {"default": "", "multiline": True}),
+            },
+            "optional": {
+                "variant_negative": ("STRING", {"default": "", "multiline": True}),
+                "output_suffix": ("STRING", {"default": ""}),
+            },
+        }
+
+    def compose(
+        self,
+        pose,
+        variant_id,
+        variant_positive,
+        variant_negative="",
+        output_suffix="",
+    ):
+        pos = resolve.merge_layers(pose["positive"], variant_positive)
+        neg = resolve.merge_negative(pose["negative"], variant_negative)
+        new_hash = resolve.hash_prompts(pos, neg)
+        suffix = output_suffix or variant_id
+        new_output_dir = f"{pose['output_dir']}__{suffix}"
+        new_meta = {**pose["_meta"], "prompt_hash": new_hash, "variant_of": variant_id}
+        new_bundle = {
+            **pose,
+            "positive": pos,
+            "negative": neg,
+            "output_dir": new_output_dir,
+            "_meta": new_meta,
+        }
+        return (new_bundle,)
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
@@ -2103,6 +2153,7 @@ NODE_CLASS_MAPPINGS = {
     "AnimationPlayback": AnimationPlayback,
     "MirrorFrameWriter": MirrorFrameWriter,
     "ColorVariantBatcher": ColorVariantBatcher,
+    "VariantLayerComposer": VariantLayerComposer,
     "ManifestLint": ManifestLint,
     "CoverageReport": CoverageReport,
     "MergedPromptReport": MergedPromptReport,
@@ -2136,6 +2187,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationPlayback": "Animation Playback",
     "MirrorFrameWriter": "Mirror Frame Writer",
     "ColorVariantBatcher": "Color Variant Batcher",
+    "VariantLayerComposer": "Variant Layer Composer",
     "ManifestLint": "Animation Manifest Lint",
     "CoverageReport": "Coverage Report",
     "MergedPromptReport": "Prompt Report",

@@ -958,3 +958,20 @@ def test_color_variant_batcher_is_changed_nan_without_id(manifest, tree, monkeyp
         manifest, tree.char, "pose", "", "EAST", "red: hue=0"
     )
     assert token != token  # NaN
+
+
+def test_variant_layer_composer_recomputes_hash():
+    pose = {
+        "source_image": images.empty_image(),
+        "pose_reference": images.empty_image(),
+        "positive": "a hero",
+        "negative": "blurry",
+        "output_dir": "/x/_p",
+        "_meta": {"prompt_hash": "sha1:old", "image": "EAST.png"},
+    }
+    (out,) = nodes.VariantLayerComposer().compose(pose, "gold", "golden armor", "")
+    assert "golden armor" in out["positive"]
+    assert out["_meta"]["prompt_hash"] != "sha1:old"
+    assert out["output_dir"].endswith("__gold")
+    # Input bundle must NOT be mutated
+    assert pose["_meta"]["prompt_hash"] == "sha1:old"
