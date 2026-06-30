@@ -433,15 +433,29 @@ def regen_queue(manifest: Manifest, root: str, character: str) -> list[dict]:
 
 
 def next_actionable(
-    manifest: Manifest, root: str, character: str, kind: str, *, exclude_root: bool = False
+    manifest: Manifest,
+    root: str,
+    character: str,
+    kind: str,
+    *,
+    exclude_root: bool = False,
+    category: Optional[str] = None,
+    skip_mirrored: bool = False,
 ) -> Optional[dict]:
     """The first selectable-now (ready/stale) cell of `kind` in dependency order,
     or None when nothing of that kind is actionable. Backs the auto-advancing
     batch selectors: queue the graph repeatedly and each run picks the next job.
 
     `exclude_root` drops root poses (no `from`, e.g. `base`) — they need the
-    Character Creator's reference image + manikin, not a generic selector."""
+    Character Creator's reference image + manikin, not a generic selector.
+
+    `category` filters to entities whose `category` field matches exactly.
+
+    `skip_mirrored` drops directions that appear as keys in
+    `manifest["mirror_map"]` — those directions are derived from a source
+    direction and should not be independently queued."""
     eff = _safe_effective(manifest, root, character)
+    mirror_keys = set(eff.get("mirror_map", {}).keys()) if skip_mirrored else set()
     for item in regen_queue(eff, root, character):
         if item["kind"] != kind:
             continue
@@ -449,6 +463,13 @@ def next_actionable(
             pose = eff.get("poses", {}).get(item["id"], {})
             if pose.get("from") is None:
                 continue
+        if category is not None:
+            collection = eff.get("poses", {}) if kind == "pose" else eff.get("animations", {})
+            entity = collection.get(item["id"], {})
+            if entity.get("category") != category:
+                continue
+        if skip_mirrored and item["direction"] in mirror_keys:
+            continue
         # Skip a cell that is stale ONLY because of an ancestor it can't fix by
         # re-rendering itself — re-running it wouldn't clear the staleness, so the
         # batch loop would wedge on it forever (e.g. every descendant of a stale

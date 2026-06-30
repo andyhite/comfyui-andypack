@@ -350,3 +350,36 @@ def test_list_options_marks_root_poses(manifest, tmp_path):
     assert by_id[("pose", "base", "EAST")]["root"] is True
     assert by_id[("pose", "fighting_stance", "EAST")]["root"] is False
     assert by_id[("animation", "walk", "EAST")]["root"] is False
+
+
+def test_next_actionable_skip_mirrored(tmp_path):
+    root = str(tmp_path)
+    char = "hero"
+    manifest = {
+        "version": 1,
+        "mirror_map": {"WEST": "EAST"},
+        "poses": {
+            "base": {"directions": {"EAST": {}}},
+            "p": {"from": {"ref": "base"}, "directions": {"EAST": {}, "WEST": {}}},
+        },
+        "animations": {},
+        "defaults": {},
+    }
+    base = os.path.join(root, char, "_base")
+    os.makedirs(base, exist_ok=True)
+    open(os.path.join(base, "EAST.png"), "wb").close()
+    from andypack import io, resolve
+    correct_hash = resolve.compute_prompt_hash(manifest, root, char, "pose", "base", "EAST")
+    io.atomic_write_json(
+        os.path.join(base, "EAST.json"),
+        io.build_pose_sidecar(
+            {"prompt_hash": correct_hash, "direction": "EAST", "kind": "pose",
+             "pose": "base", "from": None, "manifest_version": manifest["version"]},
+            created_utc="t",
+        ),
+    )
+    job = api.next_actionable(
+        manifest, root, char, "pose", exclude_root=True, skip_mirrored=True
+    )
+    assert job is not None
+    assert job["direction"] == "EAST"  # WEST is a mirror target, skipped
