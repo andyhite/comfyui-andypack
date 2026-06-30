@@ -975,3 +975,50 @@ def test_variant_layer_composer_recomputes_hash():
     assert out["output_dir"].endswith("__gold")
     # Input bundle must NOT be mutated
     assert pose["_meta"]["prompt_hash"] == "sha1:old"
+
+
+# --- AnimatedSpriteExport --------------------------------------------------- #
+
+def test_animated_sprite_export_registered():
+    assert "AnimatedSpriteExport" in nodes.NODE_CLASS_MAPPINGS
+    assert nodes.NODE_DISPLAY_NAME_MAPPINGS["AnimatedSpriteExport"] == "Animated Sprite Export"
+
+
+def test_animated_sprite_export_writes_gif(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes.api, "output_dir", lambda: str(tmp_path))
+    frames = torch.ones((3, 4, 4, 3))
+    result = nodes.AnimatedSpriteExport().export(
+        frames, format="gif", loop=True, fps=8, name="hero"
+    )
+    out_file = tmp_path / "hero.gif"
+    assert out_file.exists()
+    # result dict has ui (may be {}) and result tuple
+    frames_out, out_dir = result["result"]
+    assert frames_out.shape == frames.shape
+    assert out_dir == str(tmp_path)
+    from PIL import Image
+    with Image.open(str(out_file)) as im:
+        assert im.is_animated and im.n_frames == 3
+
+
+def test_animated_sprite_export_onion_skin_changes_frames(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes.api, "output_dir", lambda: str(tmp_path))
+    # frame0=0, frame1=1, frame2=0 — onion skin on frame1 should darken it
+    f = torch.zeros((3, 2, 2, 3))
+    f[1] = 1.0
+    result = nodes.AnimatedSpriteExport().export(
+        f, format="gif", loop=True, fps=8,
+        onion_skin=True, onion_prev=1, onion_next=1, onion_opacity=0.5, name="oss"
+    )
+    frames_out, _ = result["result"]
+    # frame1 should be blended: 0.5*1 + 0.5*mean(0,0) = 0.5
+    assert abs(float(frames_out[1].mean()) - 0.5) < 1e-4
+
+
+def test_animated_sprite_export_webp(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes.api, "output_dir", lambda: str(tmp_path))
+    frames = torch.stack([
+        torch.full((4, 4, 3), v, dtype=torch.float32) for v in [0.2, 0.5, 0.8]
+    ])
+    nodes.AnimatedSpriteExport().export(frames, format="webp", loop=True, fps=12, name="clip")
+    assert (tmp_path / "clip.webp").exists()

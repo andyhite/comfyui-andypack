@@ -213,3 +213,51 @@ def test_recolor_hex_remaps_hue():
     assert out.shape == (1, 1, 1, 3)
     # Blue hue: b channel should dominate
     assert float(out[0, 0, 0, 2]) > 0.9
+
+
+def test_save_gif(tmp_path):
+    import torch
+    f = torch.ones((3, 4, 4, 3))
+    p = str(tmp_path / "a.gif")
+    images.save_animated_gif(f, p, 8)
+    from PIL import Image
+    with Image.open(p) as im:
+        assert im.is_animated and im.n_frames == 3
+
+
+def test_save_apng(tmp_path):
+    import torch
+    # Use distinct frames so PIL APNG does not deduplicate them.
+    f = torch.stack([
+        torch.full((4, 4, 3), v, dtype=torch.float32) for v in [0.1, 0.4, 0.7, 1.0]
+    ])
+    p = str(tmp_path / "b.png")
+    images.save_animated_apng(f, p, 12)
+    from PIL import Image
+    with Image.open(p) as im:
+        assert im.n_frames == 4
+
+
+def test_onion_skin_shape_preserved():
+    import torch
+    f = torch.rand((5, 8, 8, 3))
+    out = images.onion_skin(f, prev=1, next=1, opacity=0.3)
+    assert out.shape == f.shape
+
+
+def test_onion_skin_no_neighbors_returns_frames():
+    import torch
+    f = torch.rand((3, 4, 4, 3))
+    out = images.onion_skin(f, prev=0, next=0, opacity=0.5)
+    assert torch.allclose(out, f)
+
+
+def test_onion_skin_blends_neighbors():
+    import torch
+    # frame 0 = zeros, frame 1 = ones, frame 2 = zeros
+    # For frame 1, with prev=1 next=1, ghost = mean(frame0, frame2) = 0
+    # out[1] = (1-0.5)*ones + 0.5*zeros = 0.5
+    f = torch.zeros((3, 2, 2, 3))
+    f[1] = 1.0
+    out = images.onion_skin(f, prev=1, next=1, opacity=0.5)
+    assert abs(float(out[1].mean()) - 0.5) < 1e-4

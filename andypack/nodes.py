@@ -2133,6 +2133,68 @@ class VariantLayerComposer:
         return (new_bundle,)
 
 
+class AnimatedSpriteExport:
+    """Export a frame batch as a looping animated GIF, APNG, or WebP.
+
+    Optional onion-skinning composites ghosted neighbor frames for animator QA.
+    Shows an in-node animated-WebP preview; writes the chosen format to the
+    ComfyUI output directory.
+    """
+
+    CATEGORY = "andypack/Export"
+    FUNCTION = "export"
+    OUTPUT_NODE = True
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("PREVIEW", "OUTPUT_DIR")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "format": (["gif", "apng", "webp"],),
+                "loop": ("BOOLEAN", {"default": True}),
+            },
+            "optional": {
+                "fps": ("INT", {"default": 12, "forceInput": True}),
+                "onion_skin": ("BOOLEAN", {"default": False}),
+                "onion_prev": ("INT", {"default": 1, "min": 0, "max": 8}),
+                "onion_next": ("INT", {"default": 0, "min": 0, "max": 8}),
+                "onion_opacity": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 1.0}),
+                "name": ("STRING", {"default": "sprite"}),
+            },
+        }
+
+    def export(
+        self,
+        image,
+        format,
+        loop,
+        fps=12,
+        onion_skin=False,
+        onion_prev=1,
+        onion_next=0,
+        onion_opacity=0.3,
+        name="sprite",
+    ):
+        fps_safe = max(int(fps), 1)
+        frames = image
+        if onion_skin:
+            frames = images.onion_skin(
+                image, int(onion_prev), int(onion_next), float(onion_opacity)
+            )
+        out_dir = api.output_dir() or "output"
+        ext = format
+        out_path = os.path.join(out_dir, f"{name}.{ext}")
+        if format == "gif":
+            images.save_animated_gif(frames, out_path, fps_safe)
+        elif format == "apng":
+            images.save_animated_apng(frames, out_path, fps_safe)
+        else:
+            images.save_animated_webp(frames, out_path, fps_safe)
+        return {"ui": _animated_preview(frames, fps_safe), "result": (frames, out_dir)}
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
@@ -2166,6 +2228,7 @@ NODE_CLASS_MAPPINGS = {
     "CharacterAtlasBuilder": CharacterAtlasBuilder,
     "TurnaroundSheet": TurnaroundSheet,
     "FrameTimingNormalizer": FrameTimingNormalizer,
+    "AnimatedSpriteExport": AnimatedSpriteExport,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
@@ -2200,4 +2263,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "CharacterAtlasBuilder": "Character Atlas Builder",
     "TurnaroundSheet": "Turnaround Sheet",
     "FrameTimingNormalizer": "Frame Timing Normalizer",
+    "AnimatedSpriteExport": "Animated Sprite Export",
 }

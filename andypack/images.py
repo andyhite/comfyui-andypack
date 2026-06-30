@@ -411,6 +411,91 @@ def save_animated_webp(frames: torch.Tensor, path: str, fps: int) -> None:
     )
 
 
+def save_animated_gif(frames: torch.Tensor, path: str, fps: int) -> None:
+    """Encode an IMAGE batch [N, H, W, C] as an animated GIF at ``path``, played at
+    ``fps``. A single frame writes a still GIF.
+
+    Uses PIL's legacy ``getheader``/``getdata`` API to write each frame directly,
+    bypassing PIL's identical-frame deduplication so the frame count is always N.
+    """
+    from PIL import GifImagePlugin
+
+    arr = (frames.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
+    pil = [Image.fromarray(a, mode="RGB").convert("P") for a in arr]
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    duration_ms = int(round(1000.0 / max(int(fps), 1)))
+    with open(path, "wb") as fp:
+        header_blocks, _palette = GifImagePlugin.getheader(pil[0].copy())
+        for block in header_blocks:
+            fp.write(block)
+        # NETSCAPE2.0 looping application extension (loop=0 → infinite).
+        fp.write(b"!\xff\x0bNETSCAPE2.0\x03\x01")
+        fp.write(GifImagePlugin.o16(0))
+        fp.write(b"\x00")
+        for frame in pil:
+            for block in GifImagePlugin.getdata(frame.copy(), duration=duration_ms):
+                fp.write(block)
+        fp.write(b"\x3b")  # GIF trailer
+
+
+def save_animated_apng(frames: torch.Tensor, path: str, fps: int) -> None:
+    """Encode an IMAGE batch [N, H, W, C] as an animated PNG (APNG) at ``path``,
+    played at ``fps``. A single frame writes a still PNG."""
+    arr = (frames.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
+    pil = [Image.fromarray(a, mode="RGB") for a in arr]
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    duration = int(round(1000.0 / max(int(fps), 1)))
+    pil[0].save(
+        path, format="PNG", save_all=True, append_images=pil[1:],
+        duration=duration, loop=0,
+    )
+
+
+def onion_skin(
+    frames: torch.Tensor,
+    prev: int,
+    next: int,  # noqa: A002 — intentionally shadows builtin to match public API
+    opacity: float,
+) -> torch.Tensor:
+    """Composite ghosted neighbor frames for animator QA.
+
+    For each frame *i*, compute a ghost = mean of up-to-``prev`` preceding frames
+    and up-to-``next`` following frames.  The output is a linear blend::
+
+        out[i] = (1 - opacity) * frame[i] + opacity * ghost[i]
+
+    When frame *i* has no neighbors (edges, or prev=next=0), ghost equals frame[i]
+    so the output is unchanged.
+
+    Args:
+        frames:  IMAGE batch [N, H, W, C] float in [0, 1].
+        prev:    Number of preceding frames to include in the ghost.
+        next:    Number of following frames to include in the ghost.
+        opacity: Blend weight of the ghost (0 = no ghost, 1 = ghost only).
+
+    Returns:
+        Blended tensor [N, H, W, C] clamped to [0, 1].
+    """
+    n = int(frames.shape[0])
+    if n == 0 or (int(prev) == 0 and int(next) == 0):
+        return frames
+    out = frames.clone()
+    opacity_f = float(opacity)
+    prev_n = int(prev)
+    next_n = int(next)
+    for i in range(n):
+        lo = max(0, i - prev_n)
+        hi = min(n, i + next_n + 1)
+        neighbor_indices = [j for j in range(lo, hi) if j != i]
+        if not neighbor_indices:
+            continue
+        ghost = torch.stack([frames[j] for j in neighbor_indices]).mean(dim=0)
+        out[i] = (1.0 - opacity_f) * frames[i] + opacity_f * ghost
+    return out.clamp(0.0, 1.0)
+
+
 def contact_sheet(
     tiles: list,
     columns: int,
