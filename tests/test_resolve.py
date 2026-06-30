@@ -125,6 +125,13 @@ def test_effective_manifest_no_character_entities_returns_same(manifest, tree):
     assert effective_manifest(manifest, tree.root, tree.char) is manifest
 
 
+def test_effective_manifest_tolerates_malformed_poses(manifest, tree):
+    # `_concept.json` is user-authored; a `poses`/`animations` that isn't an
+    # object (here a list) must be ignored, not crash the `{**...}` merge.
+    tree.identity(poses=["oops"], animations="nope")
+    assert effective_manifest(manifest, tree.root, tree.char) is manifest
+
+
 def test_effective_manifest_rejects_bad_character_ref(manifest, tree):
     # a character pose referencing an unknown ref must fail, not resolve silently
     tree.identity(poses={"bad": {"from": {"ref": "nope"}, "directions": {"EAST": {}}}})

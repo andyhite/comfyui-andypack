@@ -79,8 +79,12 @@ def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifes
     character ref or a cycle raises ManifestError instead of resolving silently
     or looping."""
     identity = read_identity(root, character)
-    char_poses = identity.get("poses") or {}
-    char_anims = identity.get("animations") or {}
+    # `_concept.json` is user-authored; tolerate a malformed `poses`/`animations`
+    # (e.g. a list) by ignoring it rather than crashing the `{**...}` merge below.
+    char_poses = identity.get("poses")
+    char_anims = identity.get("animations")
+    char_poses = char_poses if isinstance(char_poses, dict) else {}
+    char_anims = char_anims if isinstance(char_anims, dict) else {}
     if not char_poses and not char_anims:
         return manifest
     merged: Manifest = {

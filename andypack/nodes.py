@@ -100,8 +100,6 @@ class ConceptImageWriter:
         return {
             "required": {
                 "image": ("IMAGE",),
-                # A directory name under ComfyUI's output dir (joined below).
-                "root_dir": ("STRING", {"default": "characters"}),
                 "character": ("STRING", {"default": "cortex"}),
             },
             "optional": {
@@ -110,10 +108,11 @@ class ConceptImageWriter:
             },
         }
 
-    def write(self, image, root_dir, character, identity_positive="", identity_negative=""):
-        # Character names become path segments — force lowercase snake_case.
-        # root_dir is resolved under ComfyUI's output dir (absolute paths pass through).
-        char_dir = api.under_output(os.path.join(root_dir, io.to_snake_case(character)))
+    def write(self, image, character, identity_positive="", identity_negative=""):
+        # Character names become path segments — force lowercase snake_case. Write
+        # under the same characters root the selectors read from, so a written
+        # concept always shows up in their character dropdowns.
+        char_dir = os.path.join(_characters_root(), io.to_snake_case(character))
         images.save_image_png(image, os.path.join(char_dir, "_concept.png"))
         layer = {}
         if identity_positive.strip():
@@ -491,7 +490,7 @@ class AnimationPlayback:
             manifest, root, character, animation, direction, loops=int(loops), fps=fps
         )
         frames = images.assemble_playback(segs)
-        if frames.shape[0] == 0:
+        if images.is_empty(frames):
             raise RuntimeError(
                 f"AnimationPlayback: no rendered frames for {animation}@{direction}"
             )

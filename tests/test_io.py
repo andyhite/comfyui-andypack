@@ -69,27 +69,6 @@ def test_clear_frames_missing_dir_is_noop(tmp_path):
     io.clear_frames(str(tmp_path / "nope"))  # no raise
 
 
-def test_safe_path_allows_inside(tmp_path):
-    root = str(tmp_path)
-    target = io.safe_path(root, "Cortex/_base/EAST.png")
-    assert target is not None and target.startswith(os.path.realpath(root))
-
-
-def test_safe_path_rejects_dotdot(tmp_path):
-    assert io.safe_path(str(tmp_path), "../../etc/passwd") is None
-
-
-def test_safe_path_rejects_absolute(tmp_path):
-    assert io.safe_path(str(tmp_path), "/etc/passwd") is None
-
-
-def test_safe_path_rejects_symlink_escape(tmp_path):
-    outside = tmp_path.parent / "outside_secret"
-    outside.mkdir()
-    (tmp_path / "link").symlink_to(outside)
-    assert io.safe_path(str(tmp_path), "link/secret.txt") is None
-
-
 def test_resolve_under_joins_relative_to_base():
     assert io.resolve_under("/comfy/user/default", "animations.json") == (
         os.path.join("/comfy/user/default", "animations.json")

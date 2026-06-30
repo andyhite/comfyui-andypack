@@ -89,6 +89,13 @@ def empty_image() -> torch.Tensor:
     return torch.zeros((1, 1, 1, 3), dtype=torch.float32)
 
 
+def is_empty(image: torch.Tensor) -> bool:
+    """True when `image` is the empty sentinel (no real pixels) — e.g. what
+    assemble_playback returns when no segment had readable frames. Real frames
+    carry their source PNG dimensions, so a >1x1 batch is never the sentinel."""
+    return image.shape[0] == 0 or (image.shape[1] <= 1 and image.shape[2] <= 1)
+
+
 def _load_frames_dir(directory: str) -> "torch.Tensor | None":
     """Load `frame_*.png` from a directory as a [N, H, W, C] batch (sorted by
     name), or None when the directory holds no frames."""

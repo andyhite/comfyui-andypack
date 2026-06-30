@@ -1,6 +1,7 @@
 import json
 import os
 
+import pytest
 import torch
 
 from andypack import images, nodes, resolve
@@ -304,6 +305,15 @@ def test_animation_playback_chains_and_loops(manifest, tree, monkeypatch):
     assert fps == manifest["defaults"]["fps"]  # punch inherits the default fps (16)
     # idle(3) + punch(3*3, minus dropped first & last seam = 7) + idle(3) = 13
     assert frames.shape[0] == 3 + 7 + 3
+
+
+def test_animation_playback_raises_when_unrendered(manifest, tree, monkeypatch):
+    # Nothing rendered: the action dir has no frames and the (incomplete) deps are
+    # skipped, so assemble_playback yields the empty sentinel. play() must raise,
+    # not emit a bogus 1x1 black frame (the old `shape[0] == 0` guard never fired).
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    with pytest.raises(RuntimeError, match="no rendered frames"):
+        nodes.AnimationPlayback().play(manifest, tree.char, "", "punch", "EAST", 1)
 
 
 def test_leaf_output_keys_exclude_private_meta():

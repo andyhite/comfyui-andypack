@@ -152,15 +152,3 @@ def resolve_under(base: Optional[str], candidate: str) -> str:
     if os.path.isabs(candidate) or not base:
         return candidate
     return os.path.join(base, candidate)
-
-
-def safe_path(root: str, candidate: str) -> Optional[str]:
-    """Resolve `candidate` under `root`, rejecting `..`, absolute, and symlink escapes.
-
-    Returns the real absolute path if it is inside `root`, else None.
-    """
-    root_real = os.path.realpath(root)
-    target = os.path.realpath(os.path.join(root_real, candidate))
-    if target == root_real or target.startswith(root_real + os.sep):
-        return target
-    return None

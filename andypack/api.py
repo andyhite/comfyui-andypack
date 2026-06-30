@@ -84,14 +84,6 @@ def output_dir() -> Optional[str]:
     return folder_paths.get_output_directory()
 
 
-def under_output(rel: str) -> str:
-    """Resolve `rel` under ComfyUI's output dir; absolute paths pass through.
-
-    Outside ComfyUI (no output dir) `rel` falls back to itself (CWD-relative).
-    """
-    return io.resolve_under(output_dir(), rel)
-
-
 def characters_dir() -> Optional[str]:
     """The root that holds per-character directories: `<output>/characters`.
 
