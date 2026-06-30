@@ -1086,6 +1086,58 @@ class SpritesheetPacker:
         return (sheet, atlas_dict)
 
 
+class PaletteQuantizeLock:
+    CATEGORY = "andypack/Sprite"
+    FUNCTION = "run"
+    RETURN_TYPES = ("IMAGE", "ANIM_PALETTE")
+    RETURN_NAMES = ("IMAGE", "PALETTE")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "colors": ("INT", {"default": 32, "min": 2, "max": 256}),
+                "dither": (["none", "floyd_steinberg", "ordered"],),
+            },
+            "optional": {
+                "palette": ("ANIM_PALETTE",),
+                "preserve_alpha": ("BOOLEAN", {"default": True}),
+                "extract_only": ("BOOLEAN", {"default": False}),
+            },
+        }
+
+    def run(
+        self,
+        image,
+        colors,
+        dither,
+        palette=None,
+        preserve_alpha=True,
+        extract_only=False,
+    ):
+        if palette is not None:
+            pal_tuples = [tuple(c) for c in palette["colors"]]
+            quantized = sprites.quantize_to_palette(
+                image,
+                pal_tuples,
+                dither=dither,
+                preserve_alpha=preserve_alpha,
+            )
+            return (quantized, palette)
+        pal_list = sprites.extract_palette(image, colors)
+        anim_palette = {"colors": [list(c) for c in pal_list]}
+        if extract_only:
+            return (image, anim_palette)
+        quantized = sprites.quantize_to_palette(
+            image,
+            pal_list,
+            dither=dither,
+            preserve_alpha=preserve_alpha,
+        )
+        return (quantized, anim_palette)
+
+
 class AtlasMetadataWriter:
     CATEGORY = "andypack/Export"
     FUNCTION = "export"
@@ -1265,6 +1317,7 @@ NODE_CLASS_MAPPINGS = {
     "RegenQueue": RegenQueue,
     "SpriteTrimPivot": SpriteTrimPivot,
     "SpritesheetPacker": SpritesheetPacker,
+    "PaletteQuantizeLock": PaletteQuantizeLock,
     "AtlasMetadataWriter": AtlasMetadataWriter,
     "CharacterAtlasBuilder": CharacterAtlasBuilder,
 }
@@ -1288,6 +1341,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "RegenQueue": "Regen Queue",
     "SpriteTrimPivot": "Sprite Trim & Pivot",
     "SpritesheetPacker": "Spritesheet Packer",
+    "PaletteQuantizeLock": "Palette Quantize & Lock",
     "AtlasMetadataWriter": "Atlas Metadata Writer",
     "CharacterAtlasBuilder": "Character Atlas Builder",
 }

@@ -632,3 +632,10 @@ def test_character_atlas_builder_pads_mismatched_direction_sizes(manifest, tree,
     assert len(atlas["directions"]) == 2
     assert "EAST" in atlas["directions"]
     assert "SOUTH" in atlas["directions"]
+
+
+def test_palette_node_extract_only_passthrough():
+    img = torch.ones((1, 2, 2, 3))
+    out_img, pal = nodes.PaletteQuantizeLock().run(img, colors=4, dither="none",
+        preserve_alpha=True, extract_only=True)
+    assert torch.equal(out_img, img) and "colors" in pal
