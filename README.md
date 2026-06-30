@@ -16,12 +16,13 @@ node in the chain unlocks.
 
 ## Mental model
 
-Everything is one dependency graph of three node kinds, rooted at an uploaded
-concept image:
+Everything is one dependency graph of two rendered node kinds, rooted at the
+**base** pose:
 
 ```mermaid
 graph TD
-  concept["_concept.png<br/>(uploaded seed)"] --> base["base pose<br/>(per direction)"]
+  ref["character reference<br/>(node input, not saved)"] --> base
+  manikin["manikin[dir]<br/>(bundled, per direction)"] --> base["base pose<br/>(root, per direction)"]
   base --> stance["fighting_stance pose"]
   stance --> idle["fighting_stance_idle<br/>(WAN loop)"]
   base -. start_from .-> entry["fighting_stance_entry"]
@@ -29,11 +30,15 @@ graph TD
   idle -. start_from + end_at .-> punch["punch / kick / …"]
 ```
 
-- **Concept** — the per-character seed. An uploaded, direction-agnostic
-  `_concept.png`, plus an optional `_concept.json` identity layer that reinforces
-  character details the generated frames can't see. Never rendered by the pack.
+- **Base pose** — the tree root. Each of its 8 directions is a FLUX multi-
+  reference edit of the **character reference image** (a Character Creator input,
+  *not persisted*) paired with the bundled **manikin** for that direction (which
+  supplies the camera angle / body orientation). Renders to `_base/{dir}.png` +
+  a sidecar. A character's prompt layer lives in `character.json` (no image, no
+  provenance).
 - **Pose** — a per-direction still produced by a FLUX edit of a *source image*
-  (the concept or another pose). Renders to `_{pose}/{dir}.png` + a sidecar.
+  (another pose). A pose with no `from` is a root pose (base). Renders to
+  `_{pose}/{dir}.png` + a sidecar.
 - **Animation** — a WAN clip. Renders to `{anim}/{dir}/frame_*.png` + `meta.json`.
 
 ### FFLF cross-wiring
@@ -44,7 +49,7 @@ optional — when present, the clip is FFLF. The cross-wiring is:
 
 - `start_from` consumes the dependency's **last** frame.
 - `end_at` consumes the dependency's **first** frame.
-- A single-image dep (concept/pose) resolves the same image for either slot.
+- A single-image dep (a pose) resolves the same image for either slot.
 
 **Looping is a consequence of FFLF, not a flag.** There is no `loop` field. A
 clip loops when its start and end anchors resolve to the *same image* (e.g.
@@ -58,8 +63,12 @@ Each render's final positive and negative are merged from layers, general →
 specific:
 
 ```
-identity (_concept.json) → globals[kind] → entity → entity.directions[dir]
+globals[kind] → entity → entity.directions[dir]
 ```
+
+The character prompt layer (`character.json`) and the per-direction layer are
+**not** cascade layers — they surface only via the opt-in template variables
+`{character_prompt}`, `{direction_prompt}`, and `{direction_name}`.
 
 Positives are joined as prose; negatives are merged as a deduped, comma-separated
 term list. The merged prompt is hashed into the sidecar/`meta.json` as
@@ -69,8 +78,9 @@ term list. The merged prompt is hashed into the sidecar/`meta.json` as
 
 Staleness is **transitive on the prompt hash**. A complete node is `stale` if its
 own merged-prompt hash drifted from what was rendered, **or** any ancestor is
-stale. Editing the concept identity or any cascade layer ripples downstream. A
-stale node stays selectable — it just shows amber so you know to re-render.
+stale. Editing the character prompt layer or any cascade layer ripples
+downstream. A stale node stays selectable — it just shows amber so you know to
+re-render.
 
 ---
 
@@ -97,13 +107,13 @@ Runtime deps are the ones ComfyUI already provides (`torch`, `numpy`, `Pillow`,
 | Character output | `ComfyUI/output/characters/<character>/` |
 
 A **character** is any directory under the characters root containing a
-`_concept.png`, a pose dir, or an animation dir.
+`character.json`, a pose dir, or an animation dir. The reference image is *not*
+saved — it lives in your graph as a Character Creator input.
 
 ```
 output/characters/cortex/
-  _concept.png                      seed image (uploaded)
-  _concept.json                     optional identity layer { positive_prompt?, negative_prompt? }
-  _base/EAST.png   _base/EAST.json  pose frame + sidecar
+  character.json                    character prompt layer { positive_prompt?, negative_prompt? } (no image, no provenance)
+  _base/EAST.png   _base/EAST.json  base pose frame + sidecar (the tree root)
   fighting_stance_idle/EAST/
     frame_00000.png … frame_000NN.png
     meta.json                       written LAST (atomic) = completion sentinel
@@ -124,9 +134,8 @@ result handed from a selector to its writer).
 | Node | Role |
 |---|---|
 | **Animation Manifest Loader** | Load + validate `animations.json` (ref typing, cycle detection, `4n+1` length warnings). Cached by file mtime. |
-| **Concept Image Writer** | Write a character's `_concept.png` and optional `_concept.json` identity layer from an uploaded image. |
-| **Concept Image Loader** | Load an existing `_concept.png` back as an IMAGE (plus `HAS_CONCEPT` and the identity prompts) for re-editing or a refinement pass. |
-| **Character Pose Selector** | Pick `character → category → pose → direction` (dynamic combos). Loads the `from`-source image, emits merged prompts + `OUTPUT_DIR` + `META`. Raises if the selection isn't selectable. |
+| **Character Creator** | Write a character's `character.json` prompt layer and emit the base-pose job for one direction, pairing the reference image (`SOURCE_IMAGE`) with the bundled manikin (`POSE_REFERENCE`) for a multi-reference FLUX.2 edit. The reference image is *not* persisted. |
+| **Character Pose Selector** | Pick `character → category → pose → direction` (dynamic combos; root poses like `base` are excluded — use the Character Creator). Loads the `from`-source image, emits merged prompts + `OUTPUT_DIR` + `META`. Raises if the selection isn't selectable. |
 | **Pose Frame Writer** | Write `{dir}.png` then the `{dir}.json` sidecar last (atomic). Returns `OUTPUT_DIR`. |
 | **Character Animation Selector** | Pick an animation + direction. Emits `START_IMAGE`, `END_IMAGE`, `IS_FFLF`, `LENGTH`, `FPS`, merged prompts, `OUTPUT_DIR`, `META`. `LENGTH`/`FPS` wire straight into the WAN sampler. |
 | **Animation Frame Writer** | Write `frame_{:05d}.png`, trim the duplicate closing frame of a seamless loop, then write `meta.json` last (atomic). Returns `OUTPUT_DIR`. |
@@ -138,9 +147,12 @@ result handed from a selector to its writer).
 ### Typical graph
 
 1. **Animation Manifest Loader** → `MANIFEST`.
-2. **Concept Image Writer** once per character (uploads `_concept.png`).
+2. **Character Creator** per base direction (reference image + manikin → base
+   pose) → FLUX multi-reference edit (`SOURCE_IMAGE` first, `POSE_REFERENCE`
+   second) → **Pose Frame Writer**. The reference image is not persisted — keep
+   it in your graph to regenerate base directions later.
 3. **Character Pose Selector** → FLUX edit → **Pose Frame Writer**. Walk poses
-   in dependency order (`base` first, then poses that build on it).
+   in dependency order (poses that build on `base`).
 4. **Character Animation Selector** → WAN sampler → **Animation Frame Writer**.
 
 The web extension repopulates the combos with live status glyphs after each
@@ -152,19 +164,28 @@ writer run, so newly-unlocked nodes appear without a manual refresh:
 
 ## Manifest
 
-The manifest is **character-agnostic and identity-free** — per-character identity
-lives only in each character's `_concept.json`. See
+The manifest is **character-agnostic and identity-free** — per-character prompt
+text lives only in each character's `character.json`. See
 [`examples/animations.json`](examples/animations.json) for a full, working
 manifest and [the design spec](docs/superpowers/specs/2026-06-29-cascading-pose-resolver-design.md)
 for the authoritative schema.
 
 Top-level keys: `version`, `directions` (canonical 8-way ordering),
 `mirror_map`, `defaults` (`fps` / `length` / `start_from`), `globals`
-(`animation` / `pose` cascade layers), `poses`, and `animations`.
+(`animation` / `pose` cascade layers), `poses`, and `animations`. The `base`
+pose has no `from` (it is the tree root) and lists all 8 directions.
 
 A character can extend the manifest with its own `poses` / `animations` by adding
-them to its `_concept.json`; the merged manifest is re-validated, so a bad ref or
+them to its `character.json`; the merged manifest is re-validated, so a bad ref or
 a cycle is rejected rather than resolved silently.
+
+### Manikins
+
+The 8 bundled pose references in `andypack/assets/manikins/<DIR>.png` (one per
+canonical direction) supply the camera angle / body orientation for the base
+pose. The Character Creator pairs the character reference image with the matching
+manikin as a second FLUX.2 reference, so all 8 base directions are generated
+directly — base does not rely on `mirror_map`.
 
 ---
 
