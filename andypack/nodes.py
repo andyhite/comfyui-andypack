@@ -65,7 +65,7 @@ def _characters_root():
 
 
 class AnimationManifestLoader:
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Manifest"
     FUNCTION = "load"
     RETURN_TYPES = ("ANIM_MANIFEST",)
     RETURN_NAMES = ("MANIFEST",)
@@ -89,7 +89,7 @@ class AnimationManifestLoader:
 
 
 class ConceptImageWriter:
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Concept"
     FUNCTION = "write"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("CHARACTER_DIR",)
@@ -126,7 +126,7 @@ class ConceptImageWriter:
 
 
 class CharacterPoseSelector:
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Pose"
     FUNCTION = "select"
     # One bundled POSE dict (unpack it with Unpack Pose) instead of loose outputs.
     RETURN_TYPES = ("ANIM_POSE",)
@@ -191,7 +191,7 @@ class CharacterPoseSelector:
 
 
 class PoseFrameWriter:
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Pose"
     FUNCTION = "write"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("OUTPUT_DIR",)
@@ -221,7 +221,7 @@ class PoseFrameWriter:
 
 
 class CharacterAnimationSelector:
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Animation"
     FUNCTION = "select"
     # One bundled ANIMATION dict (unpack it with Unpack Animation) instead of outputs.
     RETURN_TYPES = ("ANIM_ANIMATION",)
@@ -295,7 +295,7 @@ class CharacterAnimationSelector:
 
 
 class AnimationFrameWriter:
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Animation"
     FUNCTION = "write"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("OUTPUT_DIR",)
@@ -376,7 +376,7 @@ class PoseUnpack:
     """Fan a POSE dict out into its individual typed outputs, while also forwarding
     the whole POSE on — tap the fields you need and pass the rest along."""
 
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Pose"
     FUNCTION = "unpack"
     RETURN_TYPES = ("ANIM_POSE", "IMAGE", "STRING", "STRING", "STRING")
     RETURN_NAMES = ("POSE", *(name for _key, name in _POSE_UNPACK))
@@ -393,7 +393,7 @@ class AnimationUnpack:
     """Fan an ANIMATION dict out into its individual typed outputs, while also
     forwarding the whole ANIMATION on — tap what you need and pass the rest along."""
 
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Animation"
     FUNCTION = "unpack"
     RETURN_TYPES = ("ANIM_ANIMATION", "IMAGE", "IMAGE", "STRING", "STRING", "BOOLEAN", "INT", "INT", "STRING")
     RETURN_NAMES = ("ANIMATION", *(name for _key, name in _ANIMATION_UNPACK))
@@ -438,7 +438,7 @@ class AnimationPlayback:
     same cascading selectors as the Character Animation Selector. Shows an in-node
     animated preview and outputs the assembled frame batch + fps."""
 
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Animation"
     FUNCTION = "play"
     RETURN_TYPES = ("IMAGE", "INT")
     RETURN_NAMES = ("FRAMES", "FPS")
@@ -502,7 +502,7 @@ class ConceptImageLoader:
     """Load a character's existing `_concept.png` back as an IMAGE (plus its
     identity layer), for re-editing or feeding a refinement pass."""
 
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Concept"
     FUNCTION = "load"
     RETURN_TYPES = ("IMAGE", "BOOLEAN", "STRING", "STRING")
     RETURN_NAMES = ("CONCEPT_IMAGE", "HAS_CONCEPT", "IDENTITY_POSITIVE", "IDENTITY_NEGATIVE")
@@ -537,7 +537,7 @@ class ManifestLint:
     """Surface the manifest's non-fatal lint findings (Wan-unfriendly lengths,
     directions outside the canonical list) as text in the graph."""
 
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Manifest"
     FUNCTION = "lint"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("REPORT",)
@@ -561,7 +561,7 @@ class CoverageReport:
     generated, ready, stale, or blocked. Re-runs every queue so it reflects the
     current rendered tree."""
 
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Diagnostics"
     FUNCTION = "report"
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("REPORT", "JSON")
@@ -592,7 +592,7 @@ class MergedPromptReport:
     direction). A debugging aid. Character is optional: leave it on the placeholder
     to preview the manifest's prompts without a character's identity layer."""
 
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Diagnostics"
     FUNCTION = "report"
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("REPORT", "JSON")
@@ -621,7 +621,7 @@ class RegenQueue:
     """The selectable-now (ready/stale) (entity, direction) cells in dependency
     order — the work list for a batch regeneration pass."""
 
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Diagnostics"
     FUNCTION = "build"
     RETURN_TYPES = ("STRING", "INT")
     RETURN_NAMES = ("QUEUE", "COUNT")
@@ -655,7 +655,7 @@ class MirrorFrameWriter:
     (e.g. WEST from EAST) by horizontally flipping the rendered payload — no
     sampling. Honors `mirror_map`; writes the completion sentinel last (atomic)."""
 
-    CATEGORY = "andypack"
+    CATEGORY = "andypack/Animation"
     FUNCTION = "write"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("OUTPUT_DIR",)
@@ -758,8 +758,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationUnpack": "Unpack Animation",
     "AnimationPlayback": "Animation Playback",
     "MirrorFrameWriter": "Mirror Frame Writer",
-    "ManifestLint": "Manifest Lint",
+    "ManifestLint": "Animation Manifest Lint",
     "CoverageReport": "Coverage Report",
-    "MergedPromptReport": "Merged Prompt Report",
+    "MergedPromptReport": "Prompt Report",
     "RegenQueue": "Regen Queue",
 }
