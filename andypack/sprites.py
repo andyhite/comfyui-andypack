@@ -1,6 +1,6 @@
-"""Sprite trim, pivot, and sheet-packing helpers for game asset export.
+"""Sprite trim, pivot, sheet-packing, and palette helpers for game asset export.
 
-No ComfyUI or PromptServer imports — torch/PIL only.
+No ComfyUI or PromptServer imports — torch/numpy/PIL only.
 """
 
 from __future__ import annotations
@@ -8,10 +8,31 @@ from __future__ import annotations
 import math
 from typing import Optional
 
+import numpy as np
 import torch
+from PIL import Image
 from torch import Tensor
 
 from andypack import images
+
+# 4×4 ordered-dither Bayer threshold matrix, values in [-0.5, 0.5).
+_BAYER_4X4: np.ndarray = (
+    np.array(
+        [
+            [0, 8, 2, 10],
+            [12, 4, 14, 6],
+            [3, 11, 1, 9],
+            [15, 7, 13, 5],
+        ],
+        dtype=np.float32,
+    )
+    / 16.0
+    - 0.5
+)
+
+# ANIM_PALETTE bundle shape used by AnimPaletteExtractNode (Task 21).
+# {"colors": [[r, g, b], ...]}  — r/g/b are ints in [0, 255].
+ANIM_PALETTE: dict[str, list[list[int]]] = {"colors": []}
 
 
 def trim_batch(
@@ -441,3 +462,163 @@ def pack_sheet(
 
     sheet = canvas.unsqueeze(0)
     return sheet, atlas
+
+
+# ---------------------------------------------------------------------------
+# Palette extraction and quantization
+# ---------------------------------------------------------------------------
+
+
+def extract_palette(
+    image: Tensor,
+    colors: int = 32,
+) -> list[tuple[int, int, int]]:
+    """Extract up to *colors* representative RGB colors using Pillow median-cut.
+
+    Parameters
+    ----------
+    image:
+        ComfyUI IMAGE tensor [B, H, W, C] float32 in [0, 1].  Only the first
+        batch item is used; alpha is ignored for extraction.
+    colors:
+        Maximum palette size passed to ``Image.quantize``.
+
+    Returns
+    -------
+    list[tuple[int, int, int]]
+        Up to *colors* (r, g, b) tuples with values in [0, 255].  Duplicate
+        entries produced by quantization are removed, so the list may be
+        shorter than *colors*.
+    """
+    frame = image[0]
+    rgb_np = (
+        (frame[..., :3].clamp(0.0, 1.0).cpu().numpy() * 255.0)
+        .round()
+        .astype(np.uint8)
+    )
+    pil_img = Image.fromarray(rgb_np, mode="RGB")
+    quantized = pil_img.quantize(colors=colors, method=Image.Quantize.MEDIANCUT)
+    pal_data: list[int] = quantized.getpalette() or []
+    n = min(colors, len(pal_data) // 3)
+    seen: set[tuple[int, int, int]] = set()
+    result: list[tuple[int, int, int]] = []
+    for i in range(n):
+        r, g, b = pal_data[i * 3], pal_data[i * 3 + 1], pal_data[i * 3 + 2]
+        c = (r, g, b)
+        if c not in seen:
+            seen.add(c)
+            result.append(c)
+    return result
+
+
+def _nearest_color_np(
+    rgb_np: np.ndarray,
+    pal_np: np.ndarray,
+) -> np.ndarray:
+    """Map each pixel in *rgb_np* [H, W, 3] uint8 to the nearest palette color.
+
+    Returns [H, W, 3] uint8 where every pixel value is exactly a palette entry.
+    """
+    h, w = rgb_np.shape[:2]
+    pixels = rgb_np.reshape(-1, 3).astype(np.float32)
+    pal_f = pal_np.astype(np.float32)
+    diff = pixels[:, None, :] - pal_f[None, :, :]  # [N, K, 3]
+    dists = (diff * diff).sum(axis=-1)  # [N, K]
+    indices = dists.argmin(axis=-1)  # [N]
+    return pal_np[indices].reshape(h, w, 3)
+
+
+def _pil_palette_image(palette: list[tuple[int, int, int]]) -> Image.Image:
+    """Build a 1×1 P-mode PIL image carrying *palette* (padded to 256 colors)."""
+    flat: list[int] = [v for c in palette for v in c]
+    flat += [0] * (768 - len(flat))
+    pal_img: Image.Image = Image.new("P", (1, 1))
+    pal_img.putpalette(flat)
+    return pal_img
+
+
+def _quantize_floyd_steinberg(
+    rgb_np: np.ndarray,
+    palette: list[tuple[int, int, int]],
+) -> np.ndarray:
+    """Dither *rgb_np* [H, W, 3] uint8 against *palette* via PIL Floyd-Steinberg."""
+    pil_img = Image.fromarray(rgb_np, mode="RGB")
+    pal_img = _pil_palette_image(palette)
+    quantized = pil_img.quantize(
+        palette=pal_img, dither=Image.Dither.FLOYDSTEINBERG
+    )
+    return np.array(quantized.convert("RGB"), dtype=np.uint8)
+
+
+def _quantize_ordered(
+    rgb_np: np.ndarray,
+    pal_np: np.ndarray,
+    h: int,
+    w: int,
+) -> np.ndarray:
+    """4×4 Bayer ordered dither: offset each pixel before nearest-color snap."""
+    bayer = np.tile(_BAYER_4X4, (math.ceil(h / 4), math.ceil(w / 4)))[:h, :w]
+    offset = (bayer * 32.0)[:, :, None]  # scale to ±16 in [0,255] space
+    dithered = np.clip(rgb_np.astype(np.float32) + offset, 0.0, 255.0)
+    return _nearest_color_np(dithered.astype(np.uint8), pal_np)
+
+
+def quantize_to_palette(
+    image: Tensor,
+    palette: list[tuple[int, int, int]],
+    dither: str = "none",
+    preserve_alpha: bool = True,
+) -> Tensor:
+    """Remap every pixel in *image* to the nearest color in *palette*.
+
+    Parameters
+    ----------
+    image:
+        ComfyUI IMAGE tensor [B, H, W, C] float32 in [0, 1].  Only the first
+        batch item is processed.
+    palette:
+        List of (r, g, b) tuples with values in [0, 255].
+    dither:
+        ``"none"`` — pure nearest-color mapping (no dithering);
+        ``"floyd_steinberg"`` — PIL Floyd-Steinberg error diffusion;
+        ``"ordered"`` — 4×4 Bayer ordered dither (offset applied before
+        nearest-color snap).
+    preserve_alpha:
+        When True and the input is 4-channel RGBA, the original alpha channel
+        is reattached to the output unchanged.
+
+    Returns
+    -------
+    Tensor
+        [1, H, W, C] float32 in [0, 1].  C == 4 when *preserve_alpha* is True
+        and the input had 4 channels; otherwise C == 3.
+    """
+    frame = image[0]  # [H, W, C]
+    h = int(frame.shape[0])
+    w = int(frame.shape[1])
+    nc = int(frame.shape[2])
+
+    alpha: Optional[Tensor] = None
+    if preserve_alpha and nc == 4:
+        alpha = frame[..., 3:4].clone()
+
+    rgb_np = (
+        (frame[..., :3].clamp(0.0, 1.0).cpu().numpy() * 255.0)
+        .round()
+        .astype(np.uint8)
+    )
+    pal_np = np.array(palette, dtype=np.uint8)
+
+    if dither == "floyd_steinberg":
+        out_np = _quantize_floyd_steinberg(rgb_np, palette)
+    elif dither == "ordered":
+        out_np = _quantize_ordered(rgb_np, pal_np, h, w)
+    else:
+        out_np = _nearest_color_np(rgb_np, pal_np)
+
+    out_f = torch.from_numpy(out_np.astype(np.float32) / 255.0)  # [H, W, 3]
+
+    if alpha is not None:
+        out_f = torch.cat([out_f, alpha], dim=-1)
+
+    return out_f.unsqueeze(0)  # [1, H, W, C]
