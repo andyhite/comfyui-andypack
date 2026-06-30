@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from typing import Any, Optional
 
 from andypack import io
@@ -16,6 +17,13 @@ from andypack.resolve import (
 )
 
 Manifest = dict[str, Any]
+
+# The manifest shipped in the repo, seeded into the user dir on first load.
+BUNDLED_MANIFEST = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+    "examples",
+    "animations.json",
+)
 
 
 def user_default_base() -> Optional[str]:
@@ -41,6 +49,25 @@ def manifests_dir() -> Optional[str]:
 def list_manifest_names() -> list[str]:
     """Available manifest filenames (e.g. `default.json`) in the manifests dir."""
     return io.list_json_names(manifests_dir())
+
+
+def seed_default_manifest() -> bool:
+    """Copy the bundled manifest to `<manifests_dir>/default.json` on first load.
+
+    Gives a fresh install a working `default.json` (the name the selectors fall
+    back to) without the user authoring one. Idempotent and non-destructive:
+    a no-op outside ComfyUI (no manifests dir) or when the file already exists,
+    so a user's edited manifest is never clobbered. Returns True iff it wrote.
+    """
+    dest_dir = manifests_dir()
+    if dest_dir is None:
+        return False
+    dest = os.path.join(dest_dir, "default.json")
+    if os.path.exists(dest):
+        return False
+    os.makedirs(dest_dir, exist_ok=True)
+    shutil.copyfile(BUNDLED_MANIFEST, dest)
+    return True
 
 
 def resolve_manifest_path(manifest_path: str) -> str:
