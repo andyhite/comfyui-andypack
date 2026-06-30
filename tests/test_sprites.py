@@ -60,3 +60,17 @@ def test_trim_per_frame_different_content_sizes() -> None:
 
 def test_pivot_bottom_center() -> None:
     assert sprites.pivot_point(10, 20, "bottom_center") == (5, 20)
+
+
+def test_pack_grid_places_frames() -> None:
+    batch = torch.zeros((4, 6, 6, 4))
+    batch[..., :] = 1.0
+    sheet, atlas = sprites.pack_sheet(batch, layout="grid", columns=2, padding=1)
+    assert sheet.shape[0] == 1 and atlas["columns"] == 2 and len(atlas["frames"]) == 4
+    assert atlas["frames"][1]["rect"][0] > atlas["frames"][0]["rect"][0]  # col 2 right of col 1
+
+
+def test_pack_power_of_two() -> None:
+    sheet, _ = sprites.pack_sheet(torch.ones((1, 5, 5, 4)), power_of_two=True)
+    h, w = sheet.shape[1], sheet.shape[2]
+    assert (h & (h - 1)) == 0 and (w & (w - 1)) == 0
