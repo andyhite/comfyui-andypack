@@ -5,8 +5,9 @@ character → animation → direction from a single `animations.json`, gates
 selection on what's already rendered, and feeds a sampler positive/negative/
 start-image/end-image. It does NOT sample — it resolves and writes back.
 
-No design spec is checked in; the source of truth is the code plus
-`examples/animations.json` (schema-by-example) and `README.md` (user docs).
+The source of truth is the code plus `examples/animations.json` (schema-by-example)
+and `README.md` (user docs). `docs/prompting-guide.md` holds the researched FLUX.2
+Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follows.
 
 ## Commands
 - Test: `pytest -q`
@@ -23,19 +24,27 @@ No design spec is checked in; the source of truth is the code plus
 - `andypack/__init__.py` — imports `server` (registers HTTP routes on import) and
   seeds the bundled manifest into the user dir. Seeding must never block loading.
 - `manifest.py` — load / structural-validate / cycle-detect / `topo_order`;
-  `node_kind` classifies a ref as concept | pose | animation.
-- `resolve.py` — the pure FFLF core: cascade prompts, FFLF anchors, completeness,
-  staleness, status, playback plan. **No ComfyUI/torch imports** (keep it that way).
-- `io.py` — atomic JSON writes, meta/sidecar builders (pose, animation, concept),
-  `render_id` provenance.
+  `node_kind` classifies a ref as pose | animation; validates `view_phrases` and
+  gen-params (`length`/`fps`/`width`/`height` ints, `shift` numeric).
+- `resolve.py` — the pure FFLF core: cascade prompts, template-var substitution
+  (incl. `{view_phrase}`), FFLF anchors, completeness, staleness, status,
+  playback plan, `reference_image_path`. **No ComfyUI/torch imports** (keep it so).
+- `io.py` — atomic JSON writes, meta/sidecar builders (pose, animation,
+  character), `render_id` provenance.
 - `images.py` — tensor ↔ PNG conversion.
-- `api.py` — pure JSON payload builders for the routes; resolves paths under
-  ComfyUI's `user`/`output` dirs (all return None outside ComfyUI).
-- `server.py` — aiohttp `/anim_coord/*` routes, registered on import.
+- `manikins.py` — bundled per-direction manikin pose references (`manikin_path`).
+- `api.py` — pure JSON payload builders + manifest/character CRUD helpers
+  (`save_manifest_text`, `read/save_character_layer`, `create_character`,
+  `manifest_name_is_safe`); resolves paths under ComfyUI's `user`/`output` dirs
+  (all return None / degrade outside ComfyUI).
+- `server.py` — aiohttp `/anim_coord/*` routes (read + write), registered on import.
 - `nodes.py` — the ComfyUI node classes + mappings (15 nodes), grouped into
-  `andypack/<Manifest|Concept|Pose|Animation|Diagnostics>` categories.
+  `andypack/<Manifest|Character|Pose|Animation|Diagnostics>` categories.
 - `web/anim_coord.js` — frontend extension for dynamic character-scoped combos
   (pure-Python `INPUT_TYPES` can't populate these; it needs the server routes).
+- `web/anim_coord_panel.js` — the Andypack sidebar tab (manifest editor, character
+  editor, live coverage grid), backed by the write-capable routes.
+- `scripts/build_seed_manifest.py` — generator for `examples/animations.json`.
 
 ## Invariants (these are where it goes wrong)
 - **Every animation needs a START image** (the I2V initial latent): explicit
@@ -43,16 +52,27 @@ No design spec is checked in; the source of truth is the code plus
   animation with neither. `end_at` is optional — when present, it's FFLF.
 - **FFLF cross-wiring** (`resolve.py` `start_anchor`/`end_anchor`): `start_from`
   consumes the dep's LAST frame; `end_at` consumes the dep's FIRST frame. Do not
-  invert. Single-image deps (concept/pose) resolve the same image for either slot.
+  invert. Single-image deps (a pose) resolve the same image for either slot. This
+  maps onto the core `WanFirstLastFrameToVideo` node (`start_from`→`start_image`,
+  `end_at`→`end_image`); the clip's final frame equals `end_image`.
 - **Prompt compile order**: merge `globals[kind]` + entity layers (`merge_layers`
   for positive = blank-line join; `merge_negative` for negative = comma split +
   case-insensitive dedupe), with template-variable substitution applied per-layer
   *before* the merge.
-- **Identity (`_concept.json`) and the per-direction layer are NOT cascade layers.**
+- **Character (`character.json`) and the per-direction layer are NOT cascade layers.**
   They surface only via opt-in template vars, resolved by field context
-  (positive vs negative): `{identity_prompt}`, `{direction_prompt}`,
-  `{direction_name}`. Substitution is literal `str.replace` — unknown `{...}` and
-  stray braces survive; absent sources expand to ``.
+  (positive vs negative): `{character_prompt}`, `{direction_prompt}`,
+  `{direction_name}`, and `{view_phrase}` (manifest-level `view_phrases[direction]`,
+  positive context only). Substitution is a single literal regex pass — unknown
+  `{...}` and stray braces survive; absent sources expand to ``; a token inside an
+  injected value is NOT re-expanded.
+- **FLUX.2 Klein has no negative path**: the seed manifest's poses carry no
+  negative layer; pose failure-mode mitigations are affirmative (in `view_phrases`
+  / the positive). The negative pipeline is for the Wan animation path (CFG > 1).
+  The merge machinery still supports pose negatives — just don't author them.
+- **Generation params** (`width`/`height`/`length`/`fps`/`shift`) ride in the
+  animation meta (from `defaults` + per-animation override) and surface as wireable
+  selector outputs so they drive `WanFirstLastFrameToVideo` / `ModelSamplingSD3`.
 - **Atomic write ordering**: write the payload (image/frames) first, then the
   `meta.json` / `.json` sidecar LAST via temp-file + atomic rename. There is no
   `.complete` marker — a dir with no parseable meta/sidecar is treated as
@@ -60,25 +80,31 @@ No design spec is checked in; the source of truth is the code plus
   stale higher-index frames behind.
 - **Staleness** (`outdated`): a complete node is stale if its merged-prompt hash
   drifted, OR a recorded source's `render_id` changed (re-rendered even with an
-  unchanged prompt), OR any ancestor is outdated. The concept carries its
-  `render_id` in `_concept.json` (it has no per-direction meta), so re-rendering
-  the concept — the tree root — marks descendants stale too.
+  unchanged prompt), OR any ancestor is outdated. The `base` pose roots the tree —
+  its per-direction sidecars carry the provenance descendants stale against.
+  `character.json` carries NO provenance; editing the character prompt re-stales
+  via prompt-hash drift (it appears in compiled prompts through `{character_prompt}`).
 - **A loop is derived, never authored**: `resolve_animation` sets `meta["loop"]`
   iff the start and end anchors resolve to the same image (`start_image ==
   end_image`); the writer then drops the duplicated final frame. There is no
   manifest `loop` field — don't add one back.
 - **HTTP routes take no client filesystem paths**: the `/anim_coord/*` routes
-  return JSON only and never serve file bytes. `/characters` enumerates the pack's
-  own `<output>/characters` dir (server-resolved via `api.characters_dir()`), not a
-  client-supplied root, so there is nothing to traverse out of.
+  return JSON only and never serve file bytes. Reads enumerate the pack's own
+  server-resolved dirs; writes (`manifest/save`, `character/create|save`) address a
+  manifest by a validated bare basename (`manifest_name_is_safe`) under the
+  manifests dir and a character by a name snake-cased to one segment under the
+  characters dir — nothing the client sends escapes those trees. A manifest is
+  parsed + `validate_manifest`'d BEFORE it touches disk, so a bad edit is rejected,
+  not written over a working file.
 - Routes register on import only inside ComfyUI (`PromptServer` import is guarded);
   `api`/`io` helpers return None when `folder_paths` is unavailable.
 
 ## On-disk layout
 - Manifests: `<user>/default/andypack/animations/*.json`. `default.json` is seeded
   from `examples/animations.json` on first load (idempotent, never clobbers).
-- Characters: `<output>/characters/<char>/` containing `_concept.png` (+
-  `_concept.json`: optional identity layer + provenance, always written),
+- Characters: `<output>/characters/<char>/` containing `character.json` (prompt
+  layer + optional `poses`/`animations` overlay; no provenance), optional
+  `_reference.png` (persisted reference art; `save_reference` on the creator),
   `_<pose>/<DIR>.png` + `<DIR>.json` sidecar, and `<anim>/<DIR>/frame_NNNNN.png`
   + `meta.json`.
 
