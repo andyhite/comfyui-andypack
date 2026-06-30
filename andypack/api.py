@@ -99,6 +99,16 @@ def resolve_manifest_path(manifest_path: str) -> str:
     return io.resolve_under(manifests_dir(), manifest_path)
 
 
+def safe_manifest_path(name: str) -> Optional[str]:
+    """Resolve a manifest by BARE NAME under the manifests dir, rejecting any
+    name that is unsafe or traverses (the HTTP attack surface — unlike
+    resolve_manifest_path, which allows absolute paths for trusted node inputs)."""
+    if not manifest_name_is_safe(name):
+        return None
+    base = manifests_dir()
+    return None if base is None else os.path.join(base, name)
+
+
 # --- CRUD helpers for the sidebar GUI (write-capable, path-safe) ------------- #
 #
 # These back the editor panel. The HTTP routes never take a client filesystem

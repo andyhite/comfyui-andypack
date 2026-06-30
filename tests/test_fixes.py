@@ -1,5 +1,6 @@
 import os
 
+from andypack import api
 from andypack import resolve
 from andypack import io
 from andypack import nodes
@@ -94,3 +95,10 @@ def test_mirror_writer_is_changed_tracks_source_mtime(tmp_path, monkeypatch):
     os.utime(src, (10**9, 10**9))  # bump mtime
     fp2 = nodes.MirrorFrameWriter.IS_CHANGED(manifest, char, "pose", "p", "WEST")
     assert fp1 != fp2
+
+
+def test_safe_manifest_path_rejects_traversal(tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "manifests_dir", lambda: str(tmp_path))
+    assert api.safe_manifest_path("../../etc/passwd.json") is None
+    assert api.safe_manifest_path("/etc/passwd.json") is None
+    assert api.safe_manifest_path("default.json") is not None  # bare name ok

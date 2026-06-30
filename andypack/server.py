@@ -22,12 +22,16 @@ def _manifest_from_request(request):
     # directory itself. A bad/missing manifest returns a JSON 400, not an unhandled
     # 500 from open()-ing a directory or a nonexistent file.
     name = request.query.get("manifest") or "default.json"
+    path = api.safe_manifest_path(name)
+    if path is None:
+        raise web.HTTPBadRequest(
+            text=json.dumps({"error": f"unsafe manifest name {name!r}"}),
+            content_type="application/json")
     try:
-        return load_manifest(api.resolve_manifest_path(name))
+        return load_manifest(path)
     except (OSError, ManifestError) as exc:
         raise web.HTTPBadRequest(
-            text=json.dumps({"error": str(exc)}), content_type="application/json"
-        ) from exc
+            text=json.dumps({"error": str(exc)}), content_type="application/json") from exc
 
 
 if _routes is not None:
@@ -51,9 +55,11 @@ if _routes is not None:
         return web.json_response(api.manifest_options(manifest))
 
     def _root_and_char(request):
-        return api.character_root_and_name(
-            request.query.get("character_dir", ""), request.query.get("character", "")
-        )
+        root = api.characters_dir() or ""
+        name = request.query.get("character", "")
+        if not api._is_safe_segment(name):
+            return (root, "")  # unsafe name -> empty character (read-only options degrade)
+        return (root, name)
 
     @_routes.get("/anim_coord/options")
     async def _options(request):

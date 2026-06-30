@@ -18,11 +18,11 @@ def test_manifest_from_request_defaults_and_wraps_errors(tmp_path, monkeypatch):
     # 400 rather than an unhandled 500 from open()-ing a directory.
     seen = {}
 
-    def fake_resolve(name):
+    def fake_safe(name):
         seen["name"] = name
         return str(tmp_path)  # a directory -> open() raises IsADirectoryError
 
-    monkeypatch.setattr(server.api, "resolve_manifest_path", fake_resolve)
+    monkeypatch.setattr(server.api, "safe_manifest_path", fake_safe)
     with pytest.raises(web.HTTPBadRequest):
         server._manifest_from_request(_FakeRequest({}))
     assert seen["name"] == "default.json"  # empty param falls back to the default
