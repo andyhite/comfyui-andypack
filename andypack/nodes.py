@@ -1597,6 +1597,57 @@ class CharacterIdentityAnchor:
         return (reference_image, base_direction_image, anchor_batch)
 
 
+class TurnaroundSheet:
+    """Composite every rendered direction of a pose into one labeled contact sheet.
+
+    Iterates over CANONICAL_DIRECTIONS in order; each rendered direction loads its
+    PNG, each unrendered direction becomes a mid-gray placeholder. Returns a single
+    IMAGE tensor suitable for previewing or saving."""
+
+    CATEGORY = "andypack/Diagnostics"
+    FUNCTION = "build"
+    OUTPUT_NODE = True
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("SHEET",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+                "pose": ("STRING", {"default": "base"}),
+            },
+            "optional": {
+                "columns": ("INT", {"default": 4, "min": 1, "max": 8}),
+                "include_labels": ("BOOLEAN", {"default": True}),
+                "cell_size": ("INT", {"default": 0, "min": 0, "max": 2048}),
+            },
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character, pose, columns=4,
+                   include_labels=True, cell_size=0):
+        return float("nan")  # always recompute — reflects the rendered tree on disk
+
+    def build(self, manifest, character, pose, columns=4,
+              include_labels=True, cell_size=0):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("TurnaroundSheet: select a character first")
+        root = _characters_root()
+        tiles = []
+        for direction in manikins.CANONICAL_DIRECTIONS:
+            if resolve.pose_complete(root, character, pose, direction):
+                path = resolve.pose_image_path(root, character, pose, direction)
+                tiles.append(images.load_image_tensor(path))
+            else:
+                tiles.append(None)
+        cell = (cell_size, cell_size) if cell_size > 0 else None
+        labels = list(manikins.CANONICAL_DIRECTIONS) if include_labels else None
+        sheet = images.contact_sheet(tiles, columns, cell=cell, labels=labels)
+        return {"ui": {}, "result": (sheet,)}
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
@@ -1624,6 +1675,7 @@ NODE_CLASS_MAPPINGS = {
     "PaletteQuantizeLock": PaletteQuantizeLock,
     "AtlasMetadataWriter": AtlasMetadataWriter,
     "CharacterAtlasBuilder": CharacterAtlasBuilder,
+    "TurnaroundSheet": TurnaroundSheet,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
@@ -1652,4 +1704,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PaletteQuantizeLock": "Palette Quantize & Lock",
     "AtlasMetadataWriter": "Atlas Metadata Writer",
     "CharacterAtlasBuilder": "Character Atlas Builder",
+    "TurnaroundSheet": "Turnaround Sheet",
 }

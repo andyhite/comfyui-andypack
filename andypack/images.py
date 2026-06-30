@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import math
 import os
 import tempfile
+from typing import Optional
 
 import numpy as np
 import torch
@@ -257,3 +259,57 @@ def save_animated_webp(frames: torch.Tensor, path: str, fps: int) -> None:
         path, format="WEBP", save_all=True, append_images=pil[1:],
         duration=duration, loop=0, quality=80, method=4,
     )
+
+
+def contact_sheet(
+    tiles: list,
+    columns: int,
+    cell: "Optional[tuple[int, int]]" = None,
+    labels: "Optional[list[str]]" = None,
+) -> torch.Tensor:
+    """Composite IMAGE tiles into a grid, with mid-gray placeholders for None slots.
+
+    Args:
+        tiles: list of IMAGE tensors ``[1, H, W, C]`` or ``None`` for unrendered
+            slots. None entries become a neutral mid-gray placeholder cell.
+        columns: number of grid columns (>=1). Rows = ceil(len(tiles)/columns).
+        cell: optional ``(cell_w, cell_h)`` target size per tile in pixels.
+            When None, the cell size is the maximum H and W across all non-None
+            tiles, falling back to (64, 64) when every tile is None.
+        labels: reserved for future caption support; currently ignored.
+
+    Returns:
+        IMAGE tensor ``[1, rows*cell_h, columns*cell_w, 3]``.
+    """
+    n = len(tiles)
+    if n == 0:
+        return torch.zeros((1, 1, 1, 3), dtype=torch.float32)
+
+    columns = max(1, int(columns))
+    rows = math.ceil(n / columns)
+
+    if cell is not None:
+        cell_w, cell_h = int(cell[0]), int(cell[1])
+    else:
+        non_none = [t for t in tiles if t is not None]
+        if non_none:
+            cell_h = max(int(t.shape[1]) for t in non_none)
+            cell_w = max(int(t.shape[2]) for t in non_none)
+        else:
+            cell_h, cell_w = 64, 64
+
+    placeholder = torch.full((1, cell_h, cell_w, 3), 0.5, dtype=torch.float32)
+    sheet = torch.zeros((1, rows * cell_h, columns * cell_w, 3), dtype=torch.float32)
+
+    for idx, tile in enumerate(tiles):
+        row = idx // columns
+        col = idx % columns
+        y = row * cell_h
+        x = col * cell_w
+        if tile is None:
+            sheet[:, y:y + cell_h, x:x + cell_w, :] = placeholder
+        else:
+            resized = _resize_batch(tile[..., :3], cell_h, cell_w)
+            sheet[:, y:y + cell_h, x:x + cell_w, :] = resized
+
+    return sheet

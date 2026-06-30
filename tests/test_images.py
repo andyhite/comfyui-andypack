@@ -1,3 +1,4 @@
+import pytest
 import numpy as np
 from PIL import Image
 
@@ -90,3 +91,22 @@ def test_save_animated_webp_writes_all_frames(tmp_path):
     assert out.exists()
     with Image.open(out) as im:
         assert getattr(im, "n_frames", 1) == 3
+
+
+def test_contact_sheet_handles_missing_tiles():
+    import torch
+    sheet = images.contact_sheet([torch.ones((1, 4, 4, 3)), None], columns=2, cell=(4, 4))
+    assert sheet.shape[0] == 1 and sheet.shape[2] == 8  # 2 columns x 4 px wide
+
+
+def test_contact_sheet_all_none_returns_placeholder_grid():
+    sheet = images.contact_sheet([None, None], columns=2, cell=(8, 6))
+    assert sheet.shape == (1, 6, 16, 3)
+    assert float(sheet.mean()) == pytest.approx(0.5)
+
+
+def test_contact_sheet_infers_cell_from_tile_max():
+    import torch
+    tile = torch.zeros((1, 10, 20, 3))
+    sheet = images.contact_sheet([tile, None], columns=2)
+    assert sheet.shape[1] == 10 and sheet.shape[2] == 40

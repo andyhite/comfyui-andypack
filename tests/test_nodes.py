@@ -721,3 +721,44 @@ def test_character_identity_anchor(monkeypatch, tmp_path):
         include_reference=True, include_base=False, base_pose="base",
     )
     assert ref.shape[-1] == 3 and batch.shape[0] >= 1
+
+
+# --- TurnaroundSheet -------------------------------------------------------- #
+
+def test_turnaround_sheet_raises_for_placeholder_character(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    with pytest.raises(RuntimeError, match="character"):
+        nodes.TurnaroundSheet().build(manifest, nodes._NO_CHARACTER, "base")
+
+
+def test_turnaround_sheet_returns_image_sheet(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST")
+    images.save_image_png(
+        _img(4, 4),
+        resolve.pose_image_path(tree.root, tree.char, "base", "EAST"),
+    )
+    out = nodes.TurnaroundSheet().build(manifest, tree.char, "base")
+    sheet = out["result"][0]
+    assert sheet.shape[0] == 1 and sheet.ndim == 4  # [1, H, W, C]
+
+
+def test_turnaround_sheet_all_unrendered_returns_placeholders(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()  # character exists but nothing rendered
+    out = nodes.TurnaroundSheet().build(manifest, tree.char, "base", columns=4)
+    sheet = out["result"][0]
+    # 8 directions in 4 columns = 2 rows; all cells are mid-gray placeholder
+    assert sheet.shape[0] == 1
+    assert sheet.shape[3] == 3  # 3-ch RGB
+
+
+def test_turnaround_sheet_is_changed_always_nan(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    token = nodes.TurnaroundSheet.IS_CHANGED(manifest, tree.char, "base")
+    assert token != token  # NaN != NaN
+
+
+def test_turnaround_sheet_node_registered():
+    assert "TurnaroundSheet" in nodes.NODE_CLASS_MAPPINGS
+    assert "TurnaroundSheet" in nodes.NODE_DISPLAY_NAME_MAPPINGS
