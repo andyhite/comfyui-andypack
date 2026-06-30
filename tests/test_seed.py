@@ -38,3 +38,23 @@ def test_seed_does_not_clobber_existing_manifest(tmp_path, monkeypatch):
 
     assert api.seed_default_manifest() is False
     assert json.loads(dest.read_text())["version"] == "user-edited"
+
+
+def test_seed_base_is_root_with_all_eight_directions():
+    import json as _json
+    from andypack.manifest import topo_order, validate_manifest
+    m = _json.loads(open("examples/animations.json", encoding="utf-8").read())
+    base = m["poses"]["base"]
+    assert "from" not in base                       # base is the tree root
+    assert set(base["directions"]) == {
+        "EAST", "SOUTH_EAST", "SOUTH", "SOUTH_WEST",
+        "WEST", "NORTH_WEST", "NORTH", "NORTH_EAST",
+    }
+    validate_manifest(m)
+    topo_order(m)                                   # no cycle, sorts
+
+
+def test_seed_uses_character_prompt_token_not_identity():
+    raw = open("examples/animations.json", encoding="utf-8").read()
+    assert "{identity_prompt}" not in raw
+    assert "{character_prompt}" in raw
