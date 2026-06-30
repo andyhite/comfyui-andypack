@@ -167,7 +167,31 @@ function groupStatus(opts) {
 
 // --- the cascade ------------------------------------------------------------ //
 
+// Serialize refreshes per node. Both execution events (`execution_success` and
+// the repeated `executed`) fire overlapping refreshes; since refreshCascadeOnce
+// awaits /options, a later call would snapshot the loading-placeholder state an
+// in-flight call just wrote (every __anim_raw === "") and then "restore" those
+// empties, wiping the user's selection. Run at most one at a time and coalesce
+// the rest into a single trailing re-run, which snapshots the just-restored
+// real selections.
 async function refreshCascade(node, cfg) {
+  if (node.__anim_refreshing) {
+    node.__anim_pending = true;
+    return;
+  }
+  node.__anim_refreshing = true;
+  try {
+    await refreshCascadeOnce(node, cfg);
+  } finally {
+    node.__anim_refreshing = false;
+    if (node.__anim_pending) {
+      node.__anim_pending = false;
+      refreshCascade(node, cfg).catch((e) => console.warn(`${TAG} cascade`, e));
+    }
+  }
+}
+
+async function refreshCascadeOnce(node, cfg) {
   setCharacterEnabled(node, true); // READY is guaranteed by the caller (wire)
   const character = characterValue(node);
   const manifestName = manifestNameFor(node);
