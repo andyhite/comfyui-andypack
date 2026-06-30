@@ -60,3 +60,79 @@ if _routes is not None:
         root, character = _root_and_char(request)
         manifest = _manifest_from_request(request)
         return web.json_response(api.list_options(manifest, root, character))
+
+    # --- sidebar GUI: manifest + character management ----------------------- #
+    # Write routes are JSON-in / JSON-out and take NO client filesystem path: a
+    # manifest is a bare basename validated server-side and resolved under the
+    # pack's manifests dir; a character is a name snake-cased to one path segment
+    # under the pack's characters dir. Nothing the client sends can escape those
+    # trees. Edits are validated before they touch disk, so a bad payload returns
+    # a 400 instead of corrupting a working file.
+
+    @_routes.get("/anim_coord/manifests")
+    async def _manifests(request):
+        return web.json_response({"manifests": api.list_manifest_names()})
+
+    @_routes.get("/anim_coord/manifest")
+    async def _manifest(request):
+        name = request.query.get("name") or "default.json"
+        text = api.read_manifest_text(name)
+        if text is None:
+            raise web.HTTPNotFound(
+                text=json.dumps({"error": f"manifest {name!r} not found"}),
+                content_type="application/json",
+            )
+        return web.json_response({"name": name, "text": text})
+
+    async def _json_body(request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            raise web.HTTPBadRequest(
+                text=json.dumps({"error": "expected a JSON object body"}),
+                content_type="application/json",
+            )
+        return body
+
+    @_routes.post("/anim_coord/manifest/save")
+    async def _manifest_save(request):
+        body = await _json_body(request)
+        result = api.save_manifest_text(
+            str(body.get("name") or ""), str(body.get("content") or "")
+        )
+        status = 200 if result.get("ok") else 400
+        return web.json_response(result, status=status)
+
+    @_routes.get("/anim_coord/character")
+    async def _character_get(request):
+        root = api.characters_dir() or ""
+        name = request.query.get("character", "")
+        return web.json_response({"name": name, "layer": api.read_character_layer(root, name)})
+
+    @_routes.post("/anim_coord/character/create")
+    async def _character_create(request):
+        body = await _json_body(request)
+        root = api.characters_dir()
+        if root is None:
+            return web.json_response(
+                {"ok": False, "error": "characters dir unavailable"}, status=400
+            )
+        result = api.create_character(root, str(body.get("character") or ""))
+        return web.json_response(result, status=200 if result.get("ok") else 400)
+
+    @_routes.post("/anim_coord/character/save")
+    async def _character_save(request):
+        body = await _json_body(request)
+        root = api.characters_dir()
+        if root is None:
+            return web.json_response(
+                {"ok": False, "error": "characters dir unavailable"}, status=400
+            )
+        result = api.save_character_layer(
+            root, str(body.get("character") or ""),
+            str(body.get("positive_prompt") or ""),
+            str(body.get("negative_prompt") or ""),
+        )
+        return web.json_response(result, status=200 if result.get("ok") else 400)
