@@ -68,8 +68,7 @@ class Tree:
             )
             _write_json(os.path.join(base, "meta.json"), {
                 "kind": "animation", "animation": anim_id, "direction": direction,
-                "fps": 16, "length": frames,
-                "loop": self.m["animations"][anim_id].get("loop", False),
+                "fps": 16, "length": frames, "loop": False,
                 "prompt_hash": h, "manifest_version": self.m["version"],
                 "frames": {"dir": ".", "pattern": "frame_{:05d}.png", "count": frames},
                 "start_frame": "frame_00000.png", "last_frame": f"frame_{frames - 1:05d}.png",

@@ -127,6 +127,73 @@ def test_selector_is_changed_volatile_without_character(manifest, monkeypatch):
 
 # --- new utility / writer nodes --------------------------------------------- #
 
+def test_concept_writer_writes_provenance_sidecar(tmp_path, monkeypatch):
+    # Even with no identity text, the concept sidecar is written with a render_id so
+    # re-rendering the concept can propagate staleness to its descendants.
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    (char_dir,) = nodes.ConceptImageWriter().write(_img(), "cortex")
+    side = json.loads(open(os.path.join(char_dir, "_concept.json")).read())
+    assert side["render_id"].startswith("rid:")
+
+
+def test_concept_writer_preserves_authored_poses(tmp_path, monkeypatch):
+    # Re-rendering the concept must not clobber character-authored poses/animations
+    # stored in _concept.json (which effective_manifest folds into the manifest).
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    (char_dir,) = nodes.ConceptImageWriter().write(_img(), "cortex", identity_positive="hero")
+    side_path = os.path.join(char_dir, "_concept.json")
+    side = json.loads(open(side_path).read())
+    side["poses"] = {"wave": {"from": {"ref": "concept"}, "directions": {"EAST": {}}}}
+    with open(side_path, "w") as fh:
+        json.dump(side, fh)
+
+    # Re-render the concept (new identity text).
+    nodes.ConceptImageWriter().write(_img(), "cortex", identity_positive="reworked hero")
+    after = json.loads(open(side_path).read())
+    assert after["poses"] == {"wave": {"from": {"ref": "concept"}, "directions": {"EAST": {}}}}
+    assert after["positive_prompt"] == "reworked hero"
+
+
+def test_animation_writer_rejects_empty_batch(tmp_path):
+    # An empty frame batch must raise, not write a count=0 "complete" meta with a
+    # negative-index last_frame that downstream anchors would chase to a missing file.
+    out = str(tmp_path / "punch" / "EAST")
+    meta = {
+        "kind": "animation", "animation": "punch", "direction": "EAST",
+        "fps": 16, "length": 0, "loop": False, "manifest_version": 1,
+        "prompt_hash": "sha1:abc",
+    }
+    with pytest.raises(RuntimeError, match="empty frame batch"):
+        nodes.AnimationFrameWriter().write(_anim_dict(meta, out), _batch(0))
+    assert not os.path.exists(os.path.join(out, "meta.json"))
+
+
+def test_animation_writer_empty_batch_keeps_prior_render(tmp_path):
+    # The empty-batch guard fires before clearing, so a prior good render survives.
+    out = str(tmp_path / "punch" / "EAST")
+    meta = {
+        "kind": "animation", "animation": "punch", "direction": "EAST",
+        "fps": 16, "length": 3, "loop": False, "manifest_version": 1,
+        "prompt_hash": "sha1:abc",
+    }
+    nodes.AnimationFrameWriter().write(_anim_dict(meta, out), _batch(3))
+    with pytest.raises(RuntimeError):
+        nodes.AnimationFrameWriter().write(_anim_dict(meta, out), _batch(0))
+    frames = sorted(n for n in os.listdir(out) if n.startswith("frame_"))
+    assert frames == ["frame_00000.png", "frame_00001.png", "frame_00002.png"]
+
+
+def test_pose_resolve_records_concept_render_id(manifest, tmp_path, monkeypatch):
+    # A pose's recorded sources capture the concept's render_id, closing the gap
+    # where re-rendering the concept left descendants looking fresh.
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    (char_dir,) = nodes.ConceptImageWriter().write(_img(), "cortex")
+    rid = json.loads(open(os.path.join(char_dir, "_concept.json")).read())["render_id"]
+    r = resolve.resolve_pose(manifest, root, "cortex", "base", "EAST")
+    assert r["meta"]["sources"]["concept@EAST"] == rid
+
+
 def test_concept_image_loader_reads_image_and_identity(tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     images.save_image_png(_img(), resolve.concept_image_path(tree.root, tree.char))

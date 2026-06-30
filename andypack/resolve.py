@@ -19,6 +19,9 @@ Manifest = dict[str, Any]
 
 _WS = re.compile(r"\s+")
 _SEP = "␟"  # UNIT SEPARATOR
+# The opt-in template tokens, matched in a SINGLE pass so a token that appears
+# inside an injected value is not re-expanded by a later substitution.
+_TEMPLATE_TOKEN = re.compile(r"\{(identity_prompt|direction_prompt|direction_name)\}")
 
 
 # --- cascade: merge, identity, hashing -------------------------------------- #
@@ -65,10 +68,28 @@ def _read_json(path: str) -> Optional[dict]:
     return data if isinstance(data, dict) else None
 
 
+_IDENTITY_CACHE: dict[str, tuple[float, dict]] = {}
+
+
 def read_identity(root: str, character: str) -> dict:
-    """Per-character identity layer from `_concept.json`, or {} if absent/corrupt."""
-    data = _read_json(os.path.join(root, character, "_concept.json"))
-    return data or {}
+    """Per-character identity layer from `_concept.json`, or {} if absent/corrupt.
+
+    Memoized by path + mtime: the resolve/report hot paths re-read a character's
+    `_concept.json` many times per cell (effective_manifest, merged_prompts,
+    outdated, recorded_sources), so caching collapses that to one read per file
+    version. A re-render bumps the mtime and invalidates the entry, so the cache
+    never serves a stale identity. Callers must not mutate the returned dict."""
+    path = os.path.join(root, character, "_concept.json")
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return {}
+    cached = _IDENTITY_CACHE.get(path)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    data = _read_json(path) or {}
+    _IDENTITY_CACHE[path] = (mtime, data)
+    return data
 
 
 def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifest:
@@ -107,17 +128,21 @@ def substitute_variables(
     direction name (both contexts). Literal token replacement (not str.format), so
     unknown `{...}` tokens and stray braces survive; absent sources expand to ''.
     Applied per-layer BEFORE the merge so an expanded negative term list dedupes
-    against sibling terms and a layer that resolves empty is dropped cleanly."""
+    against sibling terms and a layer that resolves empty is dropped cleanly.
+
+    Substitution is a SINGLE regex pass, so a token that appears inside an
+    injected value (e.g. a literal `{direction_name}` stored in the identity
+    layer) is left verbatim instead of being re-expanded by a later replacement —
+    expansion is order-independent and never recursive."""
     if not text:
         return text
     field = "positive_prompt" if positive else "negative_prompt"
-    ident = (identity.get(field) or "").strip()
-    dprompt = (direction_layer.get(field) or "").strip()
-    return (
-        text.replace("{identity_prompt}", ident)
-        .replace("{direction_prompt}", dprompt)
-        .replace("{direction_name}", direction)
-    )
+    values = {
+        "identity_prompt": (identity.get(field) or "").strip(),
+        "direction_prompt": (direction_layer.get(field) or "").strip(),
+        "direction_name": direction,
+    }
+    return _TEMPLATE_TOKEN.sub(lambda m: values[m.group(1)], text)
 
 
 def merged_prompts(
@@ -151,12 +176,18 @@ def merged_prompts(
     return positive, negative
 
 
+def hash_prompts(positive: str, negative: str) -> str:
+    """The merged-prompt staleness hash for a (positive, negative) pair. Whitespace-
+    normalized so cosmetic edits don't drift it. Callers that already merged the
+    prompts hash them directly; `compute_prompt_hash` merges first."""
+    raw = _normalize(positive) + _SEP + _normalize(negative)
+    return "sha1:" + hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
 def compute_prompt_hash(
     manifest: Manifest, root: str, character: str, kind: str, entity_id: str, direction: str
 ) -> str:
-    positive, negative = merged_prompts(manifest, root, character, kind, entity_id, direction)
-    raw = _normalize(positive) + _SEP + _normalize(negative)
-    return "sha1:" + hashlib.sha1(raw.encode("utf-8")).hexdigest()
+    return hash_prompts(*merged_prompts(manifest, root, character, kind, entity_id, direction))
 
 
 # --- paths ------------------------------------------------------------------ #
@@ -274,8 +305,12 @@ def read_rendered_hash(
 def read_render_id(
     manifest: Manifest, root: str, character: str, ref: str, direction: str
 ) -> Optional[str]:
-    """The rendered node's `render_id` (provenance token), or None when the node
-    is a concept, unrendered, or was written before provenance existed."""
+    """The rendered node's `render_id` (provenance token), or None when unrendered
+    or written before provenance existed. A concept carries its render_id in
+    `_concept.json` (it has no per-direction meta), so re-rendering the concept —
+    the root of the tree — propagates staleness to everything that recorded it."""
+    if node_kind(manifest, ref) == "concept":
+        return read_identity(root, character).get("render_id")
     meta = read_node_meta(manifest, root, character, ref, direction)
     return meta.get("render_id") if meta else None
 
@@ -399,6 +434,11 @@ def outdated(manifest: Manifest, root: str, character: str, ref: str, direction:
     sources = (meta or {}).get("sources")
     if isinstance(sources, dict):
         for key, recorded in sources.items():
+            # Keys are written as "dep_ref@dir"; tolerate a malformed key (no '@',
+            # from a hand-edited or older meta) by skipping it rather than raising
+            # — the transitive-hash walk below still covers that dependency.
+            if "@" not in key:
+                continue
             dep_ref, ddir = key.rsplit("@", 1)
             if read_render_id(manifest, root, character, dep_ref, ddir) != recorded:
                 return True
@@ -431,7 +471,7 @@ def resolve_pose(manifest: Manifest, root: str, character: str, pose_id: str, di
         "meta": {
             "kind": "pose", "pose": pose_id, "direction": direction, "from": frm,
             "image": f"{direction}.png", "manifest_version": manifest["version"],
-            "prompt_hash": compute_prompt_hash(manifest, root, character, "pose", pose_id, direction),
+            "prompt_hash": hash_prompts(positive, negative),
             "sources": recorded_sources(manifest, root, character, pose_id, direction),
         },
     }
@@ -471,10 +511,20 @@ def resolve_animation(manifest: Manifest, root: str, character: str, anim_id: st
             "fps": anim.get("fps", defaults.get("fps")),
             "length": anim.get("length", defaults.get("length")),
             "loop": is_loop, "manifest_version": manifest["version"],
-            "prompt_hash": compute_prompt_hash(manifest, root, character, "animation", anim_id, direction),
+            "prompt_hash": hash_prompts(positive, negative),
             "sources": recorded_sources(manifest, root, character, anim_id, direction),
         },
     }
+
+
+def animation_fps(manifest: Manifest, anim_id: str) -> int:
+    """The animation's resolved fps (its own, else `defaults.fps`), at least 1.
+
+    A pure manifest lookup — no rendered-tree resolution — so it is cheap enough
+    for the playback IS_CHANGED hot path, which runs on every graph evaluation."""
+    anim = manifest["animations"][anim_id]
+    fps = anim.get("fps", manifest.get("defaults", {}).get("fps"))
+    return int(fps or 0) or 1
 
 
 def playback_segments(
@@ -530,18 +580,28 @@ def playback_segments(
     return [s for s in (pre_seg, action, post_seg) if s]
 
 
-def status(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> str:
+def status_from_resolved(
+    manifest: Manifest, root: str, character: str, ref: str, direction: str, resolved: dict
+) -> str:
+    """The UI status for a node given its already-resolved dict (from resolve_pose
+    / resolve_animation). Callers that have just resolved a cell use this to avoid
+    a second full resolve; `status` wraps it for callers that haven't."""
     kind = node_kind(manifest, ref)
-    if kind == "pose":
-        r = resolve_pose(manifest, root, character, ref, direction)
-        own_complete = pose_complete(root, character, ref, direction)
-        dep_stale = bool(r["stale"])
-    else:
-        r = resolve_animation(manifest, root, character, ref, direction)
-        own_complete = animation_complete(root, character, ref, direction)
-        dep_stale = bool(r["stale"])
-    if r["blocked_by"]:
+    own_complete = (
+        pose_complete(root, character, ref, direction) if kind == "pose"
+        else animation_complete(root, character, ref, direction)
+    )
+    if resolved["blocked_by"]:
         return "blocked"
     if own_complete:
         return "stale" if outdated(manifest, root, character, ref, direction) else "generated"
-    return "stale" if dep_stale else "ready"
+    return "stale" if bool(resolved["stale"]) else "ready"
+
+
+def status(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> str:
+    kind = node_kind(manifest, ref)
+    resolved = (
+        resolve_pose(manifest, root, character, ref, direction) if kind == "pose"
+        else resolve_animation(manifest, root, character, ref, direction)
+    )
+    return status_from_resolved(manifest, root, character, ref, direction, resolved)

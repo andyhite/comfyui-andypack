@@ -18,11 +18,62 @@ def test_frame_name_zero_pads():
 
 
 def test_loop_closure_drop_last():
-    assert io.apply_loop_closure([1, 2, 3, 4], "drop_last") == [1, 2, 3]
+    assert io.apply_loop_closure([1, 2, 3, 4], drop_last=True) == [1, 2, 3]
 
 
-def test_loop_closure_duplicate_first():
-    assert io.apply_loop_closure([1, 2, 3], "duplicate_first") == [1, 2, 3, 1]
+def test_loop_closure_drop_first():
+    assert io.apply_loop_closure([1, 2, 3, 4], drop_first=True) == [2, 3, 4]
+
+
+def test_loop_closure_drop_both():
+    assert io.apply_loop_closure([1, 2, 3, 4], drop_first=True, drop_last=True) == [2, 3]
+
+
+def test_loop_closure_no_flags_is_identity():
+    assert io.apply_loop_closure([1, 2, 3]) == [1, 2, 3]
+
+
+def test_loop_closure_single_frame_unchanged():
+    assert io.apply_loop_closure([7], drop_first=True, drop_last=True) == [7]
+
+
+def test_build_concept_sidecar_adds_provenance():
+    a = io.build_concept_sidecar({"positive_prompt": "hero"}, created_utc="2026-06-29T00:00:00Z")
+    assert a["positive_prompt"] == "hero"
+    assert a["render_id"].startswith("rid:")
+    # A re-render (new created_utc) yields a new render_id even with the same layer.
+    b = io.build_concept_sidecar({"positive_prompt": "hero"}, created_utc="2026-06-29T00:00:01Z")
+    assert a["render_id"] != b["render_id"]
+    # Empty identity still gets provenance.
+    empty = io.build_concept_sidecar({}, created_utc="2026-06-29T00:00:00Z")
+    assert empty["render_id"].startswith("rid:")
+
+
+def test_build_concept_sidecar_preserves_authored_fields():
+    # Re-rendering the concept must not wipe character-authored poses/animations
+    # stored in _concept.json (effective_manifest reads them).
+    existing = {
+        "positive_prompt": "old hero",
+        "poses": {"wave": {"from": {"ref": "concept"}, "directions": {"EAST": {}}}},
+        "animations": {"special": {"start_from": {"ref": "wave"}, "directions": {"EAST": {}}}},
+        "prompt_hash": "sha1:old", "created_utc": "2026-01-01T00:00:00Z", "render_id": "rid:old",
+    }
+    out = io.build_concept_sidecar(
+        {"positive_prompt": "new hero"}, created_utc="2026-06-29T00:00:00Z", existing=existing
+    )
+    assert out["poses"] == existing["poses"]            # authored fields survive
+    assert out["animations"] == existing["animations"]
+    assert out["positive_prompt"] == "new hero"         # identity widget wins
+    assert out["render_id"] != "rid:old"                # fresh provenance
+
+
+def test_build_concept_sidecar_clears_dropped_identity_field():
+    # Clearing an identity widget (omitting it from the new layer) clears the
+    # stored value rather than leaving the old one behind.
+    existing = {"positive_prompt": "old", "negative_prompt": "blurry"}
+    out = io.build_concept_sidecar({}, created_utc="2026-06-29T00:00:00Z", existing=existing)
+    assert "positive_prompt" not in out
+    assert "negative_prompt" not in out
 
 
 def test_build_pose_sidecar_carries_meta_plus_timestamp():

@@ -69,6 +69,27 @@ def test_validate_rejects_animation_without_any_start():
         validate_manifest(m)
 
 
+def test_validate_rejects_non_dict_direction_value():
+    m = base_manifest()
+    m["poses"]["base"]["directions"]["EAST"] = "facing right"  # string, not a layer
+    with pytest.raises(ManifestError, match="EAST"):
+        validate_manifest(m)
+
+
+def test_validate_rejects_non_int_length():
+    m = base_manifest()
+    m["animations"]["punch"]["length"] = "long"
+    with pytest.raises(ManifestError, match="length"):
+        validate_manifest(m)
+
+
+def test_validate_rejects_non_int_fps_on_defaults():
+    m = base_manifest()
+    m["defaults"]["fps"] = "fast"
+    with pytest.raises(ManifestError, match="fps"):
+        validate_manifest(m)
+
+
 def test_validate_warns_on_non_4n_plus_1_length():
     m = base_manifest()
     m["animations"]["punch"]["length"] = 20  # 20 is not 4n+1

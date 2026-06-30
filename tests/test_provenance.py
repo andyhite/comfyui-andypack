@@ -44,6 +44,21 @@ def test_provenance_flags_rerendered_ancestor(manifest, tree):
     assert resolve.outdated(manifest, tree.root, tree.char, "fighting_stance", "EAST") is True
 
 
+def test_provenance_flags_rerendered_concept(manifest, tree):
+    # The concept is the tree root; re-rendering it must mark descendants stale even
+    # though the concept itself is never "outdated". A pose records the concept's
+    # render_id (from _concept.json), so a new render_id ripples down.
+    tree.concept()
+    concept_json = os.path.join(tree.root, tree.char, "_concept.json")
+    io.atomic_write_json(concept_json, {"render_id": "rid:A"})
+    _pose_sidecar(tree, "base", "EAST", rid="rid:base", sources={"concept@EAST": "rid:A"})
+    assert resolve.outdated(manifest, tree.root, tree.char, "base", "EAST") is False
+
+    # Concept re-rendered with a new render_id; base recorded the old one -> stale.
+    io.atomic_write_json(concept_json, {"render_id": "rid:B"})
+    assert resolve.outdated(manifest, tree.root, tree.char, "base", "EAST") is True
+
+
 def test_pre_provenance_meta_falls_back_to_transitive(manifest, tree):
     # Sidecars without a `sources` key (older renders) must still resolve via the
     # transitive-hash walk, not crash.

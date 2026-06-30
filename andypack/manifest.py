@@ -24,6 +24,34 @@ def node_kind(manifest: Manifest, ref: str) -> str:
     raise ManifestError(f"unknown ref: {ref!r}")
 
 
+def _validate_directions(label: str, entity: dict) -> None:
+    """`directions` must be a map of name -> layer object. Each layer is read as a
+    dict (e.g. `entity['directions'][dir].get('positive_prompt')` during resolve),
+    so a non-dict value (e.g. a bare string) must be rejected at load time rather
+    than blowing up with an opaque AttributeError mid-resolve."""
+    directions = entity.get("directions")
+    if not isinstance(directions, dict):
+        raise ManifestError(f"{label} missing 'directions' map")
+    for dname, dlayer in directions.items():
+        if not isinstance(dlayer, dict):
+            raise ManifestError(
+                f"{label} direction {dname!r} must be an object, got "
+                f"{type(dlayer).__name__}"
+            )
+
+
+def _validate_gen_params(label: str, obj: dict) -> None:
+    """`length`/`fps`, when present, must be ints — they are cast with int() on the
+    selector/playback path, so a non-int (e.g. a string) must fail at load time
+    with a clear message rather than a raw ValueError mid-graph."""
+    for field in ("length", "fps"):
+        val = obj.get(field)
+        if val is not None and not isinstance(val, int):
+            raise ManifestError(
+                f"{label} {field!r} must be an integer, got {type(val).__name__}"
+            )
+
+
 def _validate_refs(manifest: Manifest) -> None:
     for pid, pose in manifest.get("poses", {}).items():
         frm = pose.get("from")
@@ -31,8 +59,8 @@ def _validate_refs(manifest: Manifest) -> None:
             raise ManifestError(f"pose {pid!r} missing 'from.ref'")
         if node_kind(manifest, frm["ref"]) == "animation":
             raise ManifestError(f"pose {pid!r} 'from' must reference concept or a pose")
-        if not isinstance(pose.get("directions"), dict):
-            raise ManifestError(f"pose {pid!r} missing 'directions' map")
+        _validate_directions(f"pose {pid!r}", pose)
+    _validate_gen_params("defaults", manifest.get("defaults", {}))
     default_start = manifest.get("defaults", {}).get("start_from")
     if default_start is not None:
         if not isinstance(default_start, dict) or "ref" not in default_start:
@@ -52,8 +80,8 @@ def _validate_refs(manifest: Manifest) -> None:
                 f"animation {aid!r} has no 'start_from' and no defaults.start_from "
                 "(I2V needs a start image)"
             )
-        if not isinstance(anim.get("directions"), dict):
-            raise ManifestError(f"animation {aid!r} missing 'directions' map")
+        _validate_gen_params(f"animation {aid!r}", anim)
+        _validate_directions(f"animation {aid!r}", anim)
 
 
 def _dependency_edges(manifest: Manifest) -> dict[str, list[str]]:

@@ -26,8 +26,8 @@ No design spec is checked in; the source of truth is the code plus
   `node_kind` classifies a ref as concept | pose | animation.
 - `resolve.py` — the pure FFLF core: cascade prompts, FFLF anchors, completeness,
   staleness, status, playback plan. **No ComfyUI/torch imports** (keep it that way).
-- `io.py` — atomic JSON writes, meta/sidecar builders, `render_id` provenance,
-  `safe_path` path-safety.
+- `io.py` — atomic JSON writes, meta/sidecar builders (pose, animation, concept),
+  `render_id` provenance.
 - `images.py` — tensor ↔ PNG conversion.
 - `api.py` — pure JSON payload builders for the routes; resolves paths under
   ComfyUI's `user`/`output` dirs (all return None outside ComfyUI).
@@ -60,16 +60,25 @@ No design spec is checked in; the source of truth is the code plus
   stale higher-index frames behind.
 - **Staleness** (`outdated`): a complete node is stale if its merged-prompt hash
   drifted, OR a recorded source's `render_id` changed (re-rendered even with an
-  unchanged prompt), OR any ancestor is outdated.
-- **Path safety**: anything serving files from `{root}` must reject `..`,
-  absolute, and symlink escapes (`io.safe_path`); 404 anything outside the root.
+  unchanged prompt), OR any ancestor is outdated. The concept carries its
+  `render_id` in `_concept.json` (it has no per-direction meta), so re-rendering
+  the concept — the tree root — marks descendants stale too.
+- **A loop is derived, never authored**: `resolve_animation` sets `meta["loop"]`
+  iff the start and end anchors resolve to the same image (`start_image ==
+  end_image`); the writer then drops the duplicated final frame. There is no
+  manifest `loop` field — don't add one back.
+- **HTTP routes take no client filesystem paths**: the `/anim_coord/*` routes
+  return JSON only and never serve file bytes. `/characters` enumerates the pack's
+  own `<output>/characters` dir (server-resolved via `api.characters_dir()`), not a
+  client-supplied root, so there is nothing to traverse out of.
 - Routes register on import only inside ComfyUI (`PromptServer` import is guarded);
   `api`/`io` helpers return None when `folder_paths` is unavailable.
 
 ## On-disk layout
 - Manifests: `<user>/default/andypack/animations/*.json`. `default.json` is seeded
   from `examples/animations.json` on first load (idempotent, never clobbers).
-- Characters: `<output>/characters/<char>/` containing `_concept.png`,
+- Characters: `<output>/characters/<char>/` containing `_concept.png` (+
+  `_concept.json`: optional identity layer + provenance, always written),
   `_<pose>/<DIR>.png` + `<DIR>.json` sidecar, and `<anim>/<DIR>/frame_NNNNN.png`
   + `meta.json`.
 

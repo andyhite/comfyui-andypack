@@ -112,12 +112,30 @@ def _load_frames_dir(directory: str) -> "torch.Tensor | None":
     return torch.cat(frames, dim=0)
 
 
+def _resize_batch(batch: torch.Tensor, height: int, width: int) -> torch.Tensor:
+    """Bilinear-resize an IMAGE batch [N, H, W, C] to (height, width); a no-op when
+    it already matches."""
+    if batch.shape[1] == height and batch.shape[2] == width:
+        return batch
+    nchw = batch.permute(0, 3, 1, 2)
+    resized = torch.nn.functional.interpolate(
+        nchw, size=(height, width), mode="bilinear", align_corners=False
+    )
+    return resized.permute(0, 2, 3, 1).contiguous()
+
+
 def assemble_playback(segments: list) -> torch.Tensor:
     """Concatenate a playback plan (see resolve.playback_segments) into one IMAGE
     batch. `anim` segments load their frame dir, tile `repeat` times, then drop the
     seam boundary frame(s); `hold` segments repeat a single image `count` times.
-    Segments with no readable frames are skipped."""
+    Segments with no readable frames are skipped.
+
+    Segments may differ in resolution — a held pose/concept anchor is often
+    authored at a different size than the action frames. Every segment is conformed
+    to a single target (the first `anim` segment's size — the action's own frames —
+    else the first part) so torch.cat doesn't crash on mismatched H/W."""
     parts: list[torch.Tensor] = []
+    target: tuple[int, int] | None = None  # (H, W) from the first anim segment
     for seg in segments:
         if seg["kind"] == "anim":
             batch = _load_frames_dir(seg["dir"])
@@ -130,12 +148,17 @@ def assemble_playback(segments: list) -> torch.Tensor:
                 batch = batch[1:]
             if seg.get("drop_last") and batch.shape[0] > 1:
                 batch = batch[:-1]
+            if target is None:
+                target = (int(batch.shape[1]), int(batch.shape[2]))
             parts.append(batch)
         else:  # hold a single image for `count` frames
             img = load_image_tensor(seg["image"])
             parts.append(img.repeat(max(int(seg.get("count", 1)), 1), 1, 1, 1))
     if not parts:
         return empty_image()
+    if target is None:
+        target = (int(parts[0].shape[1]), int(parts[0].shape[2]))
+    parts = [_resize_batch(p, target[0], target[1]) for p in parts]
     return torch.cat(parts, dim=0)
 
 

@@ -55,9 +55,12 @@ def _selector_fingerprint(resolved: dict, *image_keys: str) -> str:
 
 
 def _character_choices():
-    """Combo choices for a character dropdown: a placeholder + the folders in the
-    characters dir. The placeholder lets the cascade start unselected."""
-    return [_NO_CHARACTER, *api.list_subdirs(api.characters_dir())]
+    """Combo choices for a character dropdown: a placeholder + the character folders
+    in the characters dir. Uses the same character detection as the `/characters`
+    route (`api.list_characters`), so the combo and the route never disagree. The
+    placeholder lets the cascade start unselected."""
+    chars = [c["name"] for c in api.list_characters(_characters_root())]
+    return [_NO_CHARACTER, *chars]
 
 
 def _characters_root():
@@ -112,15 +115,24 @@ class ConceptImageWriter:
         # Character names become path segments — force lowercase snake_case. Write
         # under the same characters root the selectors read from, so a written
         # concept always shows up in their character dropdowns.
-        char_dir = os.path.join(_characters_root(), io.to_snake_case(character))
+        root = _characters_root()
+        char_name = io.to_snake_case(character)
+        char_dir = os.path.join(root, char_name)
         images.save_image_png(image, os.path.join(char_dir, "_concept.png"))
         layer = {}
         if identity_positive.strip():
             layer["positive_prompt"] = identity_positive.strip()
         if identity_negative.strip():
             layer["negative_prompt"] = identity_negative.strip()
-        if layer:
-            io.atomic_write_json(os.path.join(char_dir, "_concept.json"), layer)
+        # Always write the sidecar — even with no identity — so the concept carries a
+        # render_id. That makes re-rendering the concept (the root of the tree)
+        # propagate staleness to every pose/animation that recorded it. Read-merge
+        # over any existing sidecar so character-authored fields (poses/animations
+        # that effective_manifest reads) survive a concept re-render. The payload
+        # (_concept.png) is written first, the sidecar last (atomic).
+        existing = resolve.read_identity(root, char_name)
+        sidecar = io.build_concept_sidecar(layer, created_utc=_utc_now(), existing=existing)
+        io.atomic_write_json(os.path.join(char_dir, "_concept.json"), sidecar)
         return (char_dir,)
 
 
@@ -320,6 +332,16 @@ class AnimationFrameWriter:
     def write(self, animation, frames, seed=0):
         output_dir = animation["output_dir"]
         meta = animation["_meta"]
+        # Reject an empty frame batch up front, before touching the existing render.
+        # Writing it would produce a meta.json with count=0 and a negative-index
+        # last_frame ("frame_-0001.png"), which animation_complete reads as
+        # "complete" — a corrupt clip masquerading as done, then a FileNotFoundError
+        # in any downstream animation that consumes it as an anchor.
+        if int(frames.shape[0]) == 0:
+            raise RuntimeError(
+                "AnimationFrameWriter: received an empty frame batch; nothing to "
+                "write (check the upstream sampler)"
+            )
         os.makedirs(output_dir, exist_ok=True)
         # Re-render discipline: drop meta.json (the completion sentinel) FIRST and
         # clear any stale frames so an interrupted rewrite reads as incomplete and
@@ -334,7 +356,7 @@ class AnimationFrameWriter:
         # so the clip plays seamlessly on repeat. `meta["loop"]` is derived by the
         # resolver, not authored.
         if meta.get("loop") and len(batch) > 1:
-            batch = io.apply_loop_closure(batch, "drop_last")
+            batch = io.apply_loop_closure(batch, drop_last=True)
         for index, frame in enumerate(batch):
             images.save_image_png(frame, os.path.join(output_dir, io.frame_name(index)))
         count = len(batch)
@@ -405,12 +427,6 @@ class AnimationUnpack:
         return (animation, *(animation[key] for key, _name in _ANIMATION_UNPACK))
 
 
-def _animation_fps(manifest, root, character, animation, direction) -> int:
-    """The animation's resolved fps (manifest fps, else default), at least 1."""
-    meta = resolve.resolve_animation(manifest, root, character, animation, direction)["meta"]
-    return int(meta.get("fps") or 0) or 1
-
-
 def _animated_preview(frames, fps) -> dict:
     """Write `frames` to ComfyUI's temp dir as an animated WEBP and return the UI
     payload that makes the node play it. Returns {} outside ComfyUI (no temp dir),
@@ -465,7 +481,7 @@ class AnimationPlayback:
         root = _characters_root()
         try:
             eff = effective_manifest(manifest, root, character)
-            fps = _animation_fps(eff, root, character, animation, direction)
+            fps = resolve.animation_fps(eff, animation)
             segs = resolve.playback_segments(
                 eff, root, character, animation, direction, loops=int(loops), fps=fps
             )
@@ -485,7 +501,7 @@ class AnimationPlayback:
             raise RuntimeError("AnimationPlayback: pick an animation and a direction")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
-        fps = _animation_fps(manifest, root, character, animation, direction)
+        fps = resolve.animation_fps(manifest, animation)
         segs = resolve.playback_segments(
             manifest, root, character, animation, direction, loops=int(loops), fps=fps
         )

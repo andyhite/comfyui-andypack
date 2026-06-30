@@ -14,6 +14,7 @@ from andypack.resolve import (
     resolve_animation,
     resolve_pose,
     status,
+    status_from_resolved,
 )
 
 Manifest = dict[str, Any]
@@ -186,7 +187,7 @@ def list_options(manifest: Manifest, root: str, character: str) -> list[dict]:
             out.append({
                 "kind": "pose", "id": pid, "direction": direction,
                 "category": pose.get("category"),
-                "status": status(manifest, root, character, pid, direction),
+                "status": status_from_resolved(manifest, root, character, pid, direction, r),
                 "blocked_by": format_blocked(r["blocked_by"]),
             })
     for aid, anim in manifest.get("animations", {}).items():
@@ -195,7 +196,7 @@ def list_options(manifest: Manifest, root: str, character: str) -> list[dict]:
             out.append({
                 "kind": "animation", "id": aid, "direction": direction,
                 "category": anim.get("category"),
-                "status": status(manifest, root, character, aid, direction),
+                "status": status_from_resolved(manifest, root, character, aid, direction, r),
                 "blocked_by": format_blocked(r["blocked_by"]),
             })
     return out

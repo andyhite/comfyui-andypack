@@ -11,7 +11,7 @@ def _write_animation(manifest, root, char, anim_id, direction, count):
         open(os.path.join(out_dir, io.frame_name(i)), "w").close()
     base_meta = {
         "kind": "animation", "animation": anim_id, "direction": direction,
-        "fps": 16, "length": count, "loop": manifest["animations"][anim_id].get("loop", False),
+        "fps": 16, "length": count, "loop": False,
         "manifest_version": manifest["version"],
         "prompt_hash": compute_prompt_hash(manifest, root, char, "animation", anim_id, direction),
     }

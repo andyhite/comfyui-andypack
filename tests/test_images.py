@@ -66,6 +66,20 @@ def test_assemble_playback_skips_empty_dirs(tmp_path):
     assert batch.shape[0] == 1  # empty_image sentinel, nothing to concat
 
 
+def test_assemble_playback_conforms_mismatched_resolutions(tmp_path):
+    # A held anchor authored at a different size than the action frames must not
+    # crash torch.cat — every segment is resized to a common target.
+    action = _frames_dir(tmp_path, "act", 3)  # 2x2 frames (see _frames_dir)
+    big_hold = tmp_path / "concept.png"
+    Image.new("RGB", (8, 6), (9, 9, 9)).save(big_hold)  # 6h x 8w, different size
+    batch = images.assemble_playback([
+        {"kind": "hold", "image": str(big_hold), "count": 2},
+        {"kind": "anim", "dir": action, "repeat": 1, "drop_first": False, "drop_last": False},
+    ])
+    assert batch.shape[0] == 2 + 3
+    assert batch.shape[1:] == (2, 2, 3)  # conformed to the action's frame size
+
+
 def test_save_animated_webp_writes_all_frames(tmp_path):
     import torch
     frames = torch.stack([

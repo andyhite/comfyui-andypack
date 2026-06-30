@@ -140,6 +140,28 @@ def test_unknown_tokens_and_empty_sources_survive(tmp_path):
     assert pos == "shot of {unknown} {thing}"  # identity empty; unknown tokens untouched
 
 
+def test_injected_value_token_is_not_re_expanded(tmp_path):
+    # A literal token stored INSIDE an injected value must survive verbatim — the
+    # substitution is a single pass, not a recursive one. Here the identity carries
+    # a literal "{direction_name}", which {identity_prompt} injects; it must NOT be
+    # rewritten to the direction by the same call.
+    root = _identity(tmp_path, positive_prompt="hero {direction_name}")
+    m = base_manifest()
+    m["poses"]["base"]["positive_prompt"] = "a shot of {identity_prompt}"
+    pos, _ = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
+    assert pos == "a shot of hero {direction_name}"  # injected token left literal
+
+
+def test_tokens_in_the_layer_text_still_expand(tmp_path):
+    # Tokens written directly in the layer expand in the same single pass — only
+    # tokens that ARRIVE via an injected value are left alone.
+    root = _identity(tmp_path, positive_prompt="hero")
+    m = base_manifest()
+    m["poses"]["base"]["positive_prompt"] = "{identity_prompt} from the {direction_name}"
+    pos, _ = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
+    assert pos == "hero from the EAST"
+
+
 def test_compute_prompt_hash_matches_formula(tmp_path):
     m = base_manifest()
     pos, neg = merged_prompts(m, str(tmp_path), "Cortex", "animation", "punch", "EAST")

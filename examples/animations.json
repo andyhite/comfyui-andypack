@@ -156,7 +156,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": true,
       "length": 33,
       "start_from": {
         "ref": "walk_stride"
@@ -171,7 +170,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": true,
       "length": 25,
       "start_from": {
         "ref": "run_stride"
@@ -186,7 +184,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 21,
       "start_from": {
         "ref": "run_stride"
@@ -201,7 +198,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 17,
       "start_from": {
         "ref": "base"
@@ -216,7 +212,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 21,
       "start_from": {
         "ref": "run_stride"
@@ -231,7 +226,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 17,
       "start_from": {
         "ref": "base"
@@ -246,7 +240,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": true,
       "length": 25,
       "start_from": {
         "ref": "jump_tuck"
@@ -258,7 +251,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 17,
       "start_from": {
         "ref": "jump_tuck"
@@ -270,7 +262,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 17,
       "start_from": {
         "ref": "fall"
@@ -285,7 +276,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 17,
       "start_from": {
         "ref": "jump_tuck"
@@ -300,7 +290,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 17,
       "start_from": {
         "ref": "base"
@@ -315,7 +304,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 17,
       "start_from": {
         "ref": "crouch"
@@ -330,7 +318,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": true,
       "length": 49,
       "start_from": {
         "ref": "base"
@@ -342,7 +329,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": true,
       "length": 49,
       "start_from": {
         "ref": "crouch"
@@ -354,7 +340,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 25,
       "start_from": {
         "ref": "base"
@@ -369,7 +354,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": true,
       "length": 33,
       "start_from": {
         "ref": "fighting_stance"
@@ -381,7 +365,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 25,
       "start_from": {
         "ref": "fighting_stance_idle"
@@ -396,7 +379,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 21,
       "start_from": {
         "ref": "fighting_stance_idle"
@@ -412,7 +394,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 21,
       "start_from": {
         "ref": "fighting_stance_idle"
@@ -427,7 +408,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 25,
       "start_from": {
         "ref": "fighting_stance_idle"
@@ -442,7 +422,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": true,
       "length": 33,
       "start_from": {
         "ref": "fighting_stance_idle"
@@ -454,7 +433,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 17,
       "start_from": {
         "ref": "jump_tuck"
@@ -469,7 +447,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": true,
       "length": 33,
       "start_from": {
         "ref": "wall_cling_pose"
@@ -481,7 +458,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": true,
       "length": 25,
       "start_from": {
         "ref": "wall_cling_pose"
@@ -493,7 +469,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 17,
       "start_from": {
         "ref": "wall_cling_pose"
@@ -508,7 +483,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": true,
       "length": 33,
       "start_from": {
         "ref": "climb_reach"
@@ -523,7 +497,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 17,
       "start_from": {
         "ref": "base"
@@ -538,7 +511,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 33,
       "start_from": {
         "ref": "base"
@@ -550,7 +522,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 21,
       "start_from": {
         "ref": "base"
@@ -565,7 +536,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 25,
       "start_from": {
         "ref": "base"
@@ -580,7 +550,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": true,
       "length": 41,
       "start_from": {
         "ref": "base"
@@ -592,7 +561,6 @@
       "directions": {
         "SOUTH_EAST": {}
       },
-      "loop": false,
       "length": 33,
       "start_from": {
         "ref": "base"
@@ -607,7 +575,6 @@
       "directions": {
         "SOUTH_EAST": {}
       },
-      "loop": true,
       "length": 41,
       "start_from": {
         "ref": "base"
@@ -619,7 +586,6 @@
       "directions": {
         "SOUTH_EAST": {}
       },
-      "loop": false,
       "length": 25,
       "start_from": {
         "ref": "base"
@@ -631,7 +597,6 @@
       "directions": {
         "SOUTH_EAST": {}
       },
-      "loop": true,
       "length": 33,
       "start_from": {
         "ref": "base"
@@ -643,7 +608,6 @@
       "directions": {
         "EAST": {}
       },
-      "loop": false,
       "length": 21,
       "start_from": {
         "ref": "base"

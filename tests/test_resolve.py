@@ -2,12 +2,15 @@ import os
 
 import pytest
 
+from andypack import resolve
 from andypack.manifest import ManifestError
 from andypack.resolve import (
+    animation_fps,
     effective_manifest,
     resolve_animation,
     resolve_pose,
     status,
+    status_from_resolved,
 )
 
 
@@ -153,3 +156,38 @@ def test_character_animation_is_resolvable(manifest, tree):
     assert status(eff, tree.root, tree.char, "special_move", "EAST") == "blocked"
     tree.pose("base", "EAST")
     assert status(eff, tree.root, tree.char, "special_move", "EAST") == "ready"
+
+
+def test_status_from_resolved_matches_status(manifest, tree):
+    # status_from_resolved (used to avoid a second resolve on report paths) must
+    # agree with status() across the lifecycle states.
+    tree.concept()  # base ready, fighting_stance blocked
+    for ref in ("base", "fighting_stance", "punch"):
+        r = resolve_pose(manifest, tree.root, tree.char, ref, "EAST") if ref != "punch" \
+            else resolve_animation(manifest, tree.root, tree.char, ref, "EAST")
+        assert status_from_resolved(manifest, tree.root, tree.char, ref, "EAST", r) == \
+            status(manifest, tree.root, tree.char, ref, "EAST")
+
+
+def test_animation_fps_uses_manifest_then_default(manifest):
+    # punch declares no fps -> inherits defaults.fps (16); a per-animation fps wins.
+    assert animation_fps(manifest, "punch") == manifest["defaults"]["fps"]
+    manifest["animations"]["punch"]["fps"] = 24
+    assert animation_fps(manifest, "punch") == 24
+
+
+def test_animation_fps_floor_is_one(manifest):
+    manifest["animations"]["punch"]["fps"] = 0
+    assert animation_fps(manifest, "punch") == 1
+
+
+def test_read_identity_cache_refreshes_on_rewrite(tree):
+    # The identity cache is keyed by mtime, so a rewrite is observed (never stale).
+    tree.identity(positive_prompt="first")
+    assert resolve.read_identity(tree.root, tree.char) == {"positive_prompt": "first"}
+    import os
+    path = os.path.join(tree.root, tree.char, "_concept.json")
+    with open(path, "w") as fh:
+        fh.write('{"positive_prompt": "second"}')
+    os.utime(path, (10**9 + 100, 10**9 + 100))  # force a distinct mtime
+    assert resolve.read_identity(tree.root, tree.char) == {"positive_prompt": "second"}

@@ -23,8 +23,10 @@ if _routes is not None:
 
     @_routes.get("/anim_coord/characters")
     async def _characters(request):
-        root = request.query.get("root", "")
-        return web.json_response(api.list_characters(root))
+        # The character list is always the pack's own <output>/characters dir,
+        # resolved server-side — the client never points this at an arbitrary
+        # filesystem path, so there's nothing to traverse out of.
+        return web.json_response(api.list_characters(api.characters_dir() or ""))
 
     @_routes.get("/anim_coord/ping")
     async def _ping(request):

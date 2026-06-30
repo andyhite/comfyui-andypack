@@ -1,3 +1,6 @@
+import json
+
+from andypack import resolve
 from andypack.resolve import outdated
 
 
@@ -31,6 +34,19 @@ def test_own_hash_drift_marks_outdated(manifest, tree):
     # re-render fighting_stance with a bogus stored hash
     tree.pose("fighting_stance", "EAST", stale=True)
     assert outdated(manifest, tree.root, tree.char, "fighting_stance", "EAST") is True
+
+
+def test_malformed_sources_key_does_not_raise(manifest, tree):
+    # A sources key lacking '@' (older/hand-edited meta) must be skipped, not crash
+    # outdated() — the transitive-hash walk still covers that dependency.
+    tree.concept().pose("base", "EAST")
+    sidecar_path = resolve.pose_sidecar_path(tree.root, tree.char, "base", "EAST")
+    side = json.loads(open(sidecar_path).read())
+    side["sources"] = {"concept_no_at_sign": "rid:whatever"}  # malformed key
+    with open(sidecar_path, "w") as fh:
+        json.dump(side, fh)
+    # base's own hash still matches and its only ancestor (concept) is never stale.
+    assert outdated(manifest, tree.root, tree.char, "base", "EAST") is False
 
 
 def test_staleness_is_transitive(manifest, tree):
