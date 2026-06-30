@@ -340,19 +340,23 @@ class PoseFrameWriter:
             "required": {
                 "pose": ("ANIM_POSE",),
                 "image": ("IMAGE",),
-            }
+            },
+            "optional": {
+                "mask": ("MASK",),
+            },
         }
 
-    def write(self, pose, image):
+    def write(self, pose, image, mask=None):
         output_dir = pose["output_dir"]
         meta = pose["_meta"]
+        has_alpha = mask is not None or int(image.shape[-1]) == 4
         # Re-render discipline: drop the sidecar (completion sentinel) FIRST so an
         # interrupted rewrite reads as incomplete, then payload, then sidecar last.
         png_path = os.path.join(output_dir, meta["image"])
         sidecar_path = os.path.join(output_dir, f"{meta['direction']}.json")
         io.remove_if_exists(sidecar_path)
-        images.save_image_png(image, png_path)
-        sidecar = io.build_pose_sidecar(meta, created_utc=_utc_now())
+        images.save_image_png(image, png_path, mask=mask)
+        sidecar = io.build_pose_sidecar(meta, created_utc=_utc_now(), has_alpha=has_alpha)
         io.atomic_write_json(sidecar_path, sidecar)
         return (output_dir,)
 
@@ -434,12 +438,14 @@ class AnimationFrameWriter:
                 # `control_after_generate` magic (which a `seed`-named widget gets)
                 # that would mutate the recorded value out of sync with the sampler.
                 "seed": ("INT", {"default": 0, "forceInput": True}),
+                "mask": ("MASK",),
             },
         }
 
-    def write(self, animation, frames, seed=0):
+    def write(self, animation, frames, seed=0, mask=None):
         output_dir = animation["output_dir"]
         meta = animation["_meta"]
+        has_alpha = mask is not None or int(frames.shape[-1]) == 4
         # Reject an empty frame batch up front, before touching the existing render.
         # Writing it would produce a meta.json with count=0 and a negative-index
         # last_frame ("frame_-0001.png"), which animation_complete reads as
@@ -462,11 +468,18 @@ class AnimationFrameWriter:
         batch = [frames[i:i + 1] for i in range(frames.shape[0])]
         # A loop (FFLF start==end) ends on a duplicate of its first frame; drop it
         # so the clip plays seamlessly on repeat. `meta["loop"]` is derived by the
-        # resolver, not authored.
+        # resolver, not authored. Loop closure only drops from the end (drop_last),
+        # so batch[i] always corresponds to frames[i] — mask slicing by `index` is
+        # safe for both the looping and non-looping paths.
         if meta.get("loop") and len(batch) > 1:
             batch = io.apply_loop_closure(batch, drop_last=True)
         for index, frame in enumerate(batch):
-            images.save_image_png(frame, os.path.join(output_dir, io.frame_name(index)))
+            frame_mask = mask[index:index + 1] if mask is not None else None
+            images.save_image_png(
+                frame,
+                os.path.join(output_dir, io.frame_name(index)),
+                mask=frame_mask,
+            )
         count = len(batch)
         full_meta = io.build_animation_meta(
             meta,
@@ -475,6 +488,7 @@ class AnimationFrameWriter:
             last_frame=io.frame_name(count - 1),
             seed=seed,
             created_utc=_utc_now(),
+            has_alpha=has_alpha,
         )
         io.atomic_write_json(meta_path, full_meta)
         return (output_dir,)

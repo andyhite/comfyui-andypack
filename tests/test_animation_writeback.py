@@ -1,6 +1,10 @@
+import json
 import os
 
-from andypack import io
+import torch
+from PIL import Image
+
+from andypack import io, nodes
 from andypack.resolve import compute_prompt_hash, status
 
 
@@ -32,3 +36,30 @@ def test_writing_idle_unlocks_punch(manifest, tree):
     assert status(manifest, root, char, "fighting_stance_idle", "EAST") == "generated"
     for combat in ("punch", "fighting_stance_entry", "fighting_stance_exit"):
         assert status(manifest, root, char, combat, "EAST") == "ready"
+
+
+def test_animation_writer_writes_rgba_with_mask(tmp_path):
+    frame_count = 3
+    animation = {
+        "output_dir": str(tmp_path),
+        "_meta": {
+            "kind": "animation",
+            "animation": "idle",
+            "direction": "EAST",
+            "fps": 16,
+            "length": frame_count,
+            "loop": False,
+            "manifest_version": "1.0",
+            "prompt_hash": "sha1:x",
+        },
+    }
+    frames = torch.ones((frame_count, 4, 4, 3))
+    mask = torch.zeros((frame_count, 4, 4))
+    mask[:, :2, :2] = 1.0
+    nodes.AnimationFrameWriter().write(animation, frames, mask=mask)
+    for i in range(frame_count):
+        fname = os.path.join(str(tmp_path), f"frame_{i:05d}.png")
+        with Image.open(fname) as im:
+            assert im.mode == "RGBA"
+    meta = json.load(open(os.path.join(str(tmp_path), "meta.json")))
+    assert meta["has_alpha"] is True
