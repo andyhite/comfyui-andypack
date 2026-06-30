@@ -397,3 +397,71 @@ def test_mirror_writer_rejects_unmapped_direction(manifest, tree, monkeypatch):
         assert "mirror_map" in str(e)
     else:
         raise AssertionError("expected RuntimeError for an unmapped direction")
+
+
+def test_mirror_animation_rejects_frameless_source(manifest, tree, monkeypatch):
+    # Source meta survives but its frame PNGs are gone (cleared / partially
+    # deleted). Mirroring it would write a count=0 "complete" meta whose
+    # start/last_frame point at a nonexistent frame_00000.png. Must raise instead.
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.animation("fighting_stance_idle", "EAST", frames=3)
+    src_dir = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
+    for n in [f for f in os.listdir(src_dir) if f.startswith("frame_")]:
+        os.remove(os.path.join(src_dir, n))
+    with pytest.raises(RuntimeError, match="no frames"):
+        nodes.MirrorFrameWriter().write(
+            manifest, tree.char, "animation", "fighting_stance_idle", "WEST"
+        )
+    assert not os.path.exists(
+        resolve.animation_meta_path(tree.root, tree.char, "fighting_stance_idle", "WEST")
+    )
+
+
+def test_pose_selector_rejects_unknown_id(manifest, tree, monkeypatch):
+    # A stale/renamed serialized id must give a friendly error, not a raw KeyError.
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.concept()
+    with pytest.raises(RuntimeError, match="unknown pose"):
+        nodes.CharacterPoseSelector().select(manifest, tree.char, "", "ghost_pose", "EAST")
+
+
+def test_animation_selector_rejects_unknown_id(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.concept()
+    with pytest.raises(RuntimeError, match="unknown animation"):
+        nodes.CharacterAnimationSelector().select(manifest, tree.char, "", "ghost_anim", "EAST")
+
+
+def test_animation_selector_tolerates_missing_start_anchor(manifest, tree, monkeypatch):
+    # A selectable animation whose start_from dep is a complete animation whose meta
+    # lacks 'last_frame' resolves start_image to None; the selector must fall back to
+    # the empty sentinel, not call load_image_tensor(None).
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.concept().pose("base", "EAST")
+    # Real PNG for the end_at -> base anchor (the conftest touch leaves it empty).
+    images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
+    tree.animation("fighting_stance_idle", "EAST", frames=3)
+    # Real frames so the dep is complete + anchors could load, but drop last_frame.
+    idle = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
+    for i in range(3):
+        images.save_image_png(_img(), os.path.join(idle, f"frame_{i:05d}.png"))
+    meta_path = resolve.animation_meta_path(tree.root, tree.char, "fighting_stance_idle", "EAST")
+    meta = json.loads(open(meta_path).read())
+    del meta["last_frame"]
+    with open(meta_path, "w") as fh:
+        json.dump(meta, fh)
+    # fighting_stance_exit: start_from -> fighting_stance_idle (anim), end_at -> base.
+    (anim,) = nodes.CharacterAnimationSelector().select(
+        manifest, tree.char, "", "fighting_stance_exit", "EAST"
+    )
+    assert images.is_empty(anim["start_image"])  # empty sentinel, no crash
+
+
+def test_concept_writer_invalidates_identity_cache(tmp_path, monkeypatch):
+    # After rewriting _concept.json the writer must drop the cached identity so a
+    # re-render within the filesystem's mtime resolution still propagates.
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    calls = []
+    monkeypatch.setattr(resolve, "invalidate_identity", lambda root, char: calls.append((root, char)))
+    nodes.ConceptImageWriter().write(_img(), "Cortex")
+    assert calls == [(str(tmp_path), "cortex")]  # snake-cased character name

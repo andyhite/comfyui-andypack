@@ -117,6 +117,21 @@ def test_user_default_base_is_none_outside_comfyui():
     assert api.user_default_base() is None
 
 
+def test_diagnostics_degrade_on_invalid_character_overlay(manifest, tree):
+    # A character _concept.json with a structurally bad pose (unknown source ref)
+    # makes effective_manifest's re-validation raise; the read paths must degrade
+    # to the base manifest rather than abort the queued graph with a traceback.
+    tree.concept()
+    tree.identity(poses={"oops": {"from": {"ref": "nope"}, "directions": {"EAST": {}}}})
+    ids = {o["id"] for o in api.list_options(manifest, tree.root, tree.char)}
+    assert "base" in ids       # base manifest is still reported
+    assert "oops" not in ids   # the invalid overlay is dropped, not crashed on
+    # The other report builders share the same fallback.
+    assert api.coverage_report(manifest, tree.root, tree.char)["total"] > 0
+    assert {q["id"] for q in api.regen_queue(manifest, tree.root, tree.char)}  # no raise
+    assert api.merged_prompt_rows(manifest, tree.root, tree.char)  # no raise
+
+
 def test_manifests_dir_and_list_are_empty_without_comfyui():
     assert api.manifests_dir() is None
     assert api.list_manifest_names() == []

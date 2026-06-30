@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 from aiohttp import web
 
 from andypack import api
-from andypack.manifest import load_manifest
+from andypack.manifest import ManifestError, load_manifest
 
 try:
     from server import PromptServer  # provided by ComfyUI
@@ -15,8 +17,17 @@ except Exception:  # pragma: no cover - import-time guard outside ComfyUI
 
 
 def _manifest_from_request(request):
-    path = request.query.get("manifest", "")
-    return load_manifest(api.resolve_manifest_path(path))
+    # An empty/missing `manifest` falls back to the conventional default.json (the
+    # same name the loader node defaults to) rather than resolving to the manifests
+    # directory itself. A bad/missing manifest returns a JSON 400, not an unhandled
+    # 500 from open()-ing a directory or a nonexistent file.
+    name = request.query.get("manifest") or "default.json"
+    try:
+        return load_manifest(api.resolve_manifest_path(name))
+    except (OSError, ManifestError) as exc:
+        raise web.HTTPBadRequest(
+            text=json.dumps({"error": str(exc)}), content_type="application/json"
+        ) from exc
 
 
 if _routes is not None:

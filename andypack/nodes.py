@@ -133,6 +133,10 @@ class ConceptImageWriter:
         existing = resolve.read_identity(root, char_name)
         sidecar = io.build_concept_sidecar(layer, created_utc=_utc_now(), existing=existing)
         io.atomic_write_json(os.path.join(char_dir, "_concept.json"), sidecar)
+        # Drop the cached identity so descendants re-resolve against this render's
+        # new render_id even if the rewrite landed within the filesystem's mtime
+        # resolution (read_identity's mtime check alone could miss it).
+        resolve.invalidate_identity(root, char_name)
         return (char_dir,)
 
 
@@ -179,6 +183,10 @@ class CharacterPoseSelector:
             raise RuntimeError("CharacterPoseSelector: pick a pose and a direction")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
+        if pose not in manifest.get("poses", {}):
+            raise RuntimeError(
+                f"CharacterPoseSelector: unknown pose {pose!r} (stale or renamed) — pick a pose"
+            )
         r = resolve_pose(manifest, root, character, pose, direction)
         if not r["selectable"]:
             raise RuntimeError(
@@ -271,14 +279,24 @@ class CharacterAnimationSelector:
             raise RuntimeError("CharacterAnimationSelector: pick an animation and a direction")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
+        if animation not in manifest.get("animations", {}):
+            raise RuntimeError(
+                f"CharacterAnimationSelector: unknown animation {animation!r} "
+                "(stale or renamed) — pick an animation"
+            )
         r = resolve_animation(manifest, root, character, animation, direction)
         if not r["selectable"]:
             raise RuntimeError(
                 f"animation {animation}@{direction} not selectable: blocked_by={r['blocked_by']}"
             )
-        # start_image is always present (every selectable animation has a start
-        # source — the I2V seed). A declared end_at makes this an FFLF clip.
-        start_image = images.load_image_tensor(r["start_image"])
+        # start_image is normally present (every selectable animation has a start
+        # source — the I2V seed), but guard the None case: a dep whose meta lacks
+        # the anchor frame key resolves to None even when "selectable". A declared
+        # end_at makes this an FFLF clip.
+        start_image = (
+            images.load_image_tensor(r["start_image"]) if r["start_image"]
+            else images.empty_image()
+        )
         if r["end_image"]:
             end_image, is_fflf = images.load_image_tensor(r["end_image"]), True
         else:
@@ -725,6 +743,16 @@ class MirrorFrameWriter:
         frames = sorted(
             n for n in os.listdir(src_d) if n.startswith("frame_") and n.endswith(".png")
         )
+        # Reject a source whose meta.json survives but whose frame PNGs are gone:
+        # mirroring it would write a count=0 meta with start/last_frame pointing at
+        # a nonexistent frame_00000.png, which animation_complete reads as "done" —
+        # a corrupt clip that FileNotFoundErrors any downstream anchor. Mirror the
+        # AnimationFrameWriter empty-batch guard for this sibling write path.
+        if not frames:
+            raise RuntimeError(
+                f"source animation {anim_id}@{src_dir} has meta.json but no frames "
+                "to mirror (cleared or partially deleted)"
+            )
         dst_d = resolve.animation_frame_dir(root, character, anim_id, direction)
         os.makedirs(dst_d, exist_ok=True)
         meta_path = resolve.animation_meta_path(root, character, anim_id, direction)

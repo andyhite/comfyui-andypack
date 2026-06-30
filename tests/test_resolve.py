@@ -185,9 +185,51 @@ def test_read_identity_cache_refreshes_on_rewrite(tree):
     # The identity cache is keyed by mtime, so a rewrite is observed (never stale).
     tree.identity(positive_prompt="first")
     assert resolve.read_identity(tree.root, tree.char) == {"positive_prompt": "first"}
-    import os
     path = os.path.join(tree.root, tree.char, "_concept.json")
     with open(path, "w") as fh:
         fh.write('{"positive_prompt": "second"}')
     os.utime(path, (10**9 + 100, 10**9 + 100))  # force a distinct mtime
     assert resolve.read_identity(tree.root, tree.char) == {"positive_prompt": "second"}
+
+
+def test_invalidate_identity_defeats_unchanged_mtime(tree):
+    # The coarse-mtime case: a rewrite that lands on the SAME mtime would be served
+    # stale by the mtime cache; explicit invalidation forces a fresh read.
+    tree.identity(positive_prompt="first")
+    path = os.path.join(tree.root, tree.char, "_concept.json")
+    mtime = os.path.getmtime(path)
+    assert resolve.read_identity(tree.root, tree.char) == {"positive_prompt": "first"}
+    with open(path, "w") as fh:
+        fh.write('{"positive_prompt": "second"}')
+    os.utime(path, (mtime, mtime))  # pin mtime: cache alone can't see the change
+    assert resolve.read_identity(tree.root, tree.char) == {"positive_prompt": "first"}
+    resolve.invalidate_identity(tree.root, tree.char)
+    assert resolve.read_identity(tree.root, tree.char) == {"positive_prompt": "second"}
+
+
+def test_effective_manifest_caches_until_invalidated(manifest, tree):
+    tree.identity(poses={
+        "char_pose": {"from": {"ref": "concept"}, "directions": {"EAST": {}}},
+    })
+    first = resolve.effective_manifest(manifest, tree.root, tree.char)
+    assert "char_pose" in first["poses"]
+    # A second call returns the same validated object (no re-merge / re-validate).
+    assert resolve.effective_manifest(manifest, tree.root, tree.char) is first
+    # Invalidation (a concept re-render) rebuilds it from the current identity.
+    resolve.invalidate_identity(tree.root, tree.char)
+    rebuilt = resolve.effective_manifest(manifest, tree.root, tree.char)
+    assert rebuilt is not first and "char_pose" in rebuilt["poses"]
+
+
+def test_resolution_pass_memoizes_without_changing_results(manifest, tree):
+    # The memo must be transparent: same result inside and outside a pass, and it
+    # must not leak past the context.
+    tree.concept().pose("base", "EAST", stale=True)
+    bare = resolve.outdated(manifest, tree.root, tree.char, "base", "EAST")
+    with resolve.resolution_pass():
+        assert resolve._OUTDATED_MEMO is not None
+        memoed = resolve.outdated(manifest, tree.root, tree.char, "base", "EAST")
+        # A repeat call is served from the memo (same value).
+        assert resolve.outdated(manifest, tree.root, tree.char, "base", "EAST") == memoed
+    assert resolve._OUTDATED_MEMO is None  # dropped on exit
+    assert memoed == bare is True

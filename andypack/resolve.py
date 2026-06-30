@@ -11,6 +11,7 @@ import json
 import os
 import re
 import warnings
+from contextlib import contextmanager
 from typing import Any, Optional
 
 from andypack.manifest import node_kind, validate_manifest
@@ -69,6 +70,10 @@ def _read_json(path: str) -> Optional[dict]:
 
 
 _IDENTITY_CACHE: dict[str, tuple[float, dict]] = {}
+# Validated character-effective manifests, keyed on the identities of the two
+# inputs that produced them (base manifest + cached identity dict) — see
+# effective_manifest. Cleared by invalidate_identity.
+_EFFECTIVE_CACHE: dict[tuple[int, int], Manifest] = {}
 
 
 def read_identity(root: str, character: str) -> dict:
@@ -77,8 +82,10 @@ def read_identity(root: str, character: str) -> dict:
     Memoized by path + mtime: the resolve/report hot paths re-read a character's
     `_concept.json` many times per cell (effective_manifest, merged_prompts,
     outdated, recorded_sources), so caching collapses that to one read per file
-    version. A re-render bumps the mtime and invalidates the entry, so the cache
-    never serves a stale identity. Callers must not mutate the returned dict."""
+    version. A re-render bumps the mtime, which invalidates the entry; the concept
+    writer also calls `invalidate_identity` explicitly, because a re-render can
+    land within a coarse filesystem's mtime resolution window and leave the mtime
+    unchanged. Callers must not mutate the returned dict."""
     path = os.path.join(root, character, "_concept.json")
     try:
         mtime = os.path.getmtime(path)
@@ -90,6 +97,23 @@ def read_identity(root: str, character: str) -> dict:
     data = _read_json(path) or {}
     _IDENTITY_CACHE[path] = (mtime, data)
     return data
+
+
+def invalidate_identity(root: str, character: str) -> None:
+    """Forget the cached identity (and every effective manifest derived from any
+    identity) for a character, forcing the next read to hit disk and re-validate.
+
+    The concept writer calls this after rewriting `_concept.json`: a re-render
+    bumps `render_id` but, on a coarse-mtime filesystem (FAT/exFAT, many NFS/SMB
+    shares), can land within the mtime resolution window of the prior read — so
+    mtime alone can't be trusted to invalidate. Clearing the entry guarantees
+    descendants resolve against the new identity + render_id rather than a stale
+    cached copy."""
+    _IDENTITY_CACHE.pop(os.path.join(root, character, "_concept.json"), None)
+    # The effective-manifest cache keys on the identity object's id(); a popped
+    # entry frees that object, so just drop the whole (small) cache rather than
+    # track which entries derived from this character.
+    _EFFECTIVE_CACHE.clear()
 
 
 def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifest:
@@ -108,6 +132,16 @@ def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifes
     char_anims = char_anims if isinstance(char_anims, dict) else {}
     if not char_poses and not char_anims:
         return manifest
+    # Cache the merged + validated manifest keyed on the identities of its two
+    # inputs: the base manifest object and the cached identity dict (read_identity
+    # returns a stable object until the file changes or is invalidated). This keeps
+    # validate_manifest's ref/cycle DFS off the IS_CHANGED hot path, which
+    # re-derives the effective manifest on every graph evaluation. The cache is
+    # dropped wholesale by invalidate_identity when a concept is re-rendered.
+    key = (id(manifest), id(identity))
+    cached = _EFFECTIVE_CACHE.get(key)
+    if cached is not None:
+        return cached
     merged: Manifest = {
         **manifest,
         "poses": {**manifest.get("poses", {}), **char_poses},
@@ -116,6 +150,7 @@ def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifes
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # length warnings already surfaced at load
         validate_manifest(merged)
+    _EFFECTIVE_CACHE[key] = merged
     return merged
 
 
@@ -415,9 +450,44 @@ def end_anchor(manifest: Manifest, root: str, character: str, anim_id: str, dire
 
 # --- transitive staleness --------------------------------------------------- #
 
+_OUTDATED_MEMO: Optional[dict[tuple[str, str, str], bool]] = None
+
+
+@contextmanager
+def resolution_pass():
+    """Memoize `outdated()` across one read-only resolve pass. A coverage / regen /
+    status report walks many (entity, direction) cells that share ancestors;
+    without this each cell re-reads every ancestor's meta and recomputes its
+    prompt hash, so a shared root is re-walked once per descendant — O(cells x
+    depth). The rendered tree must not change inside the pass — true for the report
+    builders, which only read. Nested passes reuse the outer cache; the cache is
+    dropped on exit so it can never serve a later render."""
+    global _OUTDATED_MEMO
+    if _OUTDATED_MEMO is not None:
+        yield
+        return
+    _OUTDATED_MEMO = {}
+    try:
+        yield
+    finally:
+        _OUTDATED_MEMO = None
+
+
 def outdated(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> bool:
     """A COMPLETE node is stale if its own merged-prompt hash drifted or any
-    ancestor is outdated. Incompleteness is handled by `blocked`, not here."""
+    ancestor is outdated. Incompleteness is handled by `blocked`, not here.
+    Memoized by (character, ref, direction) within a `resolution_pass()`, where the
+    rendered tree is read-only."""
+    memo = _OUTDATED_MEMO
+    if memo is None:
+        return _outdated(manifest, root, character, ref, direction)
+    key = (character, ref, direction)
+    if key not in memo:
+        memo[key] = _outdated(manifest, root, character, ref, direction)
+    return memo[key]
+
+
+def _outdated(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> bool:
     kind = node_kind(manifest, ref)
     if kind == "concept":
         return False

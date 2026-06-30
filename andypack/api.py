@@ -7,17 +7,30 @@ import shutil
 from typing import Any, Optional
 
 from andypack import io
-from andypack.manifest import node_kind, topo_order
+from andypack.manifest import ManifestError, node_kind, topo_order
 from andypack.resolve import (
     effective_manifest,
     merged_prompts,
     resolve_animation,
     resolve_pose,
+    resolution_pass,
     status,
     status_from_resolved,
 )
 
 Manifest = dict[str, Any]
+
+
+def _safe_effective(manifest: Manifest, root: str, character: str) -> Manifest:
+    """`effective_manifest`, but degrade to the base manifest if the character's
+    `_concept.json` overlay is structurally invalid (bad ref / cycle). The
+    diagnostics + options reads are read-only views: surfacing the base manifest
+    is better than aborting the queued graph with a ManifestError traceback (the
+    selector IS_CHANGED hooks already swallow the same raise)."""
+    try:
+        return effective_manifest(manifest, root, character)
+    except ManifestError:
+        return manifest
 
 # The manifest shipped in the repo, seeded into the user dir on first load.
 BUNDLED_MANIFEST = os.path.join(
@@ -179,26 +192,27 @@ def list_options(manifest: Manifest, root: str, character: str) -> list[dict]:
     Uses the character's effective manifest, so character-specific poses and
     animations appear too.
     """
-    manifest = effective_manifest(manifest, root, character)
+    manifest = _safe_effective(manifest, root, character)
     out: list[dict] = []
-    for pid, pose in manifest.get("poses", {}).items():
-        for direction in pose.get("directions", {}):
-            r = resolve_pose(manifest, root, character, pid, direction)
-            out.append({
-                "kind": "pose", "id": pid, "direction": direction,
-                "category": pose.get("category"),
-                "status": status_from_resolved(manifest, root, character, pid, direction, r),
-                "blocked_by": format_blocked(r["blocked_by"]),
-            })
-    for aid, anim in manifest.get("animations", {}).items():
-        for direction in anim.get("directions", {}):
-            r = resolve_animation(manifest, root, character, aid, direction)
-            out.append({
-                "kind": "animation", "id": aid, "direction": direction,
-                "category": anim.get("category"),
-                "status": status_from_resolved(manifest, root, character, aid, direction, r),
-                "blocked_by": format_blocked(r["blocked_by"]),
-            })
+    with resolution_pass():
+        for pid, pose in manifest.get("poses", {}).items():
+            for direction in pose.get("directions", {}):
+                r = resolve_pose(manifest, root, character, pid, direction)
+                out.append({
+                    "kind": "pose", "id": pid, "direction": direction,
+                    "category": pose.get("category"),
+                    "status": status_from_resolved(manifest, root, character, pid, direction, r),
+                    "blocked_by": format_blocked(r["blocked_by"]),
+                })
+        for aid, anim in manifest.get("animations", {}).items():
+            for direction in anim.get("directions", {}):
+                r = resolve_animation(manifest, root, character, aid, direction)
+                out.append({
+                    "kind": "animation", "id": aid, "direction": direction,
+                    "category": anim.get("category"),
+                    "status": status_from_resolved(manifest, root, character, aid, direction, r),
+                    "blocked_by": format_blocked(r["blocked_by"]),
+                })
     return out
 
 
@@ -241,18 +255,19 @@ def regen_queue(manifest: Manifest, root: str, character: str) -> list[dict]:
     """Selectable-now (status `ready` or `stale`) (entity, direction) cells in
     dependency order — the work list for a batch regeneration pass. Blocked cells
     are omitted (their dependencies must be generated first)."""
-    manifest = effective_manifest(manifest, root, character)
+    manifest = _safe_effective(manifest, root, character)
     out: list[dict] = []
-    for ref in topo_order(manifest):
-        kind = node_kind(manifest, ref)
-        collection = manifest["poses"] if kind == "pose" else manifest["animations"]
-        entity = collection.get(ref)
-        if not entity:
-            continue
-        for direction in entity.get("directions", {}) or {}:
-            st = status(manifest, root, character, ref, direction)
-            if st in ("ready", "stale"):
-                out.append({"kind": kind, "id": ref, "direction": direction, "status": st})
+    with resolution_pass():
+        for ref in topo_order(manifest):
+            kind = node_kind(manifest, ref)
+            collection = manifest["poses"] if kind == "pose" else manifest["animations"]
+            entity = collection.get(ref)
+            if not entity:
+                continue
+            for direction in entity.get("directions", {}) or {}:
+                st = status(manifest, root, character, ref, direction)
+                if st in ("ready", "stale"):
+                    out.append({"kind": kind, "id": ref, "direction": direction, "status": st})
     return out
 
 
@@ -262,7 +277,7 @@ def merged_prompt_rows(manifest: Manifest, root: str, character: str) -> list[di
     effective manifest and identity layer are folded in; without one (``""``), the
     base manifest is used and no identity layer applies."""
     if character:
-        manifest = effective_manifest(manifest, root, character)
+        manifest = _safe_effective(manifest, root, character)
     out: list[dict] = []
     for collection, kind in (
         (manifest.get("poses", {}), "pose"),
