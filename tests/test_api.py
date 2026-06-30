@@ -251,6 +251,30 @@ def test_read_character_layer_absent_returns_empty(tmp_path):
     assert api.read_character_layer(str(tmp_path), "ghost") == {}
 
 
+# --- next_actionable (batch auto-selectors) --------------------------------- #
+
+def test_next_actionable_pose_skips_root_and_follows_dependency_order(manifest, tree):
+    tree.character()  # only character layer; base not generated yet
+    # base is a ROOT pose (needs the Character Creator) -> excluded for poses.
+    assert api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True) is None
+    # Generate base -> fighting_stance (a non-root pose) becomes the next pose job.
+    tree.pose("base", "EAST")
+    job = api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+    assert job["id"] == "fighting_stance" and job["direction"] == "EAST"
+
+
+def test_next_actionable_animation_picks_first_ready(manifest, tree):
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST")
+    # fighting_stance_idle (start_from fighting_stance) is now ready.
+    job = api.next_actionable(manifest, tree.root, tree.char, "animation")
+    assert job["kind"] == "animation" and job["id"] == "fighting_stance_idle"
+
+
+def test_next_actionable_none_when_nothing_actionable(manifest, tree):
+    tree.character()
+    assert api.next_actionable(manifest, tree.root, tree.char, "animation") is None
+
+
 def test_characters_dir_is_none_outside_comfyui():
     assert api.characters_dir() is None
 

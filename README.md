@@ -163,9 +163,11 @@ The `*Unpack` nodes fan a bundle out into individual typed outputs.
 | **Character Creator** | Write a character's `character.json` prompt layer and emit the base-pose job for one direction, pairing the reference image (`SOURCE_IMAGE`) with the bundled manikin (`POSE_REFERENCE`) for a multi-reference FLUX.2 edit. Optionally persists the reference art (`save_reference`, default on). |
 | **Character Reference Loader** | Reload a character's persisted reference art (`_reference.png`) as an IMAGE — feed it back into the Character Creator to re-generate base directions later. |
 | **Character Pose Selector** | Pick `character → category → pose → direction` (dynamic combos; root poses like `base` are excluded — use the Character Creator). Loads the `from`-source image, emits an `ANIM_POSE` bundle. Raises if the selection isn't selectable. |
+| **Auto Pose Selector** | Emit the *next* actionable (ready/stale) non-root pose in dependency order. Wire like the Pose Selector and hold-queue to batch-generate every pose; raises when none remain (the natural stop). |
 | **Unpack Pose** | Fan an `ANIM_POSE` out into `SOURCE_IMAGE`, `POSE_REFERENCE`, `POSITIVE_PROMPT`, `NEGATIVE_PROMPT`, `OUTPUT_DIR` (and forward the bundle). |
 | **Pose Frame Writer** | Write `{dir}.png` then the `{dir}.json` sidecar last (atomic). Returns `OUTPUT_DIR`. |
 | **Character Animation Selector** | Pick an animation + direction. Emits an `ANIM_ANIMATION` bundle: `START_IMAGE`, `END_IMAGE`, `IS_FFLF`, merged prompts, plus `LENGTH`/`FPS`/`WIDTH`/`HEIGHT`/`SHIFT` that wire straight into `WanFirstLastFrameToVideo` + `ModelSamplingSD3`. |
+| **Auto Animation Selector** | Emit the *next* actionable animation in dependency order. Wire like the Animation Selector and hold-queue to batch-generate every clip; raises when none remain. |
 | **Unpack Animation** | Fan an `ANIM_ANIMATION` out into its typed outputs (start/end image, prompts, is_fflf, length, fps, width, height, shift, output_dir). |
 | **Animation Frame Writer** | Write `frame_{:05d}.png`, trim the duplicate closing frame of a seamless loop, then write `meta.json` last (atomic). Records the sampler `seed`. Returns `OUTPUT_DIR`. |
 | **Mirror Frame Writer** | Synthesize a `mirror_map` direction (e.g. WEST from EAST) by horizontally flipping the already-rendered payload — no sampling. Symmetric designs only. |
@@ -191,6 +193,14 @@ Most of this is also driveable from the **Andypack sidebar panel** (see below).
    `END_IMAGE`→`end_image`) → KSampler → VAE Decode → **Animation Frame Writer**.
 
 See [Graph wiring](#graph-wiring) for the exact FLUX.2 and Wan node connections.
+
+**Batch generation.** To work through a whole character without hand-picking every
+`(entity, direction)`, swap the Character Pose/Animation Selector for the **Auto
+Pose Selector** / **Auto Animation Selector**: each picks the next actionable job
+in dependency order, so you can hold the queue (Ctrl+Enter repeatedly, or a queue
+count) and burn through all poses, then all animations. They raise when nothing is
+left — that error is the "all done" signal. Generate the 8 `base` directions with
+the Character Creator first (those need the reference + manikin).
 
 The web extension repopulates the combos with live status glyphs after each
 writer run, so newly-unlocked nodes appear without a manual refresh:

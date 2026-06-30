@@ -185,6 +185,51 @@ class CharacterCreator:
         return (pose,)
 
 
+def _build_pose_bundle(r: dict) -> dict:
+    """An ANIM_POSE bundle from a resolve_pose result. A normal pose has no manikin
+    (pose_reference is the empty sentinel); on a selectable pose the `from`-source
+    is complete, so source_image is a real image."""
+    src = r["source_image"]
+    image = images.load_image_tensor(src) if src else images.empty_image()
+    return {
+        "source_image": image,
+        "pose_reference": images.empty_image(),
+        "positive": r["positive"],
+        "negative": r["negative"],
+        "output_dir": r["output_dir"],
+        "_meta": r["meta"],
+    }
+
+
+def _build_animation_bundle(r: dict) -> dict:
+    """An ANIM_ANIMATION bundle from a resolve_animation result — start/end anchor
+    images plus the wireable generation params (length/fps/width/height/shift)."""
+    start_image = (
+        images.load_image_tensor(r["start_image"]) if r["start_image"]
+        else images.empty_image()
+    )
+    if r["end_image"]:
+        end_image, is_fflf = images.load_image_tensor(r["end_image"]), True
+    else:
+        end_image, is_fflf = images.empty_image(), False
+    meta = r["meta"]
+    as_int = lambda k: int(meta[k]) if meta.get(k) is not None else 0  # noqa: E731
+    return {
+        "start_image": start_image,
+        "end_image": end_image,
+        "positive": r["positive"],
+        "negative": r["negative"],
+        "is_fflf": is_fflf,
+        "length": as_int("length"),
+        "fps": as_int("fps"),
+        "width": as_int("width"),
+        "height": as_int("height"),
+        "shift": float(meta["shift"]) if meta.get("shift") is not None else 0.0,
+        "output_dir": r["output_dir"],
+        "_meta": meta,
+    }
+
+
 class CharacterReferenceLoader:
     """Reload a character's persisted reference art (`<char>/_reference.png`, saved
     by the Character Creator) as an IMAGE. Feed it back into the Character Creator
@@ -277,22 +322,9 @@ class CharacterPoseSelector:
             raise RuntimeError(
                 f"pose {pose}@{direction} not selectable: blocked_by={r['blocked_by']}"
             )
-        # On a successful select the `from`-source is always complete, so
-        # source_image is always a real image (never the empty sentinel).
-        src = r["source_image"]
-        image = images.load_image_tensor(src) if src else images.empty_image()
-        # Bundle the loose outputs into one POSE dict. The resolver meta rides
-        # along under `_meta` (JSON-safe, for the writer's sidecar); it is not a
-        # selectable getter output. See POSE_OUTPUT_KEYS.
-        pose = {
-            "source_image": image,
-            "pose_reference": images.empty_image(),  # normal poses have no manikin
-            "positive": r["positive"],
-            "negative": r["negative"],
-            "output_dir": r["output_dir"],
-            "_meta": r["meta"],
-        }
-        return (pose,)
+        # Bundle the loose outputs into one POSE dict (see POSE_OUTPUT_KEYS). On a
+        # successful select the `from`-source is complete, so source_image is real.
+        return (_build_pose_bundle(r),)
 
 
 class PoseFrameWriter:
@@ -375,46 +407,10 @@ class CharacterAnimationSelector:
             raise RuntimeError(
                 f"animation {animation}@{direction} not selectable: blocked_by={r['blocked_by']}"
             )
-        # start_image is normally present (every selectable animation has a start
-        # source — the I2V seed), but guard the None case: a dep whose meta lacks
-        # the anchor frame key resolves to None even when "selectable". A declared
-        # end_at makes this an FFLF clip.
-        start_image = (
-            images.load_image_tensor(r["start_image"]) if r["start_image"]
-            else images.empty_image()
-        )
-        if r["end_image"]:
-            end_image, is_fflf = images.load_image_tensor(r["end_image"]), True
-        else:
-            end_image, is_fflf = images.empty_image(), False
-        # Surface the manifest's generation params as wireable INT/FLOAT outputs so
-        # they drive the WanFirstLastFrameToVideo node directly (it requires width,
-        # height, length), not just ride along in META. `shift` feeds the
-        # ModelSamplingSD3 shift (the quality lever — 3.0 @ 480p, 5.0 @ 720p).
-        meta = r["meta"]
-        length = int(meta["length"]) if meta.get("length") is not None else 0
-        fps = int(meta["fps"]) if meta.get("fps") is not None else 0
-        width = int(meta["width"]) if meta.get("width") is not None else 0
-        height = int(meta["height"]) if meta.get("height") is not None else 0
-        shift = float(meta["shift"]) if meta.get("shift") is not None else 0.0
-        # Bundle the loose outputs into one ANIMATION dict. The resolver meta rides
-        # along under `_meta` (JSON-safe, for the writer's meta.json); it is not a
-        # selectable getter output. See ANIMATION_OUTPUT_KEYS.
-        animation = {
-            "start_image": start_image,
-            "end_image": end_image,
-            "positive": r["positive"],
-            "negative": r["negative"],
-            "is_fflf": is_fflf,
-            "length": length,
-            "fps": fps,
-            "width": width,
-            "height": height,
-            "shift": shift,
-            "output_dir": r["output_dir"],
-            "_meta": meta,
-        }
-        return (animation,)
+        # Bundle the loose outputs into one ANIMATION dict (see ANIMATION_OUTPUT_KEYS).
+        # The wireable generation params (length/fps/width/height/shift) drive the
+        # WanFirstLastFrameToVideo node + ModelSamplingSD3 directly.
+        return (_build_animation_bundle(r),)
 
 
 class AnimationFrameWriter:
@@ -749,6 +745,113 @@ class RegenQueue:
         return (text, len(queue))
 
 
+class AutoPoseSelector:
+    """Auto-advancing batch selector: emit the NEXT actionable (ready/stale)
+    non-root pose in dependency order, as an ANIM_POSE. Wire it like the Character
+    Pose Selector (→ Unpack Pose → FLUX edit → Pose Frame Writer) and queue the
+    graph repeatedly — each run generates the next pose until none remain (then it
+    raises, the natural stop). Root poses (base) are skipped — use the Character
+    Creator for those."""
+
+    CATEGORY = "andypack/Pose"
+    FUNCTION = "select"
+    RETURN_TYPES = ("ANIM_POSE",)
+    RETURN_NAMES = ("POSE",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+            }
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character):
+        # Re-run as the tree fills (the next job changes) or a prompt drifts.
+        if character in ("", _NO_CHARACTER):
+            return float("nan")
+        root = _characters_root()
+        try:
+            eff = effective_manifest(manifest, root, character)
+            job = api.next_actionable(eff, root, character, "pose", exclude_root=True)
+            if not job:
+                return "none"
+            r = resolve_pose(eff, root, character, job["id"], job["direction"])
+        except Exception:
+            return float("nan")
+        return f"{job['id']}@{job['direction']}|" + _selector_fingerprint(r, "source_image")
+
+    def select(self, manifest, character):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("AutoPoseSelector: select a character first")
+        root = _characters_root()
+        manifest = effective_manifest(manifest, root, character)
+        job = api.next_actionable(manifest, root, character, "pose", exclude_root=True)
+        if not job:
+            raise RuntimeError(
+                "AutoPoseSelector: no actionable poses remain — every non-root pose "
+                "is generated or blocked on an ungenerated dependency (generate the "
+                "base directions with the Character Creator first)"
+            )
+        r = resolve_pose(manifest, root, character, job["id"], job["direction"])
+        return (_build_pose_bundle(r),)
+
+
+class AutoAnimationSelector:
+    """Auto-advancing batch selector: emit the NEXT actionable (ready/stale)
+    animation in dependency order, as an ANIM_ANIMATION. Wire it like the Character
+    Animation Selector (→ Unpack Animation → WanFirstLastFrameToVideo → Animation
+    Frame Writer) and queue the graph repeatedly — each run generates the next clip
+    until none remain (then it raises, the natural stop)."""
+
+    CATEGORY = "andypack/Animation"
+    FUNCTION = "select"
+    RETURN_TYPES = ("ANIM_ANIMATION",)
+    RETURN_NAMES = ("ANIMATION",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+            }
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character):
+        if character in ("", _NO_CHARACTER):
+            return float("nan")
+        root = _characters_root()
+        try:
+            eff = effective_manifest(manifest, root, character)
+            job = api.next_actionable(eff, root, character, "animation")
+            if not job:
+                return "none"
+            r = resolve_animation(eff, root, character, job["id"], job["direction"])
+        except Exception:
+            return float("nan")
+        return f"{job['id']}@{job['direction']}|" + _selector_fingerprint(
+            r, "start_image", "end_image"
+        )
+
+    def select(self, manifest, character):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("AutoAnimationSelector: select a character first")
+        root = _characters_root()
+        manifest = effective_manifest(manifest, root, character)
+        job = api.next_actionable(manifest, root, character, "animation")
+        if not job:
+            raise RuntimeError(
+                "AutoAnimationSelector: no actionable animations remain — every "
+                "animation is generated or blocked on an ungenerated anchor pose"
+            )
+        r = resolve_animation(manifest, root, character, job["id"], job["direction"])
+        return (_build_animation_bundle(r),)
+
+
 class MirrorFrameWriter:
     """Synthesize a mirror-mapped direction from its already-generated source
     (e.g. WEST from EAST) by horizontally flipping the rendered payload — no
@@ -843,9 +946,11 @@ NODE_CLASS_MAPPINGS = {
     "CharacterCreator": CharacterCreator,
     "CharacterReferenceLoader": CharacterReferenceLoader,
     "CharacterPoseSelector": CharacterPoseSelector,
+    "AutoPoseSelector": AutoPoseSelector,
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
     "CharacterAnimationSelector": CharacterAnimationSelector,
+    "AutoAnimationSelector": AutoAnimationSelector,
     "AnimationFrameWriter": AnimationFrameWriter,
     "AnimationUnpack": AnimationUnpack,
     "AnimationPlayback": AnimationPlayback,
@@ -860,9 +965,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "CharacterCreator": "Character Creator",
     "CharacterReferenceLoader": "Character Reference Loader",
     "CharacterPoseSelector": "Character Pose Selector",
+    "AutoPoseSelector": "Auto Pose Selector (next job)",
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",
     "CharacterAnimationSelector": "Character Animation Selector",
+    "AutoAnimationSelector": "Auto Animation Selector (next job)",
     "AnimationFrameWriter": "Animation Frame Writer",
     "AnimationUnpack": "Unpack Animation",
     "AnimationPlayback": "Animation Playback",

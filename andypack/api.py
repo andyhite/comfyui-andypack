@@ -405,6 +405,27 @@ def regen_queue(manifest: Manifest, root: str, character: str) -> list[dict]:
     return out
 
 
+def next_actionable(
+    manifest: Manifest, root: str, character: str, kind: str, *, exclude_root: bool = False
+) -> Optional[dict]:
+    """The first selectable-now (ready/stale) cell of `kind` in dependency order,
+    or None when nothing of that kind is actionable. Backs the auto-advancing
+    batch selectors: queue the graph repeatedly and each run picks the next job.
+
+    `exclude_root` drops root poses (no `from`, e.g. `base`) — they need the
+    Character Creator's reference image + manikin, not a generic selector."""
+    eff = _safe_effective(manifest, root, character)
+    for item in regen_queue(eff, root, character):
+        if item["kind"] != kind:
+            continue
+        if exclude_root and kind == "pose":
+            pose = eff.get("poses", {}).get(item["id"], {})
+            if pose.get("from") is None:
+                continue
+        return item
+    return None
+
+
 def merged_prompt_rows(manifest: Manifest, root: str, character: str) -> list[dict]:
     """Every (entity, direction) with its fully merged positive/negative prompts —
     the cascade output a sampler would receive. With a character, the character's

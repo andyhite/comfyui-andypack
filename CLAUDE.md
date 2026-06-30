@@ -38,7 +38,7 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
   `manifest_name_is_safe`); resolves paths under ComfyUI's `user`/`output` dirs
   (all return None / degrade outside ComfyUI).
 - `server.py` — aiohttp `/anim_coord/*` routes (read + write), registered on import.
-- `nodes.py` — the ComfyUI node classes + mappings (15 nodes), grouped into
+- `nodes.py` — the ComfyUI node classes + mappings (17 nodes), grouped into
   `andypack/<Manifest|Character|Pose|Animation|Diagnostics>` categories.
 - `web/anim_coord.js` — frontend extension for dynamic character-scoped combos
   (pure-Python `INPUT_TYPES` can't populate these; it needs the server routes).
