@@ -16,16 +16,21 @@ from PIL import Image
 _MATTE = (255, 255, 255)
 
 
-def load_image_tensor(path: str) -> torch.Tensor:
+def load_image_tensor(path: str, keep_alpha: bool = False) -> torch.Tensor:
     """Load a PNG into a ComfyUI IMAGE tensor [1, H, W, C] float32 in [0, 1].
 
-    Images with transparency (RGBA / LA / paletted-with-alpha) are alpha-composited
-    over a white matte rather than dropped onto black, so concept art on a
-    transparent background flattens cleanly.
+    When ``keep_alpha`` is False (the default) images with transparency are
+    alpha-composited over a white matte and returned as 3-ch RGB — unchanged
+    from the original behavior.  When ``keep_alpha`` is True, a 4-ch RGBA
+    tensor is returned; RGB-only PNGs get a full alpha channel (α=1).
     """
     with Image.open(path) as img:
-        rgb = _flatten_to_rgb(img)
-        arr = np.asarray(rgb, dtype=np.float32) / 255.0
+        if keep_alpha:
+            rgba = img.convert("RGBA")
+            arr = np.asarray(rgba, dtype=np.float32) / 255.0
+        else:
+            rgb = _flatten_to_rgb(img)
+            arr = np.asarray(rgb, dtype=np.float32) / 255.0
     return torch.from_numpy(arr).unsqueeze(0)
 
 
@@ -40,16 +45,78 @@ def _flatten_to_rgb(img: "Image.Image") -> "Image.Image":
     return img.convert("RGB")
 
 
-def save_image_png(image: torch.Tensor, path: str) -> None:
-    """Atomically save the first batch item of an IMAGE tensor as a PNG."""
+def _alpha_from_mask(mask: torch.Tensor, h: int, w: int) -> torch.Tensor:
+    """Resize a ComfyUI MASK [B,H,W] to (h, w) and return the first frame [H,W]."""
+    m = mask if mask.dim() == 3 else mask.unsqueeze(0)
+    if m.shape[1] != h or m.shape[2] != w:
+        m = torch.nn.functional.interpolate(
+            m.unsqueeze(1), size=(h, w), mode="bilinear", align_corners=False
+        ).squeeze(1)
+    return m[0].clamp(0.0, 1.0)
+
+
+def to_rgba(image: torch.Tensor, mask: "torch.Tensor | None" = None) -> torch.Tensor:
+    """Return an [H,W,4] RGBA tensor from the first frame of an IMAGE batch.
+
+    - If *mask* ([B,H,W]) is given, it becomes the alpha channel (resized if needed).
+    - Else if *image* is already 4-ch, the existing alpha is kept.
+    - Else alpha is set to 1 (fully opaque).
+    """
     frame = image[0] if image.dim() == 4 else image
-    arr = (frame.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
+    h = int(frame.shape[0])
+    w = int(frame.shape[1])
+    rgb = frame[..., :3]
+    if mask is not None:
+        a = _alpha_from_mask(mask, h, w).unsqueeze(-1)
+    elif frame.shape[-1] == 4:
+        a = frame[..., 3:4]
+    else:
+        a = torch.ones((h, w, 1), dtype=frame.dtype)
+    return torch.cat([rgb, a], dim=-1)
+
+
+def alpha_bbox(
+    image: torch.Tensor,
+    threshold: float = 0.03,
+) -> "tuple[int, int, int, int] | None":
+    """Return (left, top, right, bottom) of pixels where alpha >= threshold.
+
+    For a 3-ch image the entire rectangle is returned.  Returns None when the
+    image is fully transparent (no pixels at or above the threshold).
+    """
+    frame = image[0] if image.dim() == 4 else image
+    if frame.shape[-1] != 4:
+        return (0, 0, int(frame.shape[1]), int(frame.shape[0]))
+    a = frame[..., 3]
+    ys, xs = torch.where(a >= threshold)
+    if ys.numel() == 0:
+        return None
+    return (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+
+
+def save_image_png(
+    image: torch.Tensor,
+    path: str,
+    mask: "torch.Tensor | None" = None,
+) -> None:
+    """Atomically save the first batch item of an IMAGE tensor as a PNG.
+
+    Writes RGBA when *mask* is provided or when *image* is already 4-ch;
+    otherwise writes RGB (original behavior, fully backward-compatible).
+    """
+    frame = image[0] if image.dim() == 4 else image
+    has_alpha = mask is not None or frame.shape[-1] == 4
+    if has_alpha:
+        rgba = to_rgba(image, mask)
+        arr = (rgba.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
+    else:
+        arr = (frame[..., :3].clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=directory, suffix=".png.tmp")
     os.close(fd)
     try:
-        Image.fromarray(arr, mode="RGB").save(tmp, format="PNG")
+        Image.fromarray(arr).save(tmp, format="PNG")
         os.replace(tmp, path)
     except BaseException:
         try:
