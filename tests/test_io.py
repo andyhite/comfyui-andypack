@@ -165,3 +165,22 @@ def test_to_snake_case_rejects_empty_result():
         io.to_snake_case("!!!")
     with pytest.raises(ValueError):
         io.to_snake_case("")
+
+
+def test_build_character_is_just_the_layer_when_no_existing():
+    out = io.build_character({"positive_prompt": "a hero", "negative_prompt": "blurry"})
+    assert out == {"positive_prompt": "a hero", "negative_prompt": "blurry"}
+    assert "render_id" not in out and "prompt_hash" not in out and "created_utc" not in out
+
+
+def test_build_character_preserves_overlay_and_drops_cleared_keys():
+    existing = {
+        "positive_prompt": "old", "negative_prompt": "old neg",
+        "poses": {"wave": {"from": {"ref": "base"}, "directions": {"EAST": {}}}},
+    }
+    # New layer omits negative_prompt (widget cleared) — it must be dropped,
+    # while the character-authored `poses` overlay survives.
+    out = io.build_character({"positive_prompt": "new"}, existing=existing)
+    assert out["positive_prompt"] == "new"
+    assert "negative_prompt" not in out
+    assert out["poses"] == existing["poses"]

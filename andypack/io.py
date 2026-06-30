@@ -111,6 +111,28 @@ def build_concept_sidecar(layer: dict, created_utc: str, existing: Optional[dict
     }
 
 
+# The keys build_character owns (rewrites from the widgets). Everything else in
+# an existing character.json — e.g. the character-authored poses/animations
+# overlay that effective_manifest reads — is preserved across a rewrite.
+_CHARACTER_OWNED_KEYS = ("positive_prompt", "negative_prompt")
+
+
+def build_character(layer: dict, existing: Optional[dict] = None) -> dict:
+    """character.json = the (possibly empty) character prompt layer, merged over
+    any `existing` file so a character-authored `poses`/`animations` overlay
+    survives. Unlike the old concept sidecar this carries NO provenance: the
+    character is no longer a render node (the reference image is not persisted),
+    so the tree's provenance roots at the base pose's own sidecars.
+
+    The widgets are the source of truth for the prompt layer: keys the new
+    `layer` omits are dropped (clearing a widget clears the stored value), while
+    all non-owned `existing` keys pass through untouched."""
+    preserved = {
+        k: v for k, v in (existing or {}).items() if k not in _CHARACTER_OWNED_KEYS
+    }
+    return {**preserved, **layer}
+
+
 def build_pose_sidecar(meta: dict, created_utc: str) -> dict:
     """Pose sidecar = resolve_pose meta + created_utc + render_id."""
     return {
