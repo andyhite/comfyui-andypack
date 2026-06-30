@@ -1421,10 +1421,79 @@ class CharacterAtlasBuilder:
         return (sheet, atlas, report)
 
 
+class CharacterIdentityAnchor:
+    """Assemble a character's persisted reference art and the already-rendered base
+    pose for a requested direction into an anchor batch for IPAdapter/Redux
+    conditioning — fights cross-direction identity drift."""
+
+    CATEGORY = "andypack/Character"
+    FUNCTION = "anchor"
+    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE")
+    RETURN_NAMES = ("REFERENCE_IMAGE", "BASE_DIRECTION_IMAGE", "ANCHOR_BATCH")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+                "direction": ("STRING", {"default": ""}),
+            },
+            "optional": {
+                "include_reference": ("BOOLEAN", {"default": True}),
+                "include_base": ("BOOLEAN", {"default": True}),
+                "base_pose": ("STRING", {"default": "base"}),
+            },
+        }
+
+    @classmethod
+    def IS_CHANGED(
+        cls, manifest, character, direction,
+        include_reference=True, include_base=True, base_pose="base",
+    ):
+        if character in ("", _NO_CHARACTER):
+            return float("nan")
+        root = _characters_root()
+        ref_path = resolve.reference_image_path(root, character)
+        base_path = resolve.pose_image_path(root, character, base_pose, direction)
+        return f"{ref_path}:{_mtime(ref_path)}|{base_path}:{_mtime(base_path)}"
+
+    def anchor(
+        self, manifest, character, direction,
+        include_reference=True, include_base=True, base_pose="base",
+    ):
+        root = _characters_root()
+        ref_path = resolve.reference_image_path(root, character)
+        if os.path.exists(ref_path):
+            reference_image = images.load_image_tensor(ref_path)
+        else:
+            reference_image = images.empty_image()
+        if resolve.pose_complete(root, character, base_pose, direction):
+            base_direction_image = images.load_image_tensor(
+                resolve.pose_image_path(root, character, base_pose, direction)
+            )
+        else:
+            base_direction_image = images.empty_image()
+        parts = []
+        if include_reference and not images.is_empty(reference_image):
+            parts.append(reference_image)
+        if include_base and not images.is_empty(base_direction_image):
+            parts.append(base_direction_image)
+        if not parts:
+            anchor_batch = images.empty_image()
+        else:
+            target_h = int(parts[0].shape[1])
+            target_w = int(parts[0].shape[2])
+            resized = [images._resize_batch(p, target_h, target_w) for p in parts]
+            anchor_batch = torch.cat(resized, dim=0)
+        return (reference_image, base_direction_image, anchor_batch)
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
     "CharacterReferenceLoader": CharacterReferenceLoader,
+    "CharacterIdentityAnchor": CharacterIdentityAnchor,
     "CharacterPoseSelector": CharacterPoseSelector,
     "AutoPoseSelector": AutoPoseSelector,
     "ManikinPoseControl": ManikinPoseControl,
@@ -1450,6 +1519,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
     "CharacterCreator": "Character Creator",
     "CharacterReferenceLoader": "Character Reference Loader",
+    "CharacterIdentityAnchor": "Character Identity Anchor",
     "CharacterPoseSelector": "Character Pose Selector",
     "AutoPoseSelector": "Auto Pose Selector (next job)",
     "ManikinPoseControl": "Manikin Pose Control",

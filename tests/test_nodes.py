@@ -683,3 +683,25 @@ def test_mirror_writer_batch_all(tmp_path, monkeypatch):
     )
     assert count == 1
     assert os.path.exists(resolve.pose_image_path(root, char, "p", "WEST"))
+
+
+# --- CharacterIdentityAnchor ------------------------------------------------ #
+
+def test_character_identity_anchor(monkeypatch, tmp_path):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    root = str(tmp_path)
+    char = "hero"
+    images.save_image_png(
+        torch.ones((1, 4, 4, 3)), resolve.reference_image_path(root, char)
+    )
+    manifest = {
+        "version": 1,
+        "poses": {"base": {"directions": {"EAST": {}}}},
+        "animations": {},
+        "defaults": {},
+    }
+    ref, base, batch = nodes.CharacterIdentityAnchor().anchor(
+        manifest, char, "EAST",
+        include_reference=True, include_base=False, base_pose="base",
+    )
+    assert ref.shape[-1] == 3 and batch.shape[0] >= 1
