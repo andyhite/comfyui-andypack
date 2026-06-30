@@ -194,7 +194,7 @@ def test_mirror_writer_pose(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
-    (out_dir,) = nodes.MirrorFrameWriter().write(manifest, tree.char, "pose", "base", "WEST")
+    out_dir, _ = nodes.MirrorFrameWriter().write(manifest, tree.char, "pose", "base", "WEST")
     assert os.path.exists(resolve.pose_image_path(tree.root, tree.char, "base", "WEST"))
     side = json.loads(open(resolve.pose_sidecar_path(tree.root, tree.char, "base", "WEST")).read())
     assert side["mirrored_from"]["direction"] == "EAST"
@@ -208,7 +208,7 @@ def test_mirror_writer_animation(manifest, tree, monkeypatch):
     src_dir = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
     for i in range(3):
         images.save_image_png(_img(), os.path.join(src_dir, f"frame_{i:05d}.png"))
-    (out_dir,) = nodes.MirrorFrameWriter().write(
+    out_dir, _ = nodes.MirrorFrameWriter().write(
         manifest, tree.char, "animation", "fighting_stance_idle", "WEST"
     )
     meta = json.loads(open(resolve.animation_meta_path(
@@ -644,3 +644,33 @@ def test_palette_node_extract_only_passthrough():
 def test_auto_pose_selector_has_skip_mirrored_input():
     req = nodes.AutoPoseSelector.INPUT_TYPES()["required"]
     assert "skip_mirrored" in req
+
+
+def test_mirror_writer_batch_all(tmp_path, monkeypatch):
+    from andypack import io
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    root = str(tmp_path)
+    char = "hero"
+    manifest = {
+        "version": 1,
+        "mirror_map": {"WEST": "EAST"},
+        "poses": {
+            "base": {"directions": {"EAST": {}}},
+            "p": {"from": {"ref": "base"}, "directions": {"EAST": {}, "WEST": {}}},
+        },
+        "animations": {},
+        "defaults": {},
+    }
+    src = resolve.pose_image_path(root, char, "p", "EAST")
+    os.makedirs(os.path.dirname(src), exist_ok=True)
+    images.save_image_png(torch.ones((1, 4, 4, 4)), src)
+    r = resolve.resolve_pose(manifest, root, char, "p", "EAST")
+    io.atomic_write_json(
+        resolve.pose_sidecar_path(root, char, "p", "EAST"),
+        io.build_pose_sidecar(r["meta"], created_utc="t"),
+    )
+    dirs, count = nodes.MirrorFrameWriter().write(
+        manifest, char, "pose", "p", "", mirror_all=True
+    )
+    assert count == 1
+    assert os.path.exists(resolve.pose_image_path(root, char, "p", "WEST"))

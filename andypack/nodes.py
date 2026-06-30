@@ -906,8 +906,8 @@ class MirrorFrameWriter:
 
     CATEGORY = "andypack/Animation"
     FUNCTION = "write"
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("OUTPUT_DIR",)
+    RETURN_TYPES = ("STRING", "INT")
+    RETURN_NAMES = ("OUTPUT_DIRS", "COUNT")
     OUTPUT_NODE = True
 
     @classmethod
@@ -917,45 +917,107 @@ class MirrorFrameWriter:
                 "manifest": ("ANIM_MANIFEST",),
                 "character": (_character_choices(),),
                 "kind": (["animation", "pose"],),
-                "id": ("STRING", {"default": ""}),
+                "entity_id": ("STRING", {"default": ""}),
                 "direction": ("STRING", {"default": ""}),
+                "mirror_all": ("BOOLEAN", {"default": False}),
             }
         }
 
     @classmethod
-    def IS_CHANGED(cls, manifest, character, kind, id, direction):
-        if character in ("", _NO_CHARACTER) or not id or not direction:
+    def IS_CHANGED(
+        cls, manifest, character, kind, entity_id, direction, mirror_all=False
+    ):
+        if character in ("", _NO_CHARACTER) or not entity_id:
             return float("nan")
         root = _characters_root()
         try:
             eff = effective_manifest(manifest, root, character)
-            src_dir = (eff.get("mirror_map") or {}).get(direction)
+            mirror_map = eff.get("mirror_map") or {}
+            if mirror_all:
+                parts = []
+                for tgt_dir, src_dir in mirror_map.items():
+                    if kind == "pose":
+                        src = resolve.pose_image_path(root, character, entity_id, src_dir)
+                        parts.append(f"pose:{src}:{_mtime(src)}")
+                    else:
+                        d = resolve.animation_frame_dir(
+                            root, character, entity_id, src_dir
+                        )
+                        meta = resolve.animation_meta_path(
+                            root, character, entity_id, src_dir
+                        )
+                        parts.append(f"anim:{d}:{_mtime(meta)}")
+                return "|".join(parts) if parts else float("nan")
+            if not direction:
+                return float("nan")
+            src_dir = mirror_map.get(direction)
             if not src_dir:
                 return float("nan")
             if kind == "pose":
-                src = resolve.pose_image_path(root, character, id, src_dir)
+                src = resolve.pose_image_path(root, character, entity_id, src_dir)
                 return f"pose:{src}:{_mtime(src)}"
-            d = resolve.animation_frame_dir(root, character, id, src_dir)
-            meta = resolve.animation_meta_path(root, character, id, src_dir)
+            d = resolve.animation_frame_dir(root, character, entity_id, src_dir)
+            meta = resolve.animation_meta_path(root, character, entity_id, src_dir)
             return f"anim:{d}:{_mtime(meta)}"
         except Exception:
             return float("nan")
 
-    def write(self, manifest, character, kind, id, direction):
+    def write(self, manifest, character, kind, entity_id, direction, mirror_all=False):
         if character in ("", _NO_CHARACTER):
             raise RuntimeError("MirrorFrameWriter: select a character first")
-        if not id or not direction:
-            raise RuntimeError("MirrorFrameWriter: pick an id and a (mirrored) direction")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
-        src_dir = (manifest.get("mirror_map") or {}).get(direction)
+        mirror_map = manifest.get("mirror_map") or {}
+        if mirror_all:
+            if not entity_id:
+                raise RuntimeError("MirrorFrameWriter: pick an entity_id for batch mode")
+            dirs = []
+            for tgt_dir, src_dir in mirror_map.items():
+                if kind == "pose":
+                    src_png = resolve.pose_image_path(root, character, entity_id, src_dir)
+                    if not os.path.exists(src_png):
+                        continue
+                    out = self._mirror_pose(
+                        manifest, root, character, entity_id, tgt_dir, src_dir
+                    )
+                else:
+                    src_meta = resolve.read_node_meta(
+                        manifest, root, character, entity_id, src_dir
+                    )
+                    if src_meta is None:
+                        continue
+                    src_d = resolve.animation_frame_dir(
+                        root, character, entity_id, src_dir
+                    )
+                    frames = [
+                        n for n in os.listdir(src_d)
+                        if n.startswith("frame_") and n.endswith(".png")
+                    ]
+                    if not frames:
+                        continue
+                    out = self._mirror_animation(
+                        manifest, root, character, entity_id, tgt_dir, src_dir
+                    )
+                dirs.append(out)
+            return ("\n".join(dirs), len(dirs))
+        if not entity_id or not direction:
+            raise RuntimeError(
+                "MirrorFrameWriter: pick an entity_id and a (mirrored) direction"
+            )
+        src_dir = mirror_map.get(direction)
         if not src_dir:
             raise RuntimeError(
                 f"direction {direction!r} is not in mirror_map; nothing to mirror from"
             )
         if kind == "pose":
-            return (self._mirror_pose(manifest, root, character, id, direction, src_dir),)
-        return (self._mirror_animation(manifest, root, character, id, direction, src_dir),)
+            out = self._mirror_pose(
+                manifest, root, character, entity_id, direction, src_dir
+            )
+            return (out, 1)
+        out = self._mirror_animation(
+            manifest, root, character, entity_id, direction, src_dir
+        )
+        return (out, 1)
 
     def _mirror_pose(self, manifest, root, character, pose_id, direction, src_dir):
         src_png = resolve.pose_image_path(root, character, pose_id, src_dir)
