@@ -687,6 +687,11 @@ def test_mirror_writer_batch_all(tmp_path, monkeypatch):
 
 # --- CharacterIdentityAnchor ------------------------------------------------ #
 
+def test_action_set_selector_input_has_action_set():
+    req = nodes.ActionSetSelector.INPUT_TYPES()["required"]
+    assert "action_set" in req
+
+
 def test_character_identity_anchor(monkeypatch, tmp_path):
     monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
     root = str(tmp_path)

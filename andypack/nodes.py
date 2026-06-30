@@ -899,6 +899,83 @@ class AutoAnimationSelector:
         return (_build_animation_bundle(r),)
 
 
+class ActionSetSelector:
+    """Scoped batch selector: emit the NEXT actionable (ready/stale) animation
+    within a manifest category (e.g. "locomotion", "combat") in dependency
+    order, as an ANIM_ANIMATION. Wire it like the Auto Animation Selector and
+    queue repeatedly — each run generates the next clip in the category until
+    the set is fully rendered (then it raises). Leave action_set empty to
+    match all categories and mirror the Auto Animation Selector behaviour."""
+
+    CATEGORY = "andypack/Animation"
+    FUNCTION = "select"
+    RETURN_TYPES = ("ANIM_ANIMATION", "INT", "STRING")
+    RETURN_NAMES = ("ANIMATION", "REMAINING", "REPORT")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+                "action_set": ("STRING", {"default": ""}),
+            }
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character, action_set):
+        if character in ("", _NO_CHARACTER):
+            return float("nan")
+        root = _characters_root()
+        try:
+            eff = effective_manifest(manifest, root, character)
+            cat = action_set or None
+            job = api.next_actionable(eff, root, character, "animation", category=cat)
+            if not job:
+                return "none"
+            r = resolve_animation(eff, root, character, job["id"], job["direction"])
+        except Exception:
+            return float("nan")
+        return (
+            f"{job['id']}@{job['direction']}|{action_set}|"
+            + _selector_fingerprint(r, "start_image", "end_image")
+        )
+
+    def select(self, manifest, character, action_set):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("ActionSetSelector: select a character first")
+        root = _characters_root()
+        eff = effective_manifest(manifest, root, character)
+        cat = action_set or None
+        job = api.next_actionable(eff, root, character, "animation", category=cat)
+        queue = api.regen_queue(eff, root, character)
+        animations = eff.get("animations", {})
+        remaining_items = [
+            item for item in queue
+            if item["kind"] == "animation"
+            and (
+                cat is None
+                or animations.get(item["id"], {}).get("category") == cat
+            )
+        ]
+        remaining = len(remaining_items)
+        set_label = action_set or "(all)"
+        report_lines = [
+            f"{item['id']}@{item['direction']} [{item['status']}]"
+            for item in remaining_items
+        ]
+        report = (
+            f"ActionSetSelector: {remaining} remaining in {set_label!r}\n"
+            + "\n".join(report_lines)
+        )
+        if not job:
+            raise RuntimeError(
+                f"ActionSetSelector: no actionable animations remain in set {action_set!r}"
+            )
+        r = resolve_animation(eff, root, character, job["id"], job["direction"])
+        return (_build_animation_bundle(r), remaining, report)
+
+
 class MirrorFrameWriter:
     """Synthesize a mirror-mapped direction from its already-generated source
     (e.g. WEST from EAST) by horizontally flipping the rendered payload — no
@@ -1501,6 +1578,7 @@ NODE_CLASS_MAPPINGS = {
     "PoseUnpack": PoseUnpack,
     "CharacterAnimationSelector": CharacterAnimationSelector,
     "AutoAnimationSelector": AutoAnimationSelector,
+    "ActionSetSelector": ActionSetSelector,
     "AnimationFrameWriter": AnimationFrameWriter,
     "AnimationUnpack": AnimationUnpack,
     "AnimationPlayback": AnimationPlayback,
@@ -1527,6 +1605,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PoseUnpack": "Unpack Pose",
     "CharacterAnimationSelector": "Character Animation Selector",
     "AutoAnimationSelector": "Auto Animation Selector (next job)",
+    "ActionSetSelector": "Action Set Selector (next job)",
     "AnimationFrameWriter": "Animation Frame Writer",
     "AnimationUnpack": "Unpack Animation",
     "AnimationPlayback": "Animation Playback",
