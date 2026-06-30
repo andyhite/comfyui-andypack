@@ -39,6 +39,26 @@ def test_root_pose_with_no_from_validates_and_sorts_as_leaf():
     assert order.index("base") < order.index("fighting_stance")
 
 
+def test_view_phrases_must_be_string_map():
+    m = base_manifest()
+    m["view_phrases"] = {"EAST": ["not", "a", "string"]}
+    with pytest.raises(ManifestError):
+        validate_manifest(m)
+
+
+def test_view_phrases_valid_string_map_passes():
+    m = base_manifest()
+    m["view_phrases"] = {"EAST": "right-side profile", "SOUTH": "front view"}
+    validate_manifest(m)  # no raise
+
+
+def test_view_phrases_missing_canonical_direction_warns():
+    m = base_manifest()
+    m["view_phrases"] = {"EAST": "right-side profile"}  # missing the other 7
+    findings = collect_warnings(m)
+    assert any("view_phrases" in f and "SOUTH" in f for f in findings)
+
+
 def test_node_kind_unknown_ref_raises():
     with pytest.raises(ManifestError):
         node_kind(base_manifest(), "does_not_exist")

@@ -22,7 +22,9 @@ _WS = re.compile(r"\s+")
 _SEP = "␟"  # UNIT SEPARATOR
 # The opt-in template tokens, matched in a SINGLE pass so a token that appears
 # inside an injected value is not re-expanded by a later substitution.
-_TEMPLATE_TOKEN = re.compile(r"\{(character_prompt|direction_prompt|direction_name)\}")
+_TEMPLATE_TOKEN = re.compile(
+    r"\{(character_prompt|direction_prompt|direction_name|view_phrase)\}"
+)
 
 
 # --- cascade: merge, identity, hashing -------------------------------------- #
@@ -154,13 +156,17 @@ def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifes
 
 
 def substitute_variables(
-    text: Optional[str], *, positive: bool, identity: dict, direction_layer: dict, direction: str
+    text: Optional[str], *, positive: bool, identity: dict, direction_layer: dict,
+    direction: str, view_phrase: str = "",
 ) -> Optional[str]:
     """Expand the opt-in template variables in a prompt layer, resolved by field
     context. `{character_prompt}` -> character positive/negative; `{direction_prompt}`
     -> the selected direction's positive/negative; `{direction_name}` -> the bare
-    direction name (both contexts). Literal token replacement (not str.format), so
-    unknown `{...}` tokens and stray braces survive; absent sources expand to ''.
+    direction name (both contexts); `{view_phrase}` -> the manifest-level
+    per-direction camera phrase (positive context only — it is affirmative camera
+    language, so it expands to '' in a negative field and never pollutes the
+    negative term list). Literal token replacement (not str.format), so unknown
+    `{...}` tokens and stray braces survive; absent sources expand to ''.
     Applied per-layer BEFORE the merge so an expanded negative term list dedupes
     against sibling terms and a layer that resolves empty is dropped cleanly.
 
@@ -175,6 +181,7 @@ def substitute_variables(
         "character_prompt": (identity.get(field) or "").strip(),
         "direction_prompt": (direction_layer.get(field) or "").strip(),
         "direction_name": direction,
+        "view_phrase": (view_phrase or "").strip() if positive else "",
     }
     return _TEMPLATE_TOKEN.sub(lambda m: values[m.group(1)], text)
 
@@ -192,11 +199,12 @@ def merged_prompts(
     collection = manifest["poses"] if kind == "pose" else manifest["animations"]
     entity = collection[entity_id]
     dlayer = (entity.get("directions", {}) or {}).get(direction) or {}
+    view_phrase = (manifest.get("view_phrases") or {}).get(direction) or ""
 
     def sub(text: Optional[str], *, positive: bool) -> Optional[str]:
         return substitute_variables(
             text, positive=positive, identity=identity,
-            direction_layer=dlayer, direction=direction,
+            direction_layer=dlayer, direction=direction, view_phrase=view_phrase,
         )
 
     positive = merge_layers(

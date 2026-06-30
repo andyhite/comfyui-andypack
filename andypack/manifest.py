@@ -50,6 +50,24 @@ def _validate_gen_params(label: str, obj: dict) -> None:
             )
 
 
+def _validate_view_phrases(manifest: Manifest) -> None:
+    """`view_phrases`, when present, must be a map of direction-name -> string. It
+    supplies the affirmative per-direction camera language injected via the
+    `{view_phrase}` template var, so a non-string value (e.g. a list/object) must
+    be rejected at load time rather than expanding to a stray token mid-resolve."""
+    view_phrases = manifest.get("view_phrases")
+    if view_phrases is None:
+        return
+    if not isinstance(view_phrases, dict):
+        raise ManifestError("'view_phrases' must be a map of direction -> string")
+    for direction, phrase in view_phrases.items():
+        if not isinstance(phrase, str):
+            raise ManifestError(
+                f"view_phrases[{direction!r}] must be a string, got "
+                f"{type(phrase).__name__}"
+            )
+
+
 def _validate_refs(manifest: Manifest) -> None:
     for pid, pose in manifest.get("poses", {}).items():
         frm = pose.get("from")
@@ -150,6 +168,18 @@ def collect_warnings(manifest: Manifest) -> list[str]:
                             f"{kind} {eid!r} direction {direction!r} is not in the "
                             "canonical 'directions' list"
                         )
+        # When a view_phrases map is supplied, every canonical direction should
+        # carry a phrase — a missing one means that direction's poses get no
+        # affirmative camera language from `{view_phrase}` (a likely authoring
+        # oversight, surfaced as a non-fatal lint finding).
+        view_phrases = manifest.get("view_phrases")
+        if isinstance(view_phrases, dict) and view_phrases:
+            for direction in canonical:
+                if direction not in view_phrases:
+                    out.append(
+                        f"view_phrases has no entry for canonical direction "
+                        f"{direction!r}"
+                    )
     return out
 
 
@@ -180,6 +210,7 @@ def validate_manifest(manifest: Manifest) -> None:
     for key in ("poses", "animations"):
         if not isinstance(manifest.get(key), dict):
             raise ManifestError(f"manifest missing '{key}' object")
+    _validate_view_phrases(manifest)
     _validate_refs(manifest)
     _detect_cycles(manifest)
     for message in collect_warnings(manifest):

@@ -162,6 +162,37 @@ def test_tokens_in_the_layer_text_still_expand(tmp_path):
     assert pos == "hero from the EAST"
 
 
+def test_view_phrase_injects_manifest_level_camera_language(tmp_path):
+    # {view_phrase} resolves from the manifest-level view_phrases[direction] map,
+    # so per-direction camera language lives once and entities opt into all 8
+    # directions with empty layers.
+    root = _identity(tmp_path)
+    m = base_manifest()
+    m["view_phrases"] = {"EAST": "in full right-side profile, only one eye visible"}
+    m["poses"]["base"]["positive_prompt"] = "neutral standing pose. {view_phrase}"
+    pos, _ = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
+    assert pos == "neutral standing pose. in full right-side profile, only one eye visible"
+
+
+def test_view_phrase_is_empty_in_negative_context(tmp_path):
+    # view_phrases is affirmative camera language (positive-only); in a negative
+    # field {view_phrase} expands to "" so it never pollutes the negative term list.
+    root = _identity(tmp_path)
+    m = base_manifest()
+    m["view_phrases"] = {"EAST": "right-side profile"}
+    m["globals"]["pose"]["negative_prompt"] = "{view_phrase}, low quality"
+    _, neg = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
+    assert neg == "low quality"  # {view_phrase} -> "" dropped, no stray comma
+
+
+def test_view_phrase_absent_map_or_direction_expands_empty(tmp_path):
+    root = _identity(tmp_path)
+    m = base_manifest()  # no view_phrases key
+    m["poses"]["base"]["positive_prompt"] = "neutral standing pose.{view_phrase}"
+    pos, _ = merged_prompts(m, root, "Cortex", "pose", "base", "NORTH")
+    assert pos == "neutral standing pose."
+
+
 def test_compute_prompt_hash_matches_formula(tmp_path):
     m = base_manifest()
     pos, neg = merged_prompts(m, str(tmp_path), "Cortex", "animation", "punch", "EAST")
