@@ -23,6 +23,10 @@ def trim_batch(
 
     - ``source_size`` — [w, h] of the original (pre-crop) frame.
     - ``offset`` — [x, y] top-left of the crop box in the original frame.
+    - ``crop_size`` — [w, h] of the content crop before any zero-padding.
+      In ``union`` mode this equals the output tensor [W, H] (all frames share
+      the union box).  In ``per_frame`` mode this is each frame's own content
+      dimensions; a fully-transparent frame reports ``[0, 0]``.
 
     Parameters
     ----------
@@ -59,7 +63,8 @@ def trim_batch(
         if not valid:
             # Fully transparent batch — return unchanged with zero offsets.
             rects: list[dict] = [
-                {"source_size": [w, h], "offset": [0, 0]} for _ in range(b)
+                {"source_size": [w, h], "offset": [0, 0], "crop_size": [w, h]}
+                for _ in range(b)
             ]
             return image, rects
 
@@ -69,7 +74,12 @@ def trim_batch(
         bottom = min(h, max(bb[3] for bb in valid) + pad)
 
         rects = [
-            {"source_size": [w, h], "offset": [left, top]} for _ in range(b)
+            {
+                "source_size": [w, h],
+                "offset": [left, top],
+                "crop_size": [right - left, bottom - top],
+            }
+            for _ in range(b)
         ]
         return image[:, top:bottom, left:right, :], rects
 
@@ -86,8 +96,10 @@ def trim_batch(
         ft = max(0, ft - pad)
         fr = min(w, fr + pad)
         fb = min(h, fb + pad)
+        cw = 0 if raw[i] is None else fr - fl
+        ch = 0 if raw[i] is None else fb - ft
         crops.append(image[i, ft:fb, fl:fr, :])
-        rects.append({"source_size": [w, h], "offset": [fl, ft]})
+        rects.append({"source_size": [w, h], "offset": [fl, ft], "crop_size": [cw, ch]})
 
     # Zero-pad crops to the largest dimensions so torch.stack succeeds.
     max_h = max(int(c.shape[0]) for c in crops)
