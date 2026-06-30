@@ -5,6 +5,8 @@ const TAG = "[andypack]";
 console.debug(`${TAG} anim_coord.js loaded`);
 
 const NO_CHARACTER = "(select character)"; // must match nodes._NO_CHARACTER
+const ALL_CATEGORIES = "(all)"; // synthetic category: show every id, no filter
+const UNCATEGORIZED = "(uncategorized)"; // bucket label for ids with no category
 // Status indicators prefixed onto combo options.
 //   ✅ generated · 🟢 ready · 🟠 stale · 🔴 blocked
 const GLYPH = { generated: "✅", ready: "🟢", blocked: "🔴", stale: "🟠" };
@@ -149,14 +151,16 @@ async function fetchJSON(url) {
   return res.json();
 }
 
-const categoryOf = (o) => o.category || "(all)";
+const categoryOf = (o) => o.category || UNCATEGORIZED;
 
-// Most-actionable status for a group: blocked only when EVERY option is blocked.
+// Most-actionable status for a group, in priority order: surface actionable work
+// (ready, then stale) first, then any blocker; "generated" only when EVERY option
+// is generated, so a group with a blocked direction never reads as fully done.
 function groupStatus(opts) {
   const st = opts.map((o) => o.status);
-  if (st.every((s) => s === "blocked")) return "blocked";
   if (st.includes("ready")) return "ready";
   if (st.includes("stale")) return "stale";
+  if (st.includes("blocked")) return "blocked";
   return "generated";
 }
 
@@ -166,6 +170,14 @@ async function refreshCascade(node, cfg) {
   setCharacterEnabled(node, true); // READY is guaranteed by the caller (wire)
   const character = characterValue(node);
   const manifestName = manifestNameFor(node);
+  // Snapshot the current selections BEFORE the loading placeholders overwrite
+  // each combo's __anim_raw — otherwise a post-run refresh can't restore them
+  // and the cascade falls back to defaults.
+  const keep = {
+    category: selectedRaw(node, "category"),
+    id: selectedRaw(node, cfg.idWidget),
+    direction: selectedRaw(node, "direction"),
+  };
   if (!character || character === NO_CHARACTER || !manifestName) {
     node.__anim_opts = null;
     setPlaceholder(node, "category", character && character !== NO_CHARACTER
@@ -189,13 +201,23 @@ async function refreshCascade(node, cfg) {
     return;
   }
   node.__anim_opts = opts.filter((o) => o.kind === cfg.kind);
+  // Re-seed the raw selections the loading placeholders clobbered, so the
+  // applyCombo restore logic recovers them instead of defaulting.
+  const seed = (name, raw) => {
+    const w = widget(node, name);
+    if (w) w.__anim_raw = raw;
+  };
+  seed("category", keep.category);
+  seed(cfg.idWidget, keep.id);
+  seed("direction", keep.direction);
   buildCategoryCombo(node, cfg);
 }
 
 function buildCategoryCombo(node, cfg) {
   const opts = node.__anim_opts || [];
   const cats = [...new Set(opts.map(categoryOf))].sort();
-  const entries = cats.map((c) => ({ raw: c, label: c }));
+  // A real "(all)" entry (no filter) always leads the list and is the default.
+  const entries = [ALL_CATEGORIES, ...cats].map((c) => ({ raw: c, label: c }));
   applyCombo(node, "category", entries, () => buildIdCombo(node, cfg));
   buildIdCombo(node, cfg);
 }
@@ -203,7 +225,9 @@ function buildCategoryCombo(node, cfg) {
 function buildIdCombo(node, cfg) {
   const opts = node.__anim_opts || [];
   const cat = selectedRaw(node, "category");
-  const inCat = opts.filter((o) => categoryOf(o) === cat);
+  const inCat = cat === ALL_CATEGORIES
+    ? opts
+    : opts.filter((o) => categoryOf(o) === cat);
   const byId = {};
   for (const o of inCat) (byId[o.id] ||= []).push(o);
   node.__anim_byId = byId;
