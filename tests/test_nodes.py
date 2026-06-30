@@ -766,3 +766,18 @@ def test_turnaround_sheet_is_changed_always_nan(manifest, tree, monkeypatch):
 def test_turnaround_sheet_node_registered():
     assert "TurnaroundSheet" in nodes.NODE_CLASS_MAPPINGS
     assert "TurnaroundSheet" in nodes.NODE_DISPLAY_NAME_MAPPINGS
+
+
+# --- BoomerangLoopWriter ---------------------------------------------------- #
+
+def test_boomerang_writes_palindrome(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    anim = {
+        "output_dir": str(tmp_path / "idle" / "EAST"),
+        "_meta": {"prompt_hash": "sha1:x", "loop": False},
+    }
+    f = torch.arange(3).float().reshape(3, 1, 1, 1).repeat(1, 4, 4, 3)
+    out = nodes.BoomerangLoopWriter().write(anim, f, mode="boomerang")
+    d = out["result"][0] if isinstance(out, dict) else out[0]
+    meta = json.load(open(os.path.join(d, "meta.json")))
+    assert meta["loop"] is True and meta["frames"]["count"] == 4  # 0,1,2,1

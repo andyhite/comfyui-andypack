@@ -1661,6 +1661,80 @@ class TurnaroundSheet:
         return {"ui": {}, "result": (sheet,)}
 
 
+class BoomerangLoopWriter:
+    """Synthesize a seamless loop from a one-way A→B clip by writing A→B + reversed
+    interior (boomerang), or by trimming the duplicate seam frame (trim_seam).
+
+    Boomerang (default): appends the reversed interior of the clip so that playback
+    ping-pongs without duplicating the turn-around extremes. Sets meta loop=True so
+    downstream tools know this clip plays as a seamless loop.
+
+    trim_seam: drops the trailing duplicate boundary frame from a clip that already
+    nearly loops, for use when the sampler produced a near-loop and only the seam
+    frame needs removing. meta loop flag is preserved from the incoming animation.
+    """
+
+    CATEGORY = "andypack/Animation"
+    FUNCTION = "write"
+    OUTPUT_NODE = True
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("OUTPUT_DIR",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "animation": ("ANIM_ANIMATION",),
+                "frames": ("IMAGE",),
+                "mode": (["boomerang", "trim_seam"],),
+            },
+            "optional": {
+                "drop_turnaround": ("BOOLEAN", {"default": True}),
+                "seed": ("INT", {"default": 0, "forceInput": True}),
+            },
+        }
+
+    def write(self, animation, frames, mode, drop_turnaround=True, seed=0):
+        output_dir = animation["output_dir"]
+        meta = animation["_meta"]
+        if images.is_empty(frames):
+            raise RuntimeError(
+                "BoomerangLoopWriter: received an empty or 1x1 sentinel frame batch; "
+                "nothing to write (check the upstream sampler)"
+            )
+        os.makedirs(output_dir, exist_ok=True)
+        meta_path = os.path.join(output_dir, "meta.json")
+        io.remove_if_exists(meta_path)
+        io.clear_frames(output_dir)
+        batch = [frames[i:i + 1] for i in range(frames.shape[0])]
+        if mode == "boomerang":
+            if drop_turnaround:
+                reversed_part = list(reversed(batch[1:-1]))
+            else:
+                reversed_part = list(reversed(batch[:-1]))
+            batch = batch + reversed_part
+            meta = {**meta, "loop": True}
+        elif mode == "trim_seam":
+            if len(batch) > 1:
+                batch = batch[:-1]
+        for index, frame in enumerate(batch):
+            images.save_image_png(
+                frame,
+                os.path.join(output_dir, io.frame_name(index)),
+            )
+        count = len(batch)
+        full_meta = io.build_animation_meta(
+            meta,
+            count=count,
+            start_frame=io.frame_name(0),
+            last_frame=io.frame_name(count - 1),
+            seed=seed,
+            created_utc=_utc_now(),
+        )
+        io.atomic_write_json(meta_path, full_meta)
+        return {"ui": {}, "result": (output_dir,)}
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
@@ -1675,6 +1749,7 @@ NODE_CLASS_MAPPINGS = {
     "AutoAnimationSelector": AutoAnimationSelector,
     "ActionSetSelector": ActionSetSelector,
     "AnimationFrameWriter": AnimationFrameWriter,
+    "BoomerangLoopWriter": BoomerangLoopWriter,
     "AnimationUnpack": AnimationUnpack,
     "AnimationPlayback": AnimationPlayback,
     "MirrorFrameWriter": MirrorFrameWriter,
@@ -1704,6 +1779,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AutoAnimationSelector": "Auto Animation Selector (next job)",
     "ActionSetSelector": "Action Set Selector (next job)",
     "AnimationFrameWriter": "Animation Frame Writer",
+    "BoomerangLoopWriter": "Boomerang Loop Writer",
     "AnimationUnpack": "Unpack Animation",
     "AnimationPlayback": "Animation Playback",
     "MirrorFrameWriter": "Mirror Frame Writer",
