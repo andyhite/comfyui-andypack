@@ -19,7 +19,7 @@ def _pose_dict(meta, output_dir, image=None):
     """An ANIM_POSE dict as the selector emits it (the writer reads `output_dir`
     and the bundled `_meta`)."""
     return {
-        "source_image": image, "positive": "", "negative": "",
+        "source_image": image, "pose_reference": None, "positive": "", "negative": "",
         "output_dir": output_dir, "_meta": meta,
     }
 
@@ -267,13 +267,13 @@ def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
 
 def test_pose_unpack_forwards_dict_and_fans_out_typed_outputs():
     pose = {"positive": "hello", "negative": "blurry", "source_image": _img(),
-            "output_dir": "/x", "_meta": {}}
-    passthrough, img, pos, neg, out_dir = nodes.PoseUnpack().unpack(pose)
+            "pose_reference": _img(), "output_dir": "/x", "_meta": {}}
+    passthrough, img, manikin, pos, neg, out_dir = nodes.PoseUnpack().unpack(pose)
     assert nodes.PoseUnpack.RETURN_NAMES == (
-        "POSE", "SOURCE_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT", "OUTPUT_DIR"
+        "POSE", "SOURCE_IMAGE", "POSE_REFERENCE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT", "OUTPUT_DIR"
     )
     assert passthrough is pose  # whole POSE forwarded on, unchanged
-    assert img.shape[0] == 1
+    assert img.shape[0] == 1 and manikin.shape[0] == 1
     assert (pos, neg, out_dir) == ("hello", "blurry", "/x")
 
 
@@ -405,3 +405,47 @@ def test_animation_selector_tolerates_missing_start_anchor(manifest, tree, monke
     assert images.is_empty(anim["start_image"])  # empty sentinel, no crash
 
 
+
+
+# --- CharacterCreator + pose_reference -------------------------------------- #
+
+def test_character_creator_writes_character_json_without_provenance(manifest, tmp_path, monkeypatch):
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    (pose,) = nodes.CharacterCreator().create(
+        manifest, _img(), "Cortex", "EAST",
+        character_positive="a brave hero", character_negative="blurry",
+    )
+    data = json.load(open(os.path.join(root, "cortex", "character.json")))
+    assert data == {"positive_prompt": "a brave hero", "negative_prompt": "blurry"}
+    assert pose["output_dir"].endswith(os.path.join("cortex", "_base"))
+    assert pose["_meta"]["pose"] == "base" and pose["_meta"]["direction"] == "EAST"
+
+
+def test_character_creator_attaches_manikin_as_pose_reference(manifest, tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    (pose,) = nodes.CharacterCreator().create(manifest, _img(), "cortex", "EAST")
+    # The manikin rides along as a real (non-empty) second reference image.
+    assert pose["pose_reference"] is not None
+    assert not images.is_empty(pose["pose_reference"])
+
+
+def test_character_creator_rejects_unknown_direction(manifest, tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    with pytest.raises(RuntimeError, match="direction"):
+        nodes.CharacterCreator().create(manifest, _img(), "cortex", "UP")
+
+
+def test_pose_selector_rejects_root_pose(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST")
+    with pytest.raises(RuntimeError, match="root pose"):
+        nodes.CharacterPoseSelector().select(manifest, tree.char, "", "base", "EAST")
+
+
+def test_pose_selector_sets_empty_pose_reference(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST")
+    images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
+    (pose,) = nodes.CharacterPoseSelector().select(manifest, tree.char, "", "fighting_stance", "EAST")
+    assert images.is_empty(pose["pose_reference"])

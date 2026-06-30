@@ -6,7 +6,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from andypack import api, images, io, resolve
+from andypack import api, images, io, manikins, resolve
 from andypack.manifest import collect_warnings, load_manifest
 from andypack.resolve import effective_manifest, resolve_animation, resolve_pose
 
@@ -24,7 +24,7 @@ _NO_CHARACTER = "(select character)"
 # asserts they stay in sync with the keys the selectors actually build (less
 # `_meta`).
 POSE_OUTPUT_KEYS = sorted([
-    "source_image", "positive", "negative", "output_dir",
+    "source_image", "pose_reference", "positive", "negative", "output_dir",
 ])
 ANIMATION_OUTPUT_KEYS = sorted([
     "start_image", "end_image", "positive", "negative",
@@ -91,6 +91,91 @@ class AnimationManifestLoader:
         return (load_manifest(api.resolve_manifest_path(manifest)),)
 
 
+class CharacterCreator:
+    """Persist a character's prompt layer (character.json — no image, no
+    provenance) and emit the base-pose job for one direction, pairing the
+    reference image (first) with the bundled manikin for that direction (second)
+    for a multi-reference FLUX.2 edit. Selector-style: pick a direction, get one
+    ANIM_POSE; the base pose is the tree root."""
+
+    CATEGORY = "andypack/Character"
+    FUNCTION = "create"
+    RETURN_TYPES = ("ANIM_POSE",)
+    RETURN_NAMES = ("POSE",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "image": ("IMAGE",),
+                "character": ("STRING", {"default": "cortex"}),
+                "direction": (manikins.CANONICAL_DIRECTIONS,),
+            },
+            "optional": {
+                "character_positive": ("STRING", {"default": "", "multiline": True}),
+                "character_negative": ("STRING", {"default": "", "multiline": True}),
+            },
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, image, character, direction,
+                   character_positive="", character_negative=""):
+        # Re-resolve the base pose so the fingerprint reflects prompt edits going
+        # stale, plus the character-layer widgets that this node persists.
+        if not character or not direction:
+            return float("nan")
+        root = _characters_root()
+        try:
+            char_name = io.to_snake_case(character)
+            eff = effective_manifest(manifest, root, char_name)
+            r = resolve_pose(eff, root, char_name, "base", direction)
+        except Exception:
+            return float("nan")
+        return "|".join([
+            r["meta"]["prompt_hash"], direction,
+            character_positive.strip(), character_negative.strip(),
+        ])
+
+    def create(self, manifest, image, character, direction,
+               character_positive="", character_negative=""):
+        if direction not in manikins.CANONICAL_DIRECTIONS:
+            raise RuntimeError(f"CharacterCreator: unknown direction {direction!r}")
+        root = _characters_root()
+        char_name = io.to_snake_case(character)
+        layer = {}
+        if character_positive.strip():
+            layer["positive_prompt"] = character_positive.strip()
+        if character_negative.strip():
+            layer["negative_prompt"] = character_negative.strip()
+        # Persist the character prompt layer (merging over any existing overlay).
+        # No image is written and no provenance is stamped — base sidecars carry
+        # the tree's provenance.
+        existing = resolve.read_character(root, char_name)
+        payload = io.build_character(layer, existing=existing)
+        io.atomic_write_json(os.path.join(root, char_name, "character.json"), payload)
+        # Drop the cached character layer so the resolve below (and descendants)
+        # see this write even within the filesystem's mtime resolution window.
+        resolve.invalidate_character(root, char_name)
+
+        eff = effective_manifest(manifest, root, char_name)
+        if "base" not in eff.get("poses", {}):
+            raise RuntimeError("CharacterCreator: manifest has no 'base' pose")
+        if direction not in eff["poses"]["base"]["directions"]:
+            raise RuntimeError(f"CharacterCreator: base has no direction {direction!r}")
+        r = resolve_pose(eff, root, char_name, "base", direction)
+        manikin = images.load_image_tensor(manikins.manikin_path(direction))
+        pose = {
+            "source_image": image,        # the character reference (first reference)
+            "pose_reference": manikin,    # the manikin for this direction (second)
+            "positive": r["positive"],
+            "negative": r["negative"],
+            "output_dir": r["output_dir"],
+            "_meta": r["meta"],
+        }
+        return (pose,)
+
+
 class CharacterPoseSelector:
     CATEGORY = "andypack/Pose"
     FUNCTION = "select"
@@ -138,6 +223,10 @@ class CharacterPoseSelector:
             raise RuntimeError(
                 f"CharacterPoseSelector: unknown pose {pose!r} (stale or renamed) — pick a pose"
             )
+        if not manifest["poses"][pose].get("from"):
+            raise RuntimeError(
+                f"CharacterPoseSelector: {pose!r} is a root pose — use the Character Creator node"
+            )
         r = resolve_pose(manifest, root, character, pose, direction)
         if not r["selectable"]:
             raise RuntimeError(
@@ -152,6 +241,7 @@ class CharacterPoseSelector:
         # selectable getter output. See POSE_OUTPUT_KEYS.
         pose = {
             "source_image": image,
+            "pose_reference": images.empty_image(),  # normal poses have no manikin
             "positive": r["positive"],
             "negative": r["negative"],
             "output_dir": r["output_dir"],
@@ -346,6 +436,7 @@ class AnimationFrameWriter:
 # enforces it — so unpacking exposes every leaf the selector produces.
 _POSE_UNPACK = (
     ("source_image", "SOURCE_IMAGE"),
+    ("pose_reference", "POSE_REFERENCE"),
     ("positive", "POSITIVE_PROMPT"),
     ("negative", "NEGATIVE_PROMPT"),
     ("output_dir", "OUTPUT_DIR"),
@@ -368,7 +459,7 @@ class PoseUnpack:
 
     CATEGORY = "andypack/Pose"
     FUNCTION = "unpack"
-    RETURN_TYPES = ("ANIM_POSE", "IMAGE", "STRING", "STRING", "STRING")
+    RETURN_TYPES = ("ANIM_POSE", "IMAGE", "IMAGE", "STRING", "STRING", "STRING")
     RETURN_NAMES = ("POSE", *(name for _key, name in _POSE_UNPACK))
 
     @classmethod
@@ -690,6 +781,7 @@ class MirrorFrameWriter:
 
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
+    "CharacterCreator": CharacterCreator,
     "CharacterPoseSelector": CharacterPoseSelector,
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
@@ -705,6 +797,7 @@ NODE_CLASS_MAPPINGS = {
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
+    "CharacterCreator": "Character Creator",
     "CharacterPoseSelector": "Character Pose Selector",
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",
