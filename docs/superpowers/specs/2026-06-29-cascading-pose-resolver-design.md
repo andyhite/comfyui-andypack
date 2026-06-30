@@ -157,13 +157,16 @@ globals.pose → poses[pose] → poses[pose].directions[dir]
 Positives merge into the final positive; negatives merge into the final
 negative; the merge rule is identical for both axes. Any layer may be omitted.
 
-**Identity is opt-in, not an automatic layer.** The per-character
-`_concept.json` identity is no longer prepended to the cascade. Instead, any
-layer may reference `{identity_positive}` (→ identity `positive_prompt`) or
-`{identity_negative}` (→ identity `negative_prompt`) to splice the identity in
-place. Tokens are expanded per-layer **before** the merge — so an expanded
-negative term list dedupes against sibling terms — via literal `str.replace`
-(unknown `{...}` tokens and stray braces survive; absent identity → `""`). See
+**Identity and direction are template variables, not merged layers.** Only
+`globals[kind]` + the entity prompt are merged. The per-character
+`_concept.json` identity and the per-direction layer surface **only** where a
+prompt references a variable, resolved by field context (positive vs negative):
+`{identity_prompt}` → identity positive/negative, `{direction_prompt}` → that
+direction's positive/negative, `{direction_name}` → the bare direction name
+(both contexts). Substitution runs after the merge (implemented per-layer, so
+empty expansions drop cleanly) via literal `str.replace` — unknown `{...}`
+tokens and stray braces survive; absent sources → `""`. Variables resolve
+inside a `globals[kind]` prompt too. See
 `2026-06-29-identity-prompt-variable-design.md`.
 
 ### Merge rule
@@ -184,11 +187,12 @@ both positive and negative composition.
 prompt_hash = "sha1:" + sha1( normalize(merged_positive) + "␟" + normalize(merged_negative) )
 ```
 where `normalize` strips ends and collapses internal whitespace runs to one
-space, and `␟` is U+241F (UNIT SEPARATOR). The hash is over the **fully merged**
-prompt (identity tokens already expanded), so a change at *any* layer — global,
-entity, or direction — changes the hash. Identity is read from `_concept.json`
-at hash time, so editing identity invalidates only descendants that reference
-`{identity_positive}` / `{identity_negative}`, without any special-casing.
+space, and `␟` is U+241F (UNIT SEPARATOR). The hash is over the **fully
+compiled** prompt (variables already substituted), so a change to a global,
+the entity prompt, or any referenced source — identity or a direction prompt,
+read from disk/manifest at hash time — changes the hash. Editing identity or a
+direction prompt therefore invalidates only the entities that reference it,
+without any special-casing.
 
 ---
 

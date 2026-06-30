@@ -193,53 +193,53 @@ the moves around it:
 
 ---
 
-## 7. Prompts: the cascade
+## 7. Prompts: compile = merge + substitute
 
-Final prompts are built by merging layers from **general → specific**. For an
-entity in a given direction:
+A prompt is compiled in two steps, per axis (positive, negative):
 
-```
-globals.<kind> → entity → entity.directions[<DIR>]
-```
+1. **Merge** `globals.<kind>` + the entity prompt (`<kind>` is `pose` or
+   `animation`). Positives are kept **verbatim**, joined with a blank line
+   (`\n\n`). Negatives are **comma-separated term lists**: split on commas,
+   de-duplicated case-insensitively (first wins), re-joined with `", "`.
+2. **Substitute** the template variables in the merged text.
 
-(`<kind>` is `pose` or `animation`.) Each layer optionally supplies
-`positive_prompt` and/or `negative_prompt`. Merge rules differ per axis:
+The entity prompt is the **composition root** — it decides where the character
+identity and the per-direction text land. The identity layer and the
+per-direction layer are **not** merged; they are inert until referenced.
 
-- **Positives** are kept **verbatim** and joined with a blank line (`\n\n`)
-  between layers. Write each layer as a self-contained clause; don't repeat what
-  a more general layer already says.
-- **Negatives** are treated as **comma-separated term lists**: split on commas,
-  de-duplicated case-insensitively (first occurrence wins), re-joined with
-  `", "`. Put shared boilerplate negatives in `globals`; they won't be
-  duplicated when an entity adds more.
+### Template variables
 
-### Identity tokens (opt-in)
+Resolved by **field context** — the same token pulls the positive source in a
+`positive_prompt` and the negative source in a `negative_prompt`:
 
-Character identity is **not** an automatic layer. To place it, reference it in
-any layer:
-
-- `{identity_positive}` → the character's `_concept.json` `positive_prompt`
-- `{identity_negative}` → the character's `_concept.json` `negative_prompt`
+| Variable | in a positive prompt | in a negative prompt |
+|---|---|---|
+| `{identity_prompt}` | concept `positive_prompt` | concept `negative_prompt` |
+| `{direction_prompt}` | the direction's `positive_prompt` | its `negative_prompt` |
+| `{direction_name}` | the direction's bare name (e.g. `EAST`) | same |
 
 ```jsonc
-"positive_prompt": "a wide shot of {identity_positive} mid-stride, running"
+"positive_prompt": "{identity_prompt} mid-stride, running. As viewed from the {direction_name}: {direction_prompt}"
 ```
 
-Tokens expand **per-layer before the merge**, so identity negative terms dedupe
-against sibling negatives just like any other term. Replacement is literal:
-unknown `{...}` tokens and stray braces are left alone, and an empty/absent
-identity field expands to nothing. A prompt that references no token gets no
-identity text at all.
+Variables resolve in **either** a global or an entity prompt (substitution runs
+on the merged text). Replacement is literal: unknown `{...}` tokens and stray
+braces are left alone; an empty/absent source expands to nothing — and because
+substitution feeds the negative term-list dedupe, an empty `{direction_prompt}`
+in a negative can't leave a stray `, ,`. A prompt that references no variable
+gets none of that text.
 
 Authoring guidance:
 - **`globals.animation` / `globals.pose`**: cross-cutting quality negatives
-  (`deformed, blurry, low quality, …`) and any always-on positives.
-- **Entity `positive_prompt`**: describe the motion or pose itself; splice
-  identity with `{identity_positive}` wherever the character should appear.
-- **Per-direction layer**: only what changes with the angle (often nothing → `{}`).
-- **Character identity** (look, colors, "mouthless", etc.) goes in the
-  character's `_concept.json`, **not** here — see §8 — and is pulled in via the
-  identity tokens above.
+  (`deformed, blurry, low quality, …`); reference `{identity_prompt}` here to
+  fold the character's negative identity into every render.
+- **Entity `positive_prompt`**: describe the motion/pose, and splice
+  `{identity_prompt}` / `{direction_prompt}` / `{direction_name}` where they
+  belong.
+- **Per-direction layer**: the angle-specific text that `{direction_prompt}`
+  pulls in (and `{direction_name}` names); inert unless referenced.
+- **Character identity** (look, colors, "mouthless", etc.) lives in the
+  character's `_concept.json` — see §8 — and is pulled in via `{identity_prompt}`.
 
 Never write a field literally called `prompt` or `negative`; the keys are
 `positive_prompt` and `negative_prompt`.
@@ -261,10 +261,11 @@ Each character directory holds `_concept.png` (the seed art) and an optional
 }
 ```
 
-- `positive_prompt` / `negative_prompt` are the **identity layer** — spliced
-  into a render wherever a manifest layer references `{identity_positive}` /
-  `{identity_negative}` (see §7). This is where character look/identity lives;
-  it is opt-in, not auto-merged.
+- `positive_prompt` / `negative_prompt` are the **identity layer** — pulled
+  into a render wherever a prompt references `{identity_prompt}` (see §7),
+  resolved to the positive in a positive field and the negative in a negative
+  field. This is where character look/identity lives; it is referenced, not
+  auto-merged.
 - `poses` / `animations` (optional) are **merged into the manifest by id** when
   that character is selected. New ids add entries; existing ids override the
   shared ones. Their refs can point at shared *or* character entities. The

@@ -94,43 +94,55 @@ def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifes
     return merged
 
 
-def substitute_identity(text: Optional[str], identity: dict) -> Optional[str]:
-    """Expand the opt-in identity tokens in a single cascade layer.
-
-    `{identity_positive}` -> identity `positive_prompt`, `{identity_negative}`
-    -> identity `negative_prompt` (empty when absent). Literal token replacement
-    (not str.format), so unknown `{...}` tokens and stray braces survive. Applied
-    per-layer BEFORE the merge so an expanded negative term list dedupes against
-    sibling terms."""
+def substitute_variables(
+    text: Optional[str], *, positive: bool, identity: dict, direction_layer: dict, direction: str
+) -> Optional[str]:
+    """Expand the opt-in template variables in a prompt layer, resolved by field
+    context. `{identity_prompt}` -> identity positive/negative; `{direction_prompt}`
+    -> the selected direction's positive/negative; `{direction_name}` -> the bare
+    direction name (both contexts). Literal token replacement (not str.format), so
+    unknown `{...}` tokens and stray braces survive; absent sources expand to ''.
+    Applied per-layer BEFORE the merge so an expanded negative term list dedupes
+    against sibling terms and a layer that resolves empty is dropped cleanly."""
     if not text:
         return text
-    pos = (identity.get("positive_prompt") or "").strip()
-    neg = (identity.get("negative_prompt") or "").strip()
-    return text.replace("{identity_positive}", pos).replace("{identity_negative}", neg)
+    field = "positive_prompt" if positive else "negative_prompt"
+    ident = (identity.get(field) or "").strip()
+    dprompt = (direction_layer.get(field) or "").strip()
+    return (
+        text.replace("{identity_prompt}", ident)
+        .replace("{direction_prompt}", dprompt)
+        .replace("{direction_name}", direction)
+    )
 
 
 def merged_prompts(
     manifest: Manifest, root: str, character: str, kind: str, entity_id: str, direction: str
 ) -> tuple[str, str]:
-    """Cascade globals[kind] -> entity -> entity.directions[dir]. Identity is NOT
-    an automatic layer: it appears only where a layer references
-    `{identity_positive}` / `{identity_negative}` (expanded per-layer first)."""
+    """Compile a prompt: merge globals[kind] + entity, then substitute the opt-in
+    template variables. Identity and the per-direction layer are NOT merged as
+    cascade layers — they surface only via `{identity_prompt}` /
+    `{direction_prompt}` / `{direction_name}`, resolved by field (positive vs
+    negative). Variables resolve in either the global or the entity prompt."""
     identity = read_identity(root, character)
     glob = manifest.get("globals", {}).get(kind, {}) or {}
     collection = manifest["poses"] if kind == "pose" else manifest["animations"]
     entity = collection[entity_id]
     dlayer = (entity.get("directions", {}) or {}).get(direction) or {}
 
-    def sub(text: Optional[str]) -> Optional[str]:
-        return substitute_identity(text, identity)
+    def sub(text: Optional[str], *, positive: bool) -> Optional[str]:
+        return substitute_variables(
+            text, positive=positive, identity=identity,
+            direction_layer=dlayer, direction=direction,
+        )
 
     positive = merge_layers(
-        sub(glob.get("positive_prompt")),
-        sub(entity.get("positive_prompt")), sub(dlayer.get("positive_prompt")),
+        sub(glob.get("positive_prompt"), positive=True),
+        sub(entity.get("positive_prompt"), positive=True),
     )
     negative = merge_negative(
-        sub(glob.get("negative_prompt")),
-        sub(entity.get("negative_prompt")), sub(dlayer.get("negative_prompt")),
+        sub(glob.get("negative_prompt"), positive=False),
+        sub(entity.get("negative_prompt"), positive=False),
     )
     return positive, negative
 

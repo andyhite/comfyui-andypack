@@ -67,55 +67,77 @@ def _identity(tmp_path, **layer):
     return str(tmp_path)
 
 
-def test_merged_prompts_cascade_excludes_identity_unless_referenced(tmp_path):
-    # Identity is opt-in: it is NOT auto-prepended. The cascade is
-    # globals[kind] -> entity -> direction, with no identity layer.
+def test_positive_merges_globals_and_entity_not_direction(tmp_path):
+    # The compiled positive merges globals[kind] + entity only. The direction
+    # layer is inert unless referenced via {direction_prompt}.
     root = _identity(tmp_path, positive_prompt="a mouthless hero", negative_prompt="ugly")
     m = base_manifest()
     pos, neg = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
-    assert pos == "neutral standing pose\n\nfacing right in profile"
-    assert "a mouthless hero" not in pos
-    assert neg == "blurry, low quality"  # globals.pose.negative only; identity ugly absent
+    assert pos == "neutral standing pose"          # entity only; globals.pose has no positive
+    assert "facing right in profile" not in pos    # direction NOT auto-appended
+    assert "a mouthless hero" not in pos           # identity inert unless referenced
+    assert neg == "blurry, low quality"            # globals.pose.negative; identity inert
     assert "ugly" not in neg
 
 
-def test_identity_positive_token_splices_in_place(tmp_path):
-    root = _identity(tmp_path, positive_prompt="a mouthless hero")
+def test_direction_prompt_and_name_inject_into_positive(tmp_path):
+    root = _identity(tmp_path)
     m = base_manifest()
-    m["poses"]["base"]["directions"]["EAST"]["positive_prompt"] = (
-        "a wide shot of {identity_positive} standing"
+    m["poses"]["base"]["positive_prompt"] = (
+        "neutral standing pose. As viewed from the {direction_name}: {direction_prompt}"
     )
     pos, _ = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
-    assert pos == "neutral standing pose\n\na wide shot of a mouthless hero standing"
-    assert pos.count("a mouthless hero") == 1  # spliced once, not also prepended
+    assert pos == "neutral standing pose. As viewed from the EAST: facing right in profile"
 
 
-def test_identity_negative_token_expands_then_dedupes(tmp_path):
-    # {identity_negative} expands BEFORE the term-merge, so its terms dedupe
-    # against sibling negative terms ("blurry" shared with globals.animation).
+def test_identity_prompt_resolves_by_field_context(tmp_path):
+    root = _identity(tmp_path, positive_prompt="a mouthless hero", negative_prompt="ugly")
+    m = base_manifest()
+    m["poses"]["base"]["positive_prompt"] = "a wide shot of {identity_prompt} standing"
+    m["globals"]["pose"]["negative_prompt"] = "{identity_prompt}, low quality"
+    pos, neg = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
+    assert pos == "a wide shot of a mouthless hero standing"  # positive -> concept positive
+    assert "ugly" in neg and "a mouthless hero" not in neg    # negative -> concept negative
+    assert neg == "ugly, low quality"
+
+
+def test_identity_negative_expands_then_dedupes(tmp_path):
+    # In a negative field {identity_prompt} expands to the concept negative,
+    # then the term-merge dedupes it against siblings ("blurry" shared).
     root = _identity(tmp_path, negative_prompt="blurry, ugly")
     m = base_manifest()
-    m["animations"]["punch"]["negative_prompt"] = "{identity_negative}, extra arm"
+    m["animations"]["punch"]["negative_prompt"] = "{identity_prompt}, extra arm"
     _, neg = merged_prompts(m, root, "Cortex", "animation", "punch", "EAST")
     # globals.animation(blurry, low quality, watermark) + punch(blurry, ugly, extra arm)
     assert neg == "blurry, low quality, watermark, ugly, extra arm"
 
 
-def test_identity_token_with_empty_identity_expands_to_blank(tmp_path):
+def test_empty_direction_negative_leaves_no_stray_comma(tmp_path):
+    # punch@EAST has no direction negative, so {direction_prompt} -> "" and the
+    # empty term is dropped (no stray ", ,").
+    root = _identity(tmp_path)
+    m = base_manifest()
+    m["animations"]["punch"]["negative_prompt"] = "{direction_prompt}, extra arm"
+    _, neg = merged_prompts(m, root, "Cortex", "animation", "punch", "EAST")
+    assert ", ," not in neg
+    assert neg == "blurry, low quality, watermark, extra arm"
+
+
+def test_variables_resolve_inside_globals(tmp_path):
+    # Substitution runs on the merged text, so a global may reference variables.
+    root = _identity(tmp_path, negative_prompt="signature-flaw")
+    m = base_manifest()
+    m["globals"]["pose"]["negative_prompt"] = "{identity_prompt}, {direction_name}-artifact"
+    _, neg = merged_prompts(m, root, "Cortex", "pose", "base", "SOUTH")
+    assert neg == "signature-flaw, SOUTH-artifact"
+
+
+def test_unknown_tokens_and_empty_sources_survive(tmp_path):
     root = _identity(tmp_path)  # no identity fields
     m = base_manifest()
-    m["poses"]["base"]["directions"]["EAST"]["positive_prompt"] = "shot of {identity_positive}here"
+    m["poses"]["base"]["positive_prompt"] = "{identity_prompt}shot of {unknown} {thing}"
     pos, _ = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
-    assert "{identity_positive}" not in pos
-    assert pos == "neutral standing pose\n\nshot of here"
-
-
-def test_unknown_token_and_literal_braces_survive(tmp_path):
-    root = _identity(tmp_path, positive_prompt="hero")
-    m = base_manifest()
-    m["poses"]["base"]["directions"]["EAST"]["positive_prompt"] = "shot of {unknown} {thing}"
-    pos, _ = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
-    assert "{unknown}" in pos and "{thing}" in pos
+    assert pos == "shot of {unknown} {thing}"  # identity empty; unknown tokens untouched
 
 
 def test_compute_prompt_hash_matches_formula(tmp_path):

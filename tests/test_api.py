@@ -49,13 +49,13 @@ def test_list_options_includes_character_specific_entities(manifest, tree):
     assert ("animation", "punch") in ids  # main manifest still present
 
 
-def test_merged_prompt_rows_apply_the_full_cascade(manifest, tree):
+def test_merged_prompt_rows_apply_globals_and_entity(manifest, tree):
     rows = api.merged_prompt_rows(manifest, tree.root, "")
     base = next(r for r in rows if r["kind"] == "pose"
                 and r["id"] == "base" and r["direction"] == "EAST")
-    assert "neutral standing pose" in base["positive"]   # entity layer
-    assert "facing right in profile" in base["positive"]  # direction layer
-    assert "blurry" in base["negative"]                   # globals.pose negative
+    assert "neutral standing pose" in base["positive"]      # entity layer
+    assert "facing right in profile" not in base["positive"]  # direction inert unless referenced
+    assert "blurry" in base["negative"]                    # globals.pose negative
 
     punch = next(r for r in rows if r["id"] == "punch" and r["direction"] == "EAST")
     assert "extra arm" in punch["negative"]   # entity negative
@@ -63,9 +63,9 @@ def test_merged_prompt_rows_apply_the_full_cascade(manifest, tree):
 
 
 def test_merged_prompt_rows_splice_referenced_identity(manifest, tree):
-    # Identity is opt-in: it appears only where {identity_positive} is referenced.
+    # Identity is opt-in: it appears only where {identity_prompt} is referenced.
     tree.identity(positive_prompt="a brave hero")
-    manifest["poses"]["base"]["positive_prompt"] = "{identity_positive} in a neutral pose"
+    manifest["poses"]["base"]["positive_prompt"] = "{identity_prompt} in a neutral pose"
     rows = api.merged_prompt_rows(manifest, tree.root, tree.char)
     base = next(r for r in rows if r["id"] == "base" and r["direction"] == "EAST")
     assert "a brave hero in a neutral pose" in base["positive"]

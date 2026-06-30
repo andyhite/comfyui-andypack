@@ -24,10 +24,10 @@
   },
   "globals": {
     "animation": {
-      "negative_prompt": "extra limbs, extra arms, mutated hands, fused fingers, deformed, blurry, low quality, jpeg artifacts, watermark, text"
+      "negative_prompt": "{identity_prompt}, extra limbs, extra arms, mutated hands, fused fingers, deformed, blurry, low quality, jpeg artifacts, watermark, text"
     },
     "pose": {
-      "negative_prompt": "deformed, blurry, low quality, jpeg artifacts, watermark, text"
+      "negative_prompt": "{identity_prompt}, deformed, blurry, low quality, jpeg artifacts, watermark, text"
     }
   },
   "poses": {
@@ -35,7 +35,7 @@
       "from": {
         "ref": "concept"
       },
-      "positive_prompt": "a neutral standing pose of {identity_positive}, arms relaxed at its sides",
+      "positive_prompt": "{identity_prompt} in a neutral standing pose, arms relaxed at its sides. As viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "the character facing directly to the right in profile"
@@ -53,7 +53,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "a mid-stride walking contact pose, the lead leg forward and planted heel-down, the trailing leg extended behind and lifting off the toe, the arms swung into clear opposition with the rear arm drawn back and the lead arm forward, the torso upright and balanced over the lead leg, the head level. Captured mid-step, clearly in motion rather than standing still.",
+      "positive_prompt": "{identity_prompt} in a mid-stride walking contact pose, the lead leg forward and planted heel-down, the trailing leg extended behind and lifting off the toe, the arms swung into clear opposition with the rear arm drawn back and the lead arm forward, the torso upright and balanced over the lead leg, the head level. Captured mid-step, clearly in motion rather than standing still. As viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "facing to the right in profile"
@@ -65,7 +65,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "a dynamic mid-run pose, the torso pitched forward into its momentum, one knee driven high and forward while the other leg extends fully behind in push-off, the arms bent sharp at the elbows and pumping in strong opposition, the head leading low and level. A fast stride captured at full speed with the body about to leave the ground.",
+      "positive_prompt": "{identity_prompt} in a dynamic mid-run pose, the torso pitched forward into its momentum, one knee driven high and forward while the other leg extends fully behind in push-off, the arms bent sharp at the elbows and pumping in strong opposition, the head leading low and level. A fast stride captured at full speed with the body about to leave the ground. As viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "facing to the right in profile"
@@ -77,7 +77,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "a low braced crouch, the knees bent deeply and the hips sunk low, the torso leaned in over the legs and compacted downward, the arms hanging loosely between the knees, the head lowered. A compact, hunkered, held-low pose.",
+      "positive_prompt": "{identity_prompt} in a low braced crouch, the knees bent deeply and the hips sunk low, the torso leaned in over the legs and compacted downward, the arms hanging loosely between the knees, the head lowered. A compact, hunkered, held-low pose. As viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "facing to the right"
@@ -89,7 +89,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "an airborne pose at the peak of a jump, the legs tucked up beneath the body, the torso compact, the arms raised slightly, the head held level and pulled upward. Suspended in mid-air with the knees gathered in, clearly off the ground.",
+      "positive_prompt": "{identity_prompt} in an airborne pose at the peak of a jump, the legs tucked up beneath the body, the torso compact, the arms raised slightly, the head held level and pulled upward. Suspended in mid-air with the knees gathered in, clearly off the ground. As viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "facing to the right"
@@ -102,7 +102,7 @@
         "direction": "same"
       },
       "category": "anchor",
-      "positive_prompt": "the character in a ready fighting stance, weight low on staggered feet, both fists raised in a guard in front of the chest and head",
+      "positive_prompt": "{identity_prompt} in a ready fighting stance, weight low on staggered feet, both fists raised in a guard in front of the chest and head. As viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "facing to the right"
@@ -114,7 +114,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "pressed flat against a vertical wall on its right, the limbs braced and gripping the surface, the body kept close and flat to the wall, the head turned in toward it. A tense, held wall-grip pose.",
+      "positive_prompt": "{identity_prompt} pressed flat against a vertical wall on its right, the limbs braced and gripping the surface, the body kept close and flat to the wall, the head turned in toward it. A tense, held wall-grip pose. As viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "facing right toward the wall, body in profile"
@@ -126,7 +126,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "a mid-climb pose on a vertical surface, one arm reached high overhead gripping, the other arm pulled in low, one knee lifted to push from below, the body drawn close to the wall, the head tilted up toward the climb. Captured mid-pull, clearly climbing upward.",
+      "positive_prompt": "{identity_prompt} in a mid-climb pose on a vertical surface, one arm reached high overhead gripping, the other arm pulled in low, one knee lifted to push from below, the body drawn close to the wall, the head tilted up toward the climb. Captured mid-pull, clearly climbing upward. As viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "in profile, facing to the right"

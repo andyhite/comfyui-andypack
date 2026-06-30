@@ -19,14 +19,16 @@ schema-by-example: `examples/animations.json`.
 - FFLF cross-wiring: `start_from` consumes the dep's LAST frame;
   `end_at` consumes the dep's FIRST frame. Do not invert.
   Single-image deps (concept/pose) resolve the same image for either slot.
-- Refs are typed: `concept` (seed), a pose id, or an animation id. Poses
-  cascade `globals.pose → pose → direction`; animations cascade
-  `globals.animation → animation → direction`. No facial/global
-  negative special-casing.
-- Identity is OPT-IN, not an automatic cascade layer: a layer references
-  `{identity_positive}` / `{identity_negative}` to splice the character's
-  `_concept.json` identity in place. Tokens expand per-layer BEFORE the merge
-  (so identity negative terms dedupe). Unreferenced identity never appears.
+- Refs are typed: `concept` (seed), a pose id, or an animation id. Prompts
+  compile as: merge `globals[kind]` + entity (`merge_layers`/`merge_negative`),
+  THEN substitute template variables. No facial/global negative special-casing.
+- The identity layer (`_concept.json`) and the per-direction layer are NOT
+  merged — they surface ONLY via template variables, resolved by field context
+  (positive vs negative): `{identity_prompt}` → concept positive/negative;
+  `{direction_prompt}` → that direction's positive/negative; `{direction_name}`
+  → the bare direction (e.g. `EAST`), both contexts. Literal `str.replace`
+  (unknown `{...}` and stray braces survive; absent → ``). Vars resolve inside
+  globals too. Negatives still split/dedupe/drop-empty after substitution.
 - Dynamic character-scoped combos need a server route + web/ JS
   extension. Pure-Python INPUT_TYPES cannot do it.
 - `/frame` route must reject `..` / absolute / symlink escapes; 404

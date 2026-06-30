@@ -1,98 +1,112 @@
-# Opt-in identity via `{identity_positive}` / `{identity_negative}`
+# Template variables in prompts: `{identity_prompt}`, `{direction_prompt}`, `{direction_name}`
 
 Amends the cascade defined in
 `2026-06-29-cascading-pose-resolver-design.md` §4. Where the two disagree,
-this document wins for identity placement.
+this document wins for prompt composition.
 
 ## Problem
 
-Today the per-character identity layer (`_concept.json`'s `positive_prompt` /
-`negative_prompt`) is **auto-merged as the top cascade layer** in
-`merged_prompts` (`andypack/resolve.py`). The author cannot control *where* the
-identity text lands in a prompt — it is always prepended (positives) or folded
-into the front of the term list (negatives). For prompts like
-`"a wide shot of <character> running through rain"`, the identity belongs mid-
-sentence, not bolted on the front.
+The entity (pose/animation) prompt should be the **composition root**: the
+author writes a self-contained template and decides *where* the character
+identity and the per-direction text land. Today identity and the direction
+layer are auto-merged as fixed cascade layers, so the author cannot place them.
 
-## Behavior change (intentional, breaking)
+## Model
 
-The identity layer is **removed from the automatic cascade**. Identity is now
-**opt-in only**: its text appears solely where a prompt layer references it.
+A pose or animation has an optional `positive_prompt` / `negative_prompt`.
+A direction (under an entity) and the character concept (`_concept.json`) also
+have optional positive/negative prompts — but those are **inert on their own**.
+They surface only when an entity (or global) prompt references them by variable.
 
-- Cascade becomes `globals[kind] → entity → entity.directions[dir]` — no
-  identity layer.
-- `{identity_positive}` in any layer expands to the character's identity
-  `positive_prompt`.
-- `{identity_negative}` in any layer expands to the character's identity
-  `negative_prompt`.
+**Order of operations** (per axis):
 
-A character that previously relied on auto-prepended identity will lose it from
-every prompt until the manifest references the tokens. This is the intended
-migration.
+1. Merge `globals[kind]` + entity prompts, exactly as today
+   (`merge_layers` for positive, `merge_negative` for negative). The direction
+   layer and the identity layer are **no longer merged**.
+2. Substitute the template variables in the merged text, resolved by **field
+   context** (positive vs negative).
 
-## Substitution semantics
+| Variable | positive context | negative context |
+|---|---|---|
+| `{identity_prompt}` | concept `positive_prompt` | concept `negative_prompt` |
+| `{direction_prompt}` | direction `positive_prompt` | direction `negative_prompt` |
+| `{direction_name}` | the direction's bare name (`EAST`) | same |
 
-Tokens are expanded **per-layer, before the merge** — not on the final merged
-string. This matters for negatives: `merge_negative` splits on commas and
-dedupes terms, so `{identity_negative}` expanding to `"blurry, deformed"`
-*before* the merge lets those terms participate in dedupe like any other.
-Expanding after the merge would treat the whole token as one opaque term and
-skip dedupe. Positives are equivalent either way; per-layer keeps it uniform.
+Variables resolve in **either** a global or an entity prompt, since
+substitution runs on the merged result.
 
-Replacement is **literal token substitution** (`str.replace`), not
-`str.format`:
-- Unknown tokens and stray `{`/`}` in prompts are left untouched (no crash).
-- An absent or empty identity field expands the token to `""`.
+### Substitution semantics
+
+- Substitution is applied **per-layer before the merge**. The result is
+  identical to merge-then-substitute for the author's stated order, but a layer
+  whose variables resolve to empty (e.g. a global that is only
+  `{direction_prompt}` for a direction with no negative) is cleanly dropped
+  instead of leaving a blank line or stray `, ,`.
+- Replacement is **literal token substitution** (`str.replace`), not
+  `str.format`: unknown `{...}` tokens and stray braces survive untouched; an
+  absent/empty source expands to `""`.
+- Negatives keep the existing term-list treatment after substitution: split on
+  commas, dedupe case-insensitively (first occurrence wins), drop empty tokens.
+  So an empty `{direction_prompt}` cannot leave a stray `, ,`, and an expanded
+  `{identity_prompt}` that is itself a comma list dedupes against siblings.
 
 ## Implementation
 
 A single chokepoint: `merged_prompts` in `andypack/resolve.py`.
 
 ```python
-def substitute_identity(text: Optional[str], identity: dict) -> Optional[str]:
+def substitute_variables(text, *, positive, identity, direction_layer, direction):
     if not text:
         return text
-    pos = (identity.get("positive_prompt") or "").strip()
-    neg = (identity.get("negative_prompt") or "").strip()
-    return text.replace("{identity_positive}", pos).replace("{identity_negative}", neg)
+    field = "positive_prompt" if positive else "negative_prompt"
+    ident = (identity.get(field) or "").strip()
+    dprompt = (direction_layer.get(field) or "").strip()
+    return (text.replace("{identity_prompt}", ident)
+                .replace("{direction_prompt}", dprompt)
+                .replace("{direction_name}", direction))
 ```
 
-`merged_prompts` drops the identity layer from both `merge_layers` /
-`merge_negative` calls and maps each remaining layer through
-`substitute_identity(..., identity)` first.
+`merged_prompts` merges only `globals[kind]` + entity (positive via
+`merge_layers`, negative via `merge_negative`), running each layer through
+`substitute_variables` in the matching field context first.
 
 ## Consequences (free, from the chokepoint)
 
 - **Staleness still works.** `compute_prompt_hash` calls `merged_prompts`, so
-  the hash is over the substituted text. Editing a character's identity changes
-  every dependent's merged prompt → hash → marks them `stale`. No special-casing.
+  the hash is over the substituted text. Editing identity, a direction prompt,
+  or a global changes the hash of exactly the entities that reference (or
+  merge) it — marking them `stale`. No special-casing.
 - **Reports reflect final text.** `api.merged_prompt_rows` /
-  `format_merged_prompts` show the expanded prompts.
-- **No node changes.** Nodes build prompts only through `merged_prompts`.
+  `format_merged_prompts` show the compiled prompts.
+- **No node changes.** Nodes build prompts only through `merged_prompts`. (The
+  concept-intake node's `identity_positive` / `identity_negative` *inputs* are
+  unrelated UI fields that write the `_concept.json` identity layer.)
 
 ## Out of scope (YAGNI)
 
-No general templating engine, no additional variables, no per-layer escape
-syntax — only the two literal tokens.
+No general templating engine and no further variables (character name, etc.)
+for now — only the three tokens above.
 
 ## Acceptance
 
-1. A layer containing `{identity_positive}` renders with the identity positive
-   text spliced in place; identity is **not** also prepended.
-2. With no token referenced anywhere, the merged positive/negative contain
-   **none** of the identity text.
-3. `{identity_negative}` expanding to a comma list is deduped against sibling
-   negative terms.
-4. Empty/absent identity → token expands to `""`, no stray crash, no `{...}`
-   left in output for the known tokens.
-5. Unknown `{foo}` tokens and literal braces survive untouched.
-6. Editing identity `positive_prompt` flips a rendered dependent that
-   references `{identity_positive}` to `stale`; a dependent that does **not**
-   reference it is unaffected.
+1. positive = merged `globals[kind].positive_prompt` + entity `positive_prompt`,
+   with the direction layer **not** auto-appended.
+2. `{direction_prompt}` in an entity (or global) positive injects the selected
+   direction's `positive_prompt`; in a negative, its `negative_prompt`.
+3. `{direction_name}` injects the bare direction name in both contexts.
+4. `{identity_prompt}` injects concept positive in a positive field, concept
+   negative in a negative field.
+5. A negative `{direction_prompt}` that resolves empty leaves no stray `, ,`;
+   an expanded `{identity_prompt}` comma list dedupes against sibling terms.
+6. Variables referenced inside a `globals[kind]` prompt resolve too.
+7. Unknown `{foo}` tokens and literal braces survive untouched; empty/absent
+   sources expand to `""`.
+8. Editing a referenced source (identity / direction / global) flips a rendered
+   dependent that references it to `stale`.
 
 ## Docs to update with the code
 
-- `CLAUDE.md` — cascade lines and the negative special-casing note.
+- `CLAUDE.md` — cascade lines + variable note.
 - `2026-06-29-cascading-pose-resolver-design.md` §4 layer stacks + hash note.
 - `docs/animation-manifest-guide.md`.
-- `examples/animations.json` — add a usage example.
+- `examples/animations.json` — pose templates using the variables.
