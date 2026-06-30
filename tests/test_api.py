@@ -353,33 +353,117 @@ def test_list_options_marks_root_poses(manifest, tmp_path):
 
 
 def test_next_actionable_skip_mirrored(tmp_path):
+    # Render base in BOTH EAST and WEST so that pose `p` is ready in both.
+    # p's direction order is WEST first, then EAST — confirming WEST is genuinely
+    # queued before EAST and would be returned without the skip guard.
     root = str(tmp_path)
     char = "hero"
     manifest = {
         "version": 1,
         "mirror_map": {"WEST": "EAST"},
         "poses": {
-            "base": {"directions": {"EAST": {}}},
-            "p": {"from": {"ref": "base"}, "directions": {"EAST": {}, "WEST": {}}},
+            "base": {"directions": {"EAST": {}, "WEST": {}}},
+            "p": {"from": {"ref": "base"}, "directions": {"WEST": {}, "EAST": {}}},
         },
         "animations": {},
         "defaults": {},
     }
-    base = os.path.join(root, char, "_base")
-    os.makedirs(base, exist_ok=True)
-    open(os.path.join(base, "EAST.png"), "wb").close()
     from andypack import io, resolve
-    correct_hash = resolve.compute_prompt_hash(manifest, root, char, "pose", "base", "EAST")
+    base_dir = os.path.join(root, char, "_base")
+    os.makedirs(base_dir, exist_ok=True)
+    for direction in ("EAST", "WEST"):
+        open(os.path.join(base_dir, f"{direction}.png"), "wb").close()
+        correct_hash = resolve.compute_prompt_hash(
+            manifest, root, char, "pose", "base", direction
+        )
+        io.atomic_write_json(
+            os.path.join(base_dir, f"{direction}.json"),
+            io.build_pose_sidecar(
+                {
+                    "prompt_hash": correct_hash,
+                    "direction": direction,
+                    "kind": "pose",
+                    "pose": "base",
+                    "from": None,
+                    "manifest_version": manifest["version"],
+                },
+                created_utc="t",
+            ),
+        )
+    # WEST is first in p's direction order and not blocked — proves it is
+    # genuinely actionable; the skip guard is what removes it.
+    job_no_skip = api.next_actionable(
+        manifest, root, char, "pose", exclude_root=True, skip_mirrored=False
+    )
+    assert job_no_skip is not None
+    assert job_no_skip["direction"] == "WEST"
+    # With skip_mirrored=True, WEST (a mirror key) is skipped and EAST is next.
+    job_skip = api.next_actionable(
+        manifest, root, char, "pose", exclude_root=True, skip_mirrored=True
+    )
+    assert job_skip is not None
+    assert job_skip["direction"] == "EAST"
+
+
+def test_next_actionable_category_filters(tmp_path):
+    # Two ready animations in different categories; the category param must
+    # return only the matching one.
+    root = str(tmp_path)
+    char = "hero"
+    manifest = {
+        "version": 1,
+        "poses": {
+            "base": {"directions": {"EAST": {}}},
+        },
+        "animations": {
+            "walk": {
+                "category": "locomotion",
+                "start_from": {"ref": "base"},
+                "directions": {"EAST": {}},
+                "length": 33,
+                "fps": 16,
+                "width": 832,
+                "height": 480,
+            },
+            "punch": {
+                "category": "combat",
+                "start_from": {"ref": "base"},
+                "directions": {"EAST": {}},
+                "length": 33,
+                "fps": 16,
+                "width": 832,
+                "height": 480,
+            },
+        },
+        "defaults": {},
+    }
+    # Render base/EAST so both animations become ready.
+    from andypack import io, resolve
+    base_dir = os.path.join(root, char, "_base")
+    os.makedirs(base_dir, exist_ok=True)
+    open(os.path.join(base_dir, "EAST.png"), "wb").close()
+    correct_hash = resolve.compute_prompt_hash(
+        manifest, root, char, "pose", "base", "EAST"
+    )
     io.atomic_write_json(
-        os.path.join(base, "EAST.json"),
+        os.path.join(base_dir, "EAST.json"),
         io.build_pose_sidecar(
-            {"prompt_hash": correct_hash, "direction": "EAST", "kind": "pose",
-             "pose": "base", "from": None, "manifest_version": manifest["version"]},
+            {
+                "prompt_hash": correct_hash,
+                "direction": "EAST",
+                "kind": "pose",
+                "pose": "base",
+                "from": None,
+                "manifest_version": manifest["version"],
+            },
             created_utc="t",
         ),
     )
-    job = api.next_actionable(
-        manifest, root, char, "pose", exclude_root=True, skip_mirrored=True
+    combat = api.next_actionable(manifest, root, char, "animation", category="combat")
+    assert combat is not None
+    assert combat["id"] == "punch"
+    locomotion = api.next_actionable(
+        manifest, root, char, "animation", category="locomotion"
     )
-    assert job is not None
-    assert job["direction"] == "EAST"  # WEST is a mirror target, skipped
+    assert locomotion is not None
+    assert locomotion["id"] == "walk"

@@ -468,7 +468,7 @@ def next_actionable(
             entity = collection.get(item["id"], {})
             if entity.get("category") != category:
                 continue
-        if skip_mirrored and item["direction"] in mirror_keys:
+        if item["direction"] in mirror_keys:
             continue
         # Skip a cell that is stale ONLY because of an ancestor it can't fix by
         # re-rendering itself — re-running it wouldn't clear the staleness, so the
