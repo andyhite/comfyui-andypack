@@ -42,6 +42,9 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
   `andypack/<Manifest|Character|Pose|Animation|Diagnostics>` categories.
 - `web/anim_coord.js` — frontend extension for dynamic character-scoped combos
   (pure-Python `INPUT_TYPES` can't populate these; it needs the server routes).
+  The character combo is repopulated from `/anim_coord/characters` on node add /
+  panel refresh; characters created mid-session appear after a refresh (no full
+  reload).
 - `web/anim_coord_panel.js` — the Andypack sidebar tab (manifest editor, character
   editor, live coverage grid), backed by the write-capable routes.
 - `scripts/build_seed_manifest.py` — generator for `examples/animations.json`.
