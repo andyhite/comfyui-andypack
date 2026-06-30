@@ -151,6 +151,22 @@ def mirror_png(src: str, dst: str) -> None:
         raise
 
 
+def pad_to(tensor: torch.Tensor, height: int, width: int) -> torch.Tensor:
+    """Zero-pad a [1, H, W, C] tensor to (height, width), top-left anchored.
+
+    New pixels are filled with zeros (transparent for RGBA).  Do NOT use for
+    resizing — bilinear resize is in ``_resize_batch``; this is strictly for
+    making tensors with DIFFERENT sizes uniform before ``torch.cat`` so no
+    pixel content is distorted.  A no-op when the tensor already matches.
+    """
+    _, h, w, c = tensor.shape
+    if h == height and w == width:
+        return tensor
+    out = torch.zeros((1, height, width, c), dtype=tensor.dtype)
+    out[:, :h, :w, :] = tensor
+    return out
+
+
 def empty_image() -> torch.Tensor:
     """A 1x1 black image — the 'no anchor present' sentinel."""
     return torch.zeros((1, 1, 1, 3), dtype=torch.float32)

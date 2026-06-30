@@ -76,6 +76,7 @@ _CARDINAL_4 = ["EAST", "SOUTH", "WEST", "NORTH"]
 def _atlas_directions(directions_arg: str) -> list[str]:
     if directions_arg == "cardinal_4":
         return _CARDINAL_4
+    # "all" (default) — every direction in the canonical set
     return list(manikins.CANONICAL_DIRECTIONS)
 
 
@@ -1153,7 +1154,7 @@ class CharacterAtlasBuilder:
                 "character": (_character_choices(),),
                 "kind": (["animation", "pose"],),
                 "id": ("STRING", {"default": ""}),
-                "directions": (["all", "cardinal_4", "custom"],),
+                "directions": (["all", "cardinal_4"],),
                 "layout": (["per_direction_rows", "grid"],),
                 "padding": ("INT", {"default": 2, "min": 0}),
                 "power_of_two": ("BOOLEAN", {"default": False}),
@@ -1216,6 +1217,13 @@ class CharacterAtlasBuilder:
                         os.path.join(path, frame_files[0]), keep_alpha=True
                     )
                 )
+        # Pad each tensor to the common (max H, max W) so torch.cat succeeds even
+        # when pose PNGs or animation first frames have different pixel dimensions.
+        # Fills with zeros (transparent for RGBA), top-left anchored — no resize
+        # that would distort sprite aspect ratios.
+        max_h = max(t.shape[1] for t in tensors)
+        max_w = max(t.shape[2] for t in tensors)
+        tensors = [images.pad_to(t, max_h, max_w) for t in tensors]
         batch = torch.cat(tensors, dim=0)
         n = len(rendered_dirs)
         if layout == "per_direction_rows":

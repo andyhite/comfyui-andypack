@@ -610,3 +610,25 @@ def test_character_atlas_builder_is_changed_volatile_without_character(manifest,
         manifest, "", "pose", "", "all", "grid", 0, False
     )
     assert token != token
+
+
+def test_character_atlas_builder_pads_mismatched_direction_sizes(manifest, tree, monkeypatch):
+    """Directions with different H/W are zero-padded before torch.cat — no crash."""
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    # Write sidecars via Tree so node_complete is True for both directions, then
+    # overwrite the placeholder PNGs with real RGBA images of different sizes.
+    tree.pose("base", "EAST").pose("base", "SOUTH")
+    east_path = resolve.pose_image_path(tree.root, tree.char, "base", "EAST")
+    south_path = resolve.pose_image_path(tree.root, tree.char, "base", "SOUTH")
+    # EAST: 6×6 RGBA, SOUTH: 8×10 RGBA — mismatched, would crash torch.cat without padding
+    images.save_image_png(torch.zeros((1, 6, 6, 4)), east_path)
+    images.save_image_png(torch.zeros((1, 8, 10, 4)), south_path)
+    sheet, atlas, report = nodes.CharacterAtlasBuilder().build(
+        manifest, tree.char, "pose", "base", "all", "grid", 0, False
+    )
+    # Sheet must be a single-image batch (pack_sheet always returns B=1).
+    assert sheet.shape[0] == 1
+    # Atlas must record exactly the two directions that were complete.
+    assert len(atlas["directions"]) == 2
+    assert "EAST" in atlas["directions"]
+    assert "SOUTH" in atlas["directions"]
