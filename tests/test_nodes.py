@@ -781,3 +781,10 @@ def test_boomerang_writes_palindrome(tmp_path, monkeypatch):
     d = out["result"][0] if isinstance(out, dict) else out[0]
     meta = json.load(open(os.path.join(d, "meta.json")))
     assert meta["loop"] is True and meta["frames"]["count"] == 4  # 0,1,2,1
+
+
+# --- TweenClipProvider ------------------------------------------------------ #
+
+def test_tween_requires_fflf():
+    with pytest.raises(RuntimeError):
+        nodes.TweenClipProvider()._validate_fflf(start=None, end=None)

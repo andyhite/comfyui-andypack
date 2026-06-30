@@ -1661,6 +1661,84 @@ class TurnaroundSheet:
         return {"ui": {}, "result": (sheet,)}
 
 
+class TweenClipProvider:
+    """Provide the resolved FFLF start and end anchor images and the in-between
+    frame count for an external frame-interpolation node (RIFE/FILM).
+
+    Near-linear transitions between two already-rendered anchor poses cost no
+    Wan compute when interpolation is handled externally. This node does NOT
+    sample — it only reads the pre-resolved tensors from the ANIM_ANIMATION
+    bundle that the selector (CharacterAnimationSelector / AutoAnimationSelector)
+    built upstream.
+
+    TWEEN_COUNT derivation: when the tween_count widget is 0 (auto), the
+    interior frame count is ``max(length - 2, 0)`` — the manifest clip length
+    minus the two anchor frames, clamped to zero for clips shorter than 2
+    frames. Supply an explicit tween_count > 0 to override.
+
+    include_anchors is informational for downstream wiring (signals whether
+    the consumer should prepend/append the anchor images to the interpolated
+    sequence). It does NOT change this node's outputs — START_IMAGE and
+    END_IMAGE are always emitted so the wiring is always explicit.
+    """
+
+    CATEGORY = "andypack/Animation"
+    FUNCTION = "provide"
+    RETURN_TYPES = ("IMAGE", "IMAGE", "INT", "INT")
+    RETURN_NAMES = ("START_IMAGE", "END_IMAGE", "TWEEN_COUNT", "FPS")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "animation": ("ANIM_ANIMATION",),
+            },
+            "optional": {
+                "tween_count": ("INT", {"default": 0, "min": 0}),
+                "include_anchors": ("BOOLEAN", {"default": True}),
+            },
+        }
+
+    def _validate_fflf(self, start, end):
+        """Raise RuntimeError when start/end do not represent a genuine FFLF clip.
+
+        A clip fails validation when either anchor is absent (None or the empty
+        sentinel) or when the two images are pixel-identical — a loop or
+        single-image clip whose start and end collapse to the same frame cannot
+        produce a meaningful in-between transition.
+        """
+        if start is None or end is None:
+            raise RuntimeError(
+                "TweenClipProvider: both start_image and end_image must be present "
+                "(animation is not a genuine FFLF clip)"
+            )
+        if images.is_empty(start) or images.is_empty(end):
+            raise RuntimeError(
+                "TweenClipProvider: start_image or end_image is the empty sentinel — "
+                "the animation anchor is not yet rendered"
+            )
+        if torch.equal(start, end):
+            raise RuntimeError(
+                "TweenClipProvider: start_image and end_image are pixel-identical — "
+                "this is a loop or single-image clip, not a genuine FFLF transition"
+            )
+
+    def provide(self, animation, tween_count=0, include_anchors=True):
+        start = animation["start_image"]
+        end = animation["end_image"]
+        self._validate_fflf(start, end)
+        fps = max(int(animation["_meta"].get("fps") or 0), 1)
+        length = int(animation["_meta"].get("length") or 0)
+        if tween_count > 0:
+            tween_count_resolved = tween_count
+        else:
+            # Derive the interior frame count: the manifest length includes both
+            # anchor frames, so the frames between them is length - 2, clamped
+            # to zero for clips shorter than two frames.
+            tween_count_resolved = max(length - 2, 0)
+        return (start, end, tween_count_resolved, fps)
+
+
 class BoomerangLoopWriter:
     """Synthesize a seamless loop from a one-way A→B clip by writing A→B + reversed
     interior (boomerang), or by trimming the duplicate seam frame (trim_seam).
@@ -1750,6 +1828,7 @@ NODE_CLASS_MAPPINGS = {
     "ActionSetSelector": ActionSetSelector,
     "AnimationFrameWriter": AnimationFrameWriter,
     "BoomerangLoopWriter": BoomerangLoopWriter,
+    "TweenClipProvider": TweenClipProvider,
     "AnimationUnpack": AnimationUnpack,
     "AnimationPlayback": AnimationPlayback,
     "MirrorFrameWriter": MirrorFrameWriter,
@@ -1780,6 +1859,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ActionSetSelector": "Action Set Selector (next job)",
     "AnimationFrameWriter": "Animation Frame Writer",
     "BoomerangLoopWriter": "Boomerang Loop Writer",
+    "TweenClipProvider": "Tween Clip Provider",
     "AnimationUnpack": "Unpack Animation",
     "AnimationPlayback": "Animation Playback",
     "MirrorFrameWriter": "Mirror Frame Writer",
