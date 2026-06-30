@@ -261,6 +261,10 @@ def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
     assert anim["_meta"]["animation"] == "punch"
     assert isinstance(anim["is_fflf"], bool)
     assert isinstance(anim["length"], int) and isinstance(anim["fps"], int)
+    # Generation params for the WanFirstLastFrameToVideo node ride along as wireable
+    # INT/FLOAT outputs (from the manifest defaults / per-animation override).
+    assert isinstance(anim["width"], int) and isinstance(anim["height"], int)
+    assert isinstance(anim["shift"], float)
     assert anim["start_image"].shape[0] == 1 and anim["end_image"].shape[0] == 1
     assert sorted(k for k in anim if k != "_meta") == nodes.ANIMATION_OUTPUT_KEYS
 
@@ -279,17 +283,19 @@ def test_pose_unpack_forwards_dict_and_fans_out_typed_outputs():
 
 def test_animation_unpack_forwards_dict_and_fans_out_typed_outputs():
     anim = {"start_image": _img(), "end_image": _img(), "positive": "p", "negative": "n",
-            "is_fflf": True, "length": 21, "fps": 16, "output_dir": "/a", "_meta": {}}
-    passthrough, start, end, pos, neg, fflf, length, fps, out_dir = (
-        nodes.AnimationUnpack().unpack(anim)
-    )
+            "is_fflf": True, "length": 21, "fps": 16, "width": 832, "height": 480,
+            "shift": 3.0, "output_dir": "/a", "_meta": {}}
+    (passthrough, start, end, pos, neg, fflf, length, fps,
+     width, height, shift, out_dir) = nodes.AnimationUnpack().unpack(anim)
     assert nodes.AnimationUnpack.RETURN_NAMES == (
         "ANIMATION", "START_IMAGE", "END_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT",
-        "IS_FFLF", "LENGTH", "FPS", "OUTPUT_DIR",
+        "IS_FFLF", "LENGTH", "FPS", "WIDTH", "HEIGHT", "SHIFT", "OUTPUT_DIR",
     )
     assert passthrough is anim  # whole ANIMATION forwarded on, unchanged
     assert start.shape[0] == 1 and end.shape[0] == 1
-    assert (pos, neg, fflf, length, fps, out_dir) == ("p", "n", True, 21, 16, "/a")
+    assert (pos, neg, fflf, length, fps, width, height, shift, out_dir) == (
+        "p", "n", True, 21, 16, 832, 480, 3.0, "/a"
+    )
 
 
 def test_unpack_outputs_cover_selector_leaf_keys():
@@ -441,6 +447,82 @@ def test_pose_selector_rejects_root_pose(manifest, tree, monkeypatch):
     tree.pose("base", "EAST")
     with pytest.raises(RuntimeError, match="root pose"):
         nodes.CharacterPoseSelector().select(manifest, tree.char, "", "base", "EAST")
+
+
+# --- reference persistence + CharacterReferenceLoader ----------------------- #
+
+def test_character_creator_persists_reference_by_default(manifest, tmp_path, monkeypatch):
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    nodes.CharacterCreator().create(manifest, _img(3, 4), "cortex", "EAST")
+    ref = resolve.reference_image_path(root, "cortex")
+    assert os.path.isfile(ref)  # _reference.png written so base can be re-generated
+
+
+def test_character_creator_can_skip_reference_persistence(manifest, tmp_path, monkeypatch):
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    nodes.CharacterCreator().create(manifest, _img(), "cortex", "EAST", save_reference=False)
+    assert not os.path.exists(resolve.reference_image_path(root, "cortex"))
+
+
+def test_reference_loader_roundtrips_the_saved_image(manifest, tmp_path, monkeypatch):
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    nodes.CharacterCreator().create(manifest, _img(5, 6), "cortex", "EAST")
+    (img,) = nodes.CharacterReferenceLoader().load("cortex")
+    assert img.shape[0] == 1 and img.shape[1] == 5 and img.shape[2] == 6
+
+
+def test_reference_loader_raises_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    with pytest.raises(RuntimeError, match="reference"):
+        nodes.CharacterReferenceLoader().load("ghost")
+
+
+def test_reference_loader_requires_a_character(monkeypatch, tmp_path):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    with pytest.raises(RuntimeError, match="character"):
+        nodes.CharacterReferenceLoader().load("(select character)")
+
+
+# --- auto-advancing batch selectors ----------------------------------------- #
+
+def test_auto_pose_selector_emits_next_actionable_non_root_pose(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    # base generated -> fighting_stance is the next actionable (non-root) pose.
+    tree.pose("base", "EAST")
+    images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
+    (pose,) = nodes.AutoPoseSelector().select(manifest, tree.char)
+    assert pose["_meta"]["pose"] == "fighting_stance"
+    assert sorted(k for k in pose if k != "_meta") == nodes.POSE_OUTPUT_KEYS
+
+
+def test_auto_pose_selector_raises_when_nothing_actionable(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()  # base is a root pose (excluded); nothing else actionable
+    with pytest.raises(RuntimeError, match="no actionable poses"):
+        nodes.AutoPoseSelector().select(manifest, tree.char)
+
+
+def test_auto_animation_selector_emits_next_actionable_animation(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST")
+    # fighting_stance is the I2V start anchor for fighting_stance_idle — write a
+    # real PNG there so the bundle can load it.
+    images.save_image_png(
+        _img(), resolve.pose_image_path(tree.root, tree.char, "fighting_stance", "EAST")
+    )
+    (anim,) = nodes.AutoAnimationSelector().select(manifest, tree.char)
+    assert anim["_meta"]["animation"] == "fighting_stance_idle"
+    assert sorted(k for k in anim if k != "_meta") == nodes.ANIMATION_OUTPUT_KEYS
+
+
+def test_auto_animation_selector_raises_when_nothing_actionable(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()
+    with pytest.raises(RuntimeError, match="no actionable animations"):
+        nodes.AutoAnimationSelector().select(manifest, tree.char)
 
 
 def test_pose_selector_sets_empty_pose_reference(manifest, tree, monkeypatch):

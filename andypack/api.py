@@ -2,18 +2,28 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import warnings
 from typing import Any, Optional
 
 from andypack import io
-from andypack.manifest import ManifestError, node_kind, topo_order
+from andypack.manifest import (
+    ManifestError,
+    collect_warnings,
+    node_kind,
+    topo_order,
+    validate_manifest,
+)
 from andypack.resolve import (
     effective_manifest,
+    invalidate_character,
     merged_prompts,
     resolve_animation,
     resolve_pose,
     resolution_pass,
+    stale_locally,
     status,
     status_from_resolved,
 )
@@ -87,6 +97,141 @@ def seed_default_manifest() -> bool:
 def resolve_manifest_path(manifest_path: str) -> str:
     """Resolve a manifest path: absolute as-is; a bare name under the manifests dir."""
     return io.resolve_under(manifests_dir(), manifest_path)
+
+
+# --- CRUD helpers for the sidebar GUI (write-capable, path-safe) ------------- #
+#
+# These back the editor panel. The HTTP routes never take a client filesystem
+# path: a manifest is addressed by a *bare basename* (validated by
+# `manifest_name_is_safe`) resolved under the server's own manifests dir, and a
+# character by a name snake-cased to a single path segment under the characters
+# dir. So there is no path the client can point outside the pack's own trees.
+
+def manifest_name_is_safe(name: str) -> bool:
+    """A manifest name the save/read routes will accept: a bare `*.json` basename
+    with no directory part and no traversal. Rejects '', '.json', any name with a
+    path separator or '..', and non-`.json` names."""
+    if not name or not name.endswith(".json") or name == ".json":
+        return False
+    if name != os.path.basename(name):
+        return False
+    return ".." not in name and "/" not in name and "\\" not in name
+
+
+def read_manifest_text(name: str) -> Optional[str]:
+    """Raw text of a manifest by bare name, or None (unsafe name / absent / no
+    manifests dir). The editor loads this verbatim so the user edits real JSON."""
+    if not manifest_name_is_safe(name):
+        return None
+    base = manifests_dir()
+    if base is None:
+        return None
+    try:
+        with open(os.path.join(base, name), encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def save_manifest_text(name: str, text: str) -> dict:
+    """Validate `text` as a manifest and atomically write it to `<manifests>/name`.
+
+    Returns `{"ok": True, "warnings": [...]}` on success (lint findings surfaced,
+    not fatal), or `{"ok": False, "error": "..."}` without writing on an unsafe
+    name, missing manifests dir, malformed JSON, or a structural ManifestError.
+    Parsing + validating BEFORE the write means a bad edit can never overwrite a
+    working manifest with a broken one."""
+    if not manifest_name_is_safe(name):
+        return {"ok": False, "error": f"unsafe manifest name {name!r}"}
+    base = manifests_dir()
+    if base is None:
+        return {"ok": False, "error": "manifests dir unavailable (not in ComfyUI)"}
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        return {"ok": False, "error": f"invalid JSON: {exc}"}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "manifest root must be an object"}
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            validate_manifest(data)
+        lint = [str(w.message) for w in caught]
+    except ManifestError as exc:
+        return {"ok": False, "error": str(exc)}
+    os.makedirs(base, exist_ok=True)
+    io.atomic_write_json(os.path.join(base, name), data)
+    return {"ok": True, "warnings": lint or collect_warnings(data)}
+
+
+def _is_safe_segment(name: str) -> bool:
+    """True if `name` is a single, safe path segment — non-empty, not `.`/`..`, not
+    absolute, and containing no path separator. Character names addressed by the
+    routes must satisfy this so a client value can't traverse out of the characters
+    dir (the write paths already snake-case, which always yields a safe segment;
+    this guards the read path too)."""
+    if not name or name in (".", "..") or os.path.isabs(name):
+        return False
+    if os.sep in name or (os.altsep and os.altsep in name):
+        return False
+    return True
+
+
+def read_character_layer(root: str, name: str) -> dict:
+    """The character's `character.json` dict (prompt layer + any overlay), or {}
+    when absent/corrupt/unsafe. A fresh disk read (not the resolve cache) so the
+    editor always shows what's on disk. Rejects an unsafe `name` (path traversal)
+    rather than reading outside the characters dir."""
+    if not _is_safe_segment(name):
+        return {}
+    path = os.path.join(root, name, "character.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def create_character(root: str, name: str) -> dict:
+    """Create `<root>/<snake>/character.json` (empty layer) for a new character.
+
+    Idempotent: an existing character is reported, not clobbered. Returns
+    `{"ok": True, "name": <snake>, "created": bool}` or `{"ok": False, "error"}`
+    on an unusable name."""
+    try:
+        snake = io.to_snake_case(name)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    path = os.path.join(root, snake, "character.json")
+    if os.path.exists(path):
+        return {"ok": True, "name": snake, "created": False}
+    existing = read_character_layer(root, snake)
+    io.atomic_write_json(path, io.build_character({}, existing=existing))
+    invalidate_character(root, snake)
+    return {"ok": True, "name": snake, "created": True}
+
+
+def save_character_layer(root: str, name: str, positive: str, negative: str) -> dict:
+    """Write a character's prompt layer, preserving any poses/animations overlay.
+
+    The widgets/fields are the source of truth: an empty positive/negative drops
+    that key (matching the Character Creator node). Snake-cases the name to a path
+    segment and invalidates the resolve cache so descendants re-resolve."""
+    try:
+        snake = io.to_snake_case(name)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    layer: dict = {}
+    if positive and positive.strip():
+        layer["positive_prompt"] = positive.strip()
+    if negative and negative.strip():
+        layer["negative_prompt"] = negative.strip()
+    existing = read_character_layer(root, snake)
+    payload = io.build_character(layer, existing=existing)
+    io.atomic_write_json(os.path.join(root, snake, "character.json"), payload)
+    invalidate_character(root, snake)
+    return {"ok": True, "name": snake}
 
 
 def output_dir() -> Optional[str]:
@@ -170,6 +315,8 @@ def _is_character(root: str, name: str) -> bool:
     if not os.path.isdir(d):
         return False
     if os.path.exists(os.path.join(d, "character.json")):
+        return True
+    if os.path.exists(os.path.join(d, "_reference.png")):
         return True
     try:
         return any(os.path.isdir(os.path.join(d, c)) for c in os.listdir(d))
@@ -273,6 +420,36 @@ def regen_queue(manifest: Manifest, root: str, character: str) -> list[dict]:
                 if st in ("ready", "stale"):
                     out.append({"kind": kind, "id": ref, "direction": direction, "status": st})
     return out
+
+
+def next_actionable(
+    manifest: Manifest, root: str, character: str, kind: str, *, exclude_root: bool = False
+) -> Optional[dict]:
+    """The first selectable-now (ready/stale) cell of `kind` in dependency order,
+    or None when nothing of that kind is actionable. Backs the auto-advancing
+    batch selectors: queue the graph repeatedly and each run picks the next job.
+
+    `exclude_root` drops root poses (no `from`, e.g. `base`) — they need the
+    Character Creator's reference image + manikin, not a generic selector."""
+    eff = _safe_effective(manifest, root, character)
+    for item in regen_queue(eff, root, character):
+        if item["kind"] != kind:
+            continue
+        if exclude_root and kind == "pose":
+            pose = eff.get("poses", {}).get(item["id"], {})
+            if pose.get("from") is None:
+                continue
+        # Skip a cell that is stale ONLY because of an ancestor it can't fix by
+        # re-rendering itself — re-running it wouldn't clear the staleness, so the
+        # batch loop would wedge on it forever (e.g. every descendant of a stale
+        # root pose that an auto-selector won't regenerate). A `ready` cell, or one
+        # stale for its own reasons, is genuinely actionable.
+        if item["status"] == "stale" and not stale_locally(
+            eff, root, character, item["id"], item["direction"]
+        ):
+            continue
+        return item
+    return None
 
 
 def merged_prompt_rows(manifest: Manifest, root: str, character: str) -> list[dict]:

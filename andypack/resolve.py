@@ -22,7 +22,9 @@ _WS = re.compile(r"\s+")
 _SEP = "␟"  # UNIT SEPARATOR
 # The opt-in template tokens, matched in a SINGLE pass so a token that appears
 # inside an injected value is not re-expanded by a later substitution.
-_TEMPLATE_TOKEN = re.compile(r"\{(character_prompt|direction_prompt|direction_name)\}")
+_TEMPLATE_TOKEN = re.compile(
+    r"\{(character_prompt|direction_prompt|direction_name|view_phrase)\}"
+)
 
 
 # --- cascade: merge, identity, hashing -------------------------------------- #
@@ -154,13 +156,17 @@ def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifes
 
 
 def substitute_variables(
-    text: Optional[str], *, positive: bool, identity: dict, direction_layer: dict, direction: str
+    text: Optional[str], *, positive: bool, identity: dict, direction_layer: dict,
+    direction: str, view_phrase: str = "",
 ) -> Optional[str]:
     """Expand the opt-in template variables in a prompt layer, resolved by field
     context. `{character_prompt}` -> character positive/negative; `{direction_prompt}`
     -> the selected direction's positive/negative; `{direction_name}` -> the bare
-    direction name (both contexts). Literal token replacement (not str.format), so
-    unknown `{...}` tokens and stray braces survive; absent sources expand to ''.
+    direction name (both contexts); `{view_phrase}` -> the manifest-level
+    per-direction camera phrase (positive context only — it is affirmative camera
+    language, so it expands to '' in a negative field and never pollutes the
+    negative term list). Literal token replacement (not str.format), so unknown
+    `{...}` tokens and stray braces survive; absent sources expand to ''.
     Applied per-layer BEFORE the merge so an expanded negative term list dedupes
     against sibling terms and a layer that resolves empty is dropped cleanly.
 
@@ -175,6 +181,7 @@ def substitute_variables(
         "character_prompt": (identity.get(field) or "").strip(),
         "direction_prompt": (direction_layer.get(field) or "").strip(),
         "direction_name": direction,
+        "view_phrase": (view_phrase or "").strip() if positive else "",
     }
     return _TEMPLATE_TOKEN.sub(lambda m: values[m.group(1)], text)
 
@@ -192,11 +199,12 @@ def merged_prompts(
     collection = manifest["poses"] if kind == "pose" else manifest["animations"]
     entity = collection[entity_id]
     dlayer = (entity.get("directions", {}) or {}).get(direction) or {}
+    view_phrase = (manifest.get("view_phrases") or {}).get(direction) or ""
 
     def sub(text: Optional[str], *, positive: bool) -> Optional[str]:
         return substitute_variables(
             text, positive=positive, identity=identity,
-            direction_layer=dlayer, direction=direction,
+            direction_layer=dlayer, direction=direction, view_phrase=view_phrase,
         )
 
     positive = merge_layers(
@@ -262,6 +270,17 @@ def animation_frame_dir(root: str, character: str, anim_id: str, direction: str)
 
 def animation_meta_path(root: str, character: str, anim_id: str, direction: str) -> str:
     return _anim_meta_path(root, character, anim_id, direction)
+
+
+def reference_image_path(root: str, character: str) -> str:
+    """The optional persisted character reference art (`<char>/_reference.png`).
+
+    The reference is the concept image the Character Creator edits into the base
+    directions. Persisting it (opt-in on the creator node) lets a character be
+    reloaded and its base re-generated later without hunting for the original art.
+    It is NOT a render node and carries no provenance — base sidecars still root
+    the tree's staleness."""
+    return os.path.join(root, character, "_reference.png")
 
 
 # --- direction resolution + completeness ------------------------------------ #
@@ -465,6 +484,32 @@ def outdated(manifest: Manifest, root: str, character: str, ref: str, direction:
     return memo[key]
 
 
+def stale_locally(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> bool:
+    """True if a COMPLETE node is stale for its OWN reasons — its merged prompt hash
+    drifted, or a recorded source's `render_id` changed — so re-rendering THIS node
+    will clear the drift. A node that is `outdated` only because an ancestor is
+    outdated returns False here (re-rendering it wouldn't help). The batch
+    auto-selectors use this to avoid wedging on a cell whose staleness they can't
+    clear (e.g. every descendant of a stale root pose the selector won't regenerate)."""
+    if not node_complete(manifest, root, character, ref, direction):
+        return False
+    kind = node_kind(manifest, ref)
+    meta = read_node_meta(manifest, root, character, ref, direction)
+    if (meta or {}).get("prompt_hash") != compute_prompt_hash(
+        manifest, root, character, kind, ref, direction
+    ):
+        return True
+    sources = (meta or {}).get("sources")
+    if isinstance(sources, dict):
+        for key, recorded in sources.items():
+            if "@" not in key:
+                continue
+            dep_ref, ddir = key.rsplit("@", 1)
+            if read_render_id(manifest, root, character, dep_ref, ddir) != recorded:
+                return True
+    return False
+
+
 def _outdated(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> bool:
     kind = node_kind(manifest, ref)
     if not node_complete(manifest, root, character, ref, direction):
@@ -568,6 +613,9 @@ def resolve_animation(manifest: Manifest, root: str, character: str, anim_id: st
             "kind": "animation", "animation": anim_id, "direction": direction,
             "fps": anim.get("fps", defaults.get("fps")),
             "length": anim.get("length", defaults.get("length")),
+            "width": anim.get("width", defaults.get("width")),
+            "height": anim.get("height", defaults.get("height")),
+            "shift": anim.get("shift", defaults.get("shift")),
             "loop": is_loop, "manifest_version": manifest["version"],
             "prompt_hash": hash_prompts(positive, negative),
             "sources": recorded_sources(manifest, root, character, anim_id, direction),

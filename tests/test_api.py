@@ -157,6 +157,164 @@ def test_character_root_and_name_empty_when_nothing_given():
     assert api.character_root_and_name("", "") == ("", "")
 
 
+# --- CRUD helpers for the sidebar GUI --------------------------------------- #
+
+def test_manifest_name_is_safe_rejects_traversal_and_non_json():
+    assert api.manifest_name_is_safe("default.json")
+    assert api.manifest_name_is_safe("my-walks.json")
+    assert not api.manifest_name_is_safe("../escape.json")
+    assert not api.manifest_name_is_safe("sub/dir.json")
+    assert not api.manifest_name_is_safe("notjson.txt")
+    assert not api.manifest_name_is_safe("")
+    assert not api.manifest_name_is_safe(".json")
+
+
+def test_save_and_read_manifest_text_roundtrip(tmp_path, monkeypatch):
+    import json
+    mdir = tmp_path / "animations"
+    monkeypatch.setattr(api, "manifests_dir", lambda: str(mdir))
+    good = json.dumps({"version": 1, "poses": {}, "animations": {}})
+    res = api.save_manifest_text("walks.json", good)
+    assert res["ok"] is True
+    assert (mdir / "walks.json").is_file()
+    assert json.loads(api.read_manifest_text("walks.json"))["version"] == 1
+
+
+def test_save_manifest_rejects_invalid_json_and_bad_manifest(tmp_path, monkeypatch):
+    mdir = tmp_path / "animations"
+    monkeypatch.setattr(api, "manifests_dir", lambda: str(mdir))
+    bad_json = api.save_manifest_text("x.json", "{not json")
+    assert bad_json["ok"] is False and bad_json["error"]
+    bad_manifest = api.save_manifest_text("x.json", '{"version": "nope"}')
+    assert bad_manifest["ok"] is False and "version" in bad_manifest["error"]
+    # Neither bad write created the file.
+    assert not (mdir / "x.json").exists()
+
+
+def test_save_manifest_rejects_unsafe_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "manifests_dir", lambda: str(tmp_path))
+    res = api.save_manifest_text("../escape.json", '{"version":1,"poses":{},"animations":{}}')
+    assert res["ok"] is False
+    assert not (tmp_path.parent / "escape.json").exists()
+
+
+def test_save_manifest_surfaces_lint_warnings(tmp_path, monkeypatch):
+    import json
+    mdir = tmp_path / "animations"
+    monkeypatch.setattr(api, "manifests_dir", lambda: str(mdir))
+    # A 4n+1-violating length is a non-fatal lint warning.
+    m = {
+        "version": 1, "poses": {},
+        "animations": {"a": {"length": 30, "start_from": {"ref": "a"},
+                              "directions": {"EAST": {}}}},
+        "defaults": {},
+    }
+    # 'a' refs itself -> cycle; use a valid pose dep instead.
+    m["poses"] = {"p": {"directions": {"EAST": {}}}}
+    m["animations"]["a"]["start_from"] = {"ref": "p"}
+    res = api.save_manifest_text("w.json", json.dumps(m))
+    assert res["ok"] is True
+    assert any("4n+1" in w for w in res["warnings"])
+
+
+def test_create_and_save_character_layer(tmp_path):
+    root = str(tmp_path / "characters")
+    created = api.create_character(root, "Cortex Prime")
+    assert created["ok"] is True
+    assert created["name"] == "cortex_prime"  # snake-cased folder
+    assert os.path.isfile(os.path.join(root, "cortex_prime", "character.json"))
+
+    saved = api.save_character_layer(root, "cortex_prime",
+                                     positive="a mouthless hero", negative="realistic")
+    assert saved["ok"] is True
+    layer = api.read_character_layer(root, "cortex_prime")
+    assert layer["positive_prompt"] == "a mouthless hero"
+    assert layer["negative_prompt"] == "realistic"
+
+
+def test_save_character_layer_preserves_overlay_and_clears_emptied(tmp_path):
+    import json
+    root = str(tmp_path / "characters")
+    cdir = os.path.join(root, "cortex")
+    os.makedirs(cdir)
+    # Pre-existing file with a character-authored poses overlay + a positive prompt.
+    with open(os.path.join(cdir, "character.json"), "w") as fh:
+        json.dump({"positive_prompt": "old", "poses": {"x": {"directions": {}}}}, fh)
+    api.save_character_layer(root, "cortex", positive="new hero", negative="")
+    layer = api.read_character_layer(root, "cortex")
+    assert layer["positive_prompt"] == "new hero"   # updated
+    assert "negative_prompt" not in layer            # emptied -> dropped
+    assert layer["poses"] == {"x": {"directions": {}}}  # overlay preserved
+
+
+def test_read_character_layer_absent_returns_empty(tmp_path):
+    assert api.read_character_layer(str(tmp_path), "ghost") == {}
+
+
+# --- next_actionable (batch auto-selectors) --------------------------------- #
+
+def test_next_actionable_pose_skips_root_and_follows_dependency_order(manifest, tree):
+    tree.character()  # only character layer; base not generated yet
+    # base is a ROOT pose (needs the Character Creator) -> excluded for poses.
+    assert api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True) is None
+    # Generate base -> fighting_stance (a non-root pose) becomes the next pose job.
+    tree.pose("base", "EAST")
+    job = api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+    assert job["id"] == "fighting_stance" and job["direction"] == "EAST"
+
+
+def test_next_actionable_animation_picks_first_ready(manifest, tree):
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST")
+    # fighting_stance_idle (start_from fighting_stance) is now ready.
+    job = api.next_actionable(manifest, tree.root, tree.char, "animation")
+    assert job["kind"] == "animation" and job["id"] == "fighting_stance_idle"
+
+
+def test_next_actionable_none_when_nothing_actionable(manifest, tree):
+    tree.character()
+    assert api.next_actionable(manifest, tree.root, tree.char, "animation") is None
+
+
+def test_next_actionable_skips_ancestor_only_stale_to_avoid_wedge(manifest, tree):
+    # base (a root pose the pose auto-selector excludes) is stale (prompt drift);
+    # fighting_stance is freshly rendered but reads `stale` via ancestor recursion.
+    # next_actionable must NOT return fighting_stance (re-rendering it can't clear
+    # the staleness) — otherwise the batch loop wedges on it forever. With nothing
+    # else actionable it returns None, so the auto-selector stops loudly.
+    tree.pose("base", "EAST", stale=True)        # root pose stale
+    tree.pose("fighting_stance", "EAST")          # fresh, but ancestor-only stale
+    from andypack.resolve import status, stale_locally
+    assert status(manifest, tree.root, tree.char, "fighting_stance", "EAST") == "stale"
+    assert not stale_locally(manifest, tree.root, tree.char, "fighting_stance", "EAST")
+    job = api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+    assert job is None  # the ancestor-only-stale descendant is skipped, no wedge
+
+
+def test_next_actionable_returns_locally_stale_cell(manifest, tree):
+    # A cell stale for its OWN reason (prompt-hash drift) IS actionable.
+    tree.pose("base", "EAST")                      # base fresh/current
+    tree.pose("fighting_stance", "EAST", stale=True)  # own hash drifted
+    from andypack.resolve import stale_locally
+    assert stale_locally(manifest, tree.root, tree.char, "fighting_stance", "EAST")
+    job = api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+    assert job["id"] == "fighting_stance"
+
+
+def test_read_character_layer_rejects_path_traversal(tmp_path):
+    import json
+    # A character.json planted OUTSIDE the characters root must not be reachable
+    # via a traversal name.
+    outside = tmp_path / "secret"
+    outside.mkdir()
+    (outside / "character.json").write_text(json.dumps({"secret": "leaked"}))
+    root = str(tmp_path / "characters")
+    os.makedirs(root)
+    assert api.read_character_layer(root, "../secret") == {}
+    assert api.read_character_layer(root, "..") == {}
+    assert api.read_character_layer(root, "/etc") == {}
+    assert api.read_character_layer(root, "a/b") == {}
+
+
 def test_characters_dir_is_none_outside_comfyui():
     assert api.characters_dir() is None
 
