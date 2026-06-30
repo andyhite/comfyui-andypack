@@ -225,7 +225,9 @@ async function refreshCascadeOnce(node, cfg) {
     node.setDirtyCanvas(true, true);
     return;
   }
-  node.__anim_opts = opts.filter((o) => o.kind === cfg.kind);
+  // Root poses (no `from`, e.g. base) are created by the Character Creator node,
+  // not the generic pose selector — exclude them from this selector's options.
+  node.__anim_opts = opts.filter((o) => o.kind === cfg.kind && !o.root);
   // Re-seed the raw selections the loading placeholders clobbered, so the
   // applyCombo restore logic recovers them instead of defaulting.
   const seed = (name, raw) => {

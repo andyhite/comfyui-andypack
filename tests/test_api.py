@@ -183,3 +183,11 @@ def test_resolve_manifest_path_passthrough_without_comfyui():
     # No ComfyUI base -> relative path falls back to itself (CWD-relative).
     assert api.resolve_manifest_path("default.json") == "default.json"
     assert api.resolve_manifest_path("/abs/animations.json") == "/abs/animations.json"
+
+
+def test_list_options_marks_root_poses(manifest, tmp_path):
+    rows = api.list_options(manifest, str(tmp_path), "cortex")
+    by_id = {(r["kind"], r["id"], r["direction"]): r for r in rows}
+    assert by_id[("pose", "base", "EAST")]["root"] is True
+    assert by_id[("pose", "fighting_stance", "EAST")]["root"] is False
+    assert by_id[("animation", "walk", "EAST")]["root"] is False

@@ -201,6 +201,9 @@ def list_options(manifest: Manifest, root: str, character: str) -> list[dict]:
                 out.append({
                     "kind": "pose", "id": pid, "direction": direction,
                     "category": pose.get("category"),
+                    # A root pose (no `from`) is created by the Character Creator,
+                    # not the generic pose selector — the frontend filters on this.
+                    "root": pose.get("from") is None,
                     "status": status_from_resolved(manifest, root, character, pid, direction, r),
                     "blocked_by": format_blocked(r["blocked_by"]),
                 })
@@ -210,6 +213,7 @@ def list_options(manifest: Manifest, root: str, character: str) -> list[dict]:
                 out.append({
                     "kind": "animation", "id": aid, "direction": direction,
                     "category": anim.get("category"),
+                    "root": False,
                     "status": status_from_resolved(manifest, root, character, aid, direction, r),
                     "blocked_by": format_blocked(r["blocked_by"]),
                 })
