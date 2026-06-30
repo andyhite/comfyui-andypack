@@ -494,7 +494,7 @@ def test_auto_pose_selector_emits_next_actionable_non_root_pose(manifest, tree, 
     # base generated -> fighting_stance is the next actionable (non-root) pose.
     tree.pose("base", "EAST")
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
-    (pose,) = nodes.AutoPoseSelector().select(manifest, tree.char)
+    (pose,) = nodes.AutoPoseSelector().select(manifest, tree.char, skip_mirrored=True)
     assert pose["_meta"]["pose"] == "fighting_stance"
     assert sorted(k for k in pose if k != "_meta") == nodes.POSE_OUTPUT_KEYS
 
@@ -503,7 +503,7 @@ def test_auto_pose_selector_raises_when_nothing_actionable(manifest, tree, monke
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()  # base is a root pose (excluded); nothing else actionable
     with pytest.raises(RuntimeError, match="no actionable poses"):
-        nodes.AutoPoseSelector().select(manifest, tree.char)
+        nodes.AutoPoseSelector().select(manifest, tree.char, skip_mirrored=True)
 
 
 def test_auto_animation_selector_emits_next_actionable_animation(manifest, tree, monkeypatch):
@@ -514,7 +514,7 @@ def test_auto_animation_selector_emits_next_actionable_animation(manifest, tree,
     images.save_image_png(
         _img(), resolve.pose_image_path(tree.root, tree.char, "fighting_stance", "EAST")
     )
-    (anim,) = nodes.AutoAnimationSelector().select(manifest, tree.char)
+    (anim,) = nodes.AutoAnimationSelector().select(manifest, tree.char, skip_mirrored=True)
     assert anim["_meta"]["animation"] == "fighting_stance_idle"
     assert sorted(k for k in anim if k != "_meta") == nodes.ANIMATION_OUTPUT_KEYS
 
@@ -523,7 +523,7 @@ def test_auto_animation_selector_raises_when_nothing_actionable(manifest, tree, 
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
     with pytest.raises(RuntimeError, match="no actionable animations"):
-        nodes.AutoAnimationSelector().select(manifest, tree.char)
+        nodes.AutoAnimationSelector().select(manifest, tree.char, skip_mirrored=True)
 
 
 def test_pose_selector_sets_empty_pose_reference(manifest, tree, monkeypatch):
@@ -639,3 +639,8 @@ def test_palette_node_extract_only_passthrough():
     out_img, pal = nodes.PaletteQuantizeLock().run(img, colors=4, dither="none",
         preserve_alpha=True, extract_only=True)
     assert torch.equal(out_img, img) and "colors" in pal
+
+
+def test_auto_pose_selector_has_skip_mirrored_input():
+    req = nodes.AutoPoseSelector.INPUT_TYPES()["required"]
+    assert "skip_mirrored" in req

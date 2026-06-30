@@ -791,31 +791,41 @@ class AutoPoseSelector:
             "required": {
                 "manifest": ("ANIM_MANIFEST",),
                 "character": (_character_choices(),),
+                "skip_mirrored": ("BOOLEAN", {"default": True}),
             }
         }
 
     @classmethod
-    def IS_CHANGED(cls, manifest, character):
+    def IS_CHANGED(cls, manifest, character, skip_mirrored):
         # Re-run as the tree fills (the next job changes) or a prompt drifts.
         if character in ("", _NO_CHARACTER):
             return float("nan")
         root = _characters_root()
         try:
             eff = effective_manifest(manifest, root, character)
-            job = api.next_actionable(eff, root, character, "pose", exclude_root=True)
+            job = api.next_actionable(
+                eff, root, character, "pose",
+                exclude_root=True, skip_mirrored=skip_mirrored,
+            )
             if not job:
                 return "none"
             r = resolve_pose(eff, root, character, job["id"], job["direction"])
         except Exception:
             return float("nan")
-        return f"{job['id']}@{job['direction']}|" + _selector_fingerprint(r, "source_image")
+        return (
+            f"{job['id']}@{job['direction']}|skip_mirrored={skip_mirrored}|"
+            + _selector_fingerprint(r, "source_image")
+        )
 
-    def select(self, manifest, character):
+    def select(self, manifest, character, skip_mirrored):
         if character in ("", _NO_CHARACTER):
             raise RuntimeError("AutoPoseSelector: select a character first")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
-        job = api.next_actionable(manifest, root, character, "pose", exclude_root=True)
+        job = api.next_actionable(
+            manifest, root, character, "pose",
+            exclude_root=True, skip_mirrored=skip_mirrored,
+        )
         if not job:
             raise RuntimeError(
                 "AutoPoseSelector: no actionable poses remain — every non-root pose "
@@ -846,32 +856,38 @@ class AutoAnimationSelector:
             "required": {
                 "manifest": ("ANIM_MANIFEST",),
                 "character": (_character_choices(),),
+                "skip_mirrored": ("BOOLEAN", {"default": True}),
             }
         }
 
     @classmethod
-    def IS_CHANGED(cls, manifest, character):
+    def IS_CHANGED(cls, manifest, character, skip_mirrored):
         if character in ("", _NO_CHARACTER):
             return float("nan")
         root = _characters_root()
         try:
             eff = effective_manifest(manifest, root, character)
-            job = api.next_actionable(eff, root, character, "animation")
+            job = api.next_actionable(
+                eff, root, character, "animation", skip_mirrored=skip_mirrored,
+            )
             if not job:
                 return "none"
             r = resolve_animation(eff, root, character, job["id"], job["direction"])
         except Exception:
             return float("nan")
-        return f"{job['id']}@{job['direction']}|" + _selector_fingerprint(
-            r, "start_image", "end_image"
+        return (
+            f"{job['id']}@{job['direction']}|skip_mirrored={skip_mirrored}|"
+            + _selector_fingerprint(r, "start_image", "end_image")
         )
 
-    def select(self, manifest, character):
+    def select(self, manifest, character, skip_mirrored):
         if character in ("", _NO_CHARACTER):
             raise RuntimeError("AutoAnimationSelector: select a character first")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
-        job = api.next_actionable(manifest, root, character, "animation")
+        job = api.next_actionable(
+            manifest, root, character, "animation", skip_mirrored=skip_mirrored,
+        )
         if not job:
             raise RuntimeError(
                 "AutoAnimationSelector: no actionable animations remain — every "
