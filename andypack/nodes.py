@@ -1069,6 +1069,52 @@ class MirrorFrameWriter:
         return dst_d
 
 
+class ManikinPoseControl:
+    """Expose a bundled manikin PNG as a first-class control IMAGE plus the resolved
+    positive prompt for a given direction, so it can drive a ControlNet/DWPose path.
+
+    Set direction_only=True (or leave character on the placeholder) to emit the manikin
+    with an empty prompt — useful when you want the pose geometry without the character's
+    identity layer."""
+
+    CATEGORY = "andypack/Pose"
+    FUNCTION = "control"
+    RETURN_TYPES = ("IMAGE", "STRING", "STRING")
+    RETURN_NAMES = ("POSE_CONTROL_IMAGE", "POSITIVE_PROMPT", "DIRECTION_NAME")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+                "pose": ("STRING", {"default": "base"}),
+                "direction": ("STRING", {"default": ""}),
+            },
+            "optional": {
+                "direction_only": ("BOOLEAN", {"default": False}),
+            },
+        }
+
+    def control(self, manifest, character, pose, direction, direction_only=False):
+        if direction not in manikins.CANONICAL_DIRECTIONS:
+            raise RuntimeError(
+                f"ManikinPoseControl: unknown direction {direction!r}; "
+                f"must be one of {manikins.CANONICAL_DIRECTIONS}"
+            )
+        manikin_image = images.load_image_tensor(manikins.manikin_path(direction))
+        positive = ""
+        if not direction_only and character not in ("", _NO_CHARACTER):
+            root = _characters_root()
+            try:
+                eff = effective_manifest(manifest, root, character)
+                r = resolve_pose(eff, root, character, pose, direction)
+                positive = r["positive"]
+            except Exception:
+                positive = ""
+        return (manikin_image, positive, direction)
+
+
 class SpriteTrimPivot:
     CATEGORY = "andypack/Sprite"
     FUNCTION = "trim"
@@ -1381,6 +1427,7 @@ NODE_CLASS_MAPPINGS = {
     "CharacterReferenceLoader": CharacterReferenceLoader,
     "CharacterPoseSelector": CharacterPoseSelector,
     "AutoPoseSelector": AutoPoseSelector,
+    "ManikinPoseControl": ManikinPoseControl,
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
     "CharacterAnimationSelector": CharacterAnimationSelector,
@@ -1405,6 +1452,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "CharacterReferenceLoader": "Character Reference Loader",
     "CharacterPoseSelector": "Character Pose Selector",
     "AutoPoseSelector": "Auto Pose Selector (next job)",
+    "ManikinPoseControl": "Manikin Pose Control",
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",
     "CharacterAnimationSelector": "Character Animation Selector",

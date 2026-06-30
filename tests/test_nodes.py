@@ -646,6 +646,15 @@ def test_auto_pose_selector_has_skip_mirrored_input():
     assert "skip_mirrored" in req
 
 
+def test_manikin_pose_control_direction_only(monkeypatch, tmp_path):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    manifest = {"version": 1, "poses": {"base": {"directions": {"EAST": {}}}},
+                "animations": {}, "defaults": {}}
+    img, pos, dname = nodes.ManikinPoseControl().control(manifest, "(select character)",
+        "base", "EAST", direction_only=True)
+    assert img.shape[-1] == 3 and dname == "EAST"
+
+
 def test_mirror_writer_batch_all(tmp_path, monkeypatch):
     from andypack import io
     monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
