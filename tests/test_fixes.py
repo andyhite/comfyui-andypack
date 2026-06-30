@@ -3,6 +3,7 @@ import os
 import pytest
 
 from andypack import api
+from andypack import images
 from andypack import resolve
 from andypack import io
 from andypack import nodes
@@ -163,3 +164,12 @@ def test_playback_not_loopable_when_anchor_frames_differ(tmp_path):
     segs = resolve.playback_segments(manifest, root, char, "clip", "EAST", loops=3, fps=8)
     action = [s for s in segs if s.get("dir", "").endswith(os.path.join("clip", "EAST"))][0]
     assert action["repeat"] == 1  # start_image (src.last) != end_image (src.first)
+
+
+def test_animation_writer_rejects_empty_sentinel(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    w = nodes.AnimationFrameWriter()
+    anim = {"output_dir": str(tmp_path / "a"),
+            "_meta": {"prompt_hash": "sha1:x", "loop": False}}
+    with pytest.raises(RuntimeError):
+        w.write(anim, images.empty_image())

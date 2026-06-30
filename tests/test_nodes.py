@@ -135,7 +135,7 @@ def test_animation_writer_rejects_empty_batch(tmp_path):
         "fps": 16, "length": 0, "loop": False, "manifest_version": 1,
         "prompt_hash": "sha1:abc",
     }
-    with pytest.raises(RuntimeError, match="empty frame batch"):
+    with pytest.raises(RuntimeError, match="empty or 1x1 sentinel frame batch"):
         nodes.AnimationFrameWriter().write(_anim_dict(meta, out), _batch(0))
     assert not os.path.exists(os.path.join(out, "meta.json"))
 

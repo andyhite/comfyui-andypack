@@ -445,11 +445,11 @@ class AnimationFrameWriter:
         # last_frame ("frame_-0001.png"), which animation_complete reads as
         # "complete" — a corrupt clip masquerading as done, then a FileNotFoundError
         # in any downstream animation that consumes it as an anchor.
-        if int(frames.shape[0]) == 0:
+        if images.is_empty(frames):
             raise RuntimeError(
-                "AnimationFrameWriter: received an empty frame batch; nothing to "
-                "write (check the upstream sampler)"
-            )
+                "AnimationFrameWriter: received an empty or 1x1 sentinel frame batch; "
+                "nothing to write (check the upstream sampler)")
+
         os.makedirs(output_dir, exist_ok=True)
         # Re-render discipline: drop meta.json (the completion sentinel) FIRST and
         # clear any stale frames so an interrupted rewrite reads as incomplete and
