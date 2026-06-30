@@ -153,6 +153,86 @@ def mirror_png(src: str, dst: str) -> None:
         raise
 
 
+def _rgb_to_hsv_arr(rgb: np.ndarray) -> np.ndarray:
+    """Convert a float [..., 3] RGB array (values in [0, 1]) to HSV (also [0, 1])."""
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    maxc = np.maximum(np.maximum(r, g), b)
+    minc = np.minimum(np.minimum(r, g), b)
+    v = maxc
+    delta = maxc - minc
+    with np.errstate(invalid="ignore", divide="ignore"):
+        s = np.where(maxc > 0.0, delta / maxc, 0.0)
+        h_r = np.where(maxc == r, (g - b) / delta % 6.0, 0.0)
+        h_g = np.where(maxc == g, (b - r) / delta + 2.0, 0.0)
+        h_b = np.where(maxc == b, (r - g) / delta + 4.0, 0.0)
+    # For ties (e.g. achromatic), r → g → b priority; masked to 0 when delta == 0.
+    h_raw = np.where(maxc == r, h_r, np.where(maxc == g, h_g, h_b))
+    h = np.where(delta > 0.0, h_raw / 6.0 % 1.0, 0.0)
+    return np.stack([h, s, v], axis=-1)
+
+
+def _hsv_to_rgb_arr(hsv: np.ndarray) -> np.ndarray:
+    """Convert a float [..., 3] HSV array (values in [0, 1]) to RGB (also [0, 1])."""
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    i = (h * 6.0).astype(np.int32)
+    f = h * 6.0 - i.astype(hsv.dtype)
+    p = v * (1.0 - s)
+    q = v * (1.0 - f * s)
+    t = v * (1.0 - (1.0 - f) * s)
+    i6 = i % 6
+    conds = [i6 == k for k in range(6)]
+    r = np.select(conds, [v, q, p, p, t, v])
+    g = np.select(conds, [t, v, v, q, p, p])
+    b = np.select(conds, [p, p, t, v, v, q])
+    return np.stack([r, g, b], axis=-1)
+
+
+def recolor(image: torch.Tensor, spec: dict) -> torch.Tensor:
+    """Apply a deterministic color transform to a [1, H, W, C] IMAGE tensor.
+
+    *spec* is one of:
+
+    - ``{"hue": deg, "sat": x, "val": y}`` — rotate hue by *deg* degrees,
+      multiply saturation by *x*, multiply value (brightness) by *y*.
+      Missing keys default to ``hue=0``, ``sat=1``, ``val=1``.
+    - ``{"hex": "#RRGGBB"}`` — remap every pixel's hue to the hue of the
+      target hex colour, preserving each pixel's individual saturation and
+      value (team-colour / tint remap).
+
+    Alpha (4-ch RGBA) is preserved unchanged.  Returns a new [1, H, W, C]
+    tensor in the same channel layout as the input.
+    """
+    frame = image[0] if image.dim() == 4 else image
+    has_alpha = int(frame.shape[-1]) == 4
+    rgb = frame[..., :3].clamp(0.0, 1.0).cpu().numpy().astype(np.float64)
+    alpha = frame[..., 3:4] if has_alpha else None
+
+    hsv = _rgb_to_hsv_arr(rgb)
+
+    if "hex" in spec:
+        hex_str = str(spec["hex"]).lstrip("#")
+        rh = int(hex_str[0:2], 16) / 255.0
+        gh = int(hex_str[2:4], 16) / 255.0
+        bh = int(hex_str[4:6], 16) / 255.0
+        target = _rgb_to_hsv_arr(np.array([[[rh, gh, bh]]], dtype=np.float64))
+        hsv[..., 0] = float(target[0, 0, 0])
+    else:
+        hue_deg = float(spec.get("hue", 0))
+        sat_mul = float(spec.get("sat", 1))
+        val_mul = float(spec.get("val", 1))
+        hsv[..., 0] = (hsv[..., 0] + hue_deg / 360.0) % 1.0
+        hsv[..., 1] = np.clip(hsv[..., 1] * sat_mul, 0.0, 1.0)
+        hsv[..., 2] = np.clip(hsv[..., 2] * val_mul, 0.0, 1.0)
+
+    rgb_out = _hsv_to_rgb_arr(hsv).clip(0.0, 1.0).astype(np.float32)
+    result = torch.from_numpy(rgb_out).unsqueeze(0)
+
+    if has_alpha and alpha is not None:
+        result = torch.cat([result, alpha.unsqueeze(0)], dim=-1)
+
+    return result
+
+
 def pad_to(tensor: torch.Tensor, height: int, width: int) -> torch.Tensor:
     """Zero-pad a [1, H, W, C] tensor to (height, width), top-left anchored.
 

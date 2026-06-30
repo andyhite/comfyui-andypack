@@ -869,3 +869,92 @@ def test_frame_timing_normalizer_animation_zero_length_falls_back():
         f, "resample", enforce_4n1=False, animation=anim
     )
     assert length == 5
+
+
+# --- ColorVariantBatcher ----------------------------------------------------- #
+
+def test_color_variant_batcher_pose_writes_sibling_png(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()
+    # tree.pose() touches an empty PNG then writes the sidecar; overwrite with a
+    # real PNG afterwards so load_image_tensor can open it.
+    tree.pose("base", "EAST")
+    images.save_image_png(
+        _img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST")
+    )
+
+    variants_text = "red: hue=0, sat=1.0, val=1.0\nblue: hue=240, sat=1.0, val=1.0"
+    dirs, count = nodes.ColorVariantBatcher().write(
+        manifest, tree.char, "pose", "base", "EAST", variants_text
+    )
+
+    assert count == 2
+    assert os.path.exists(
+        resolve.pose_image_path(tree.root, tree.char, "base__red", "EAST")
+    )
+    assert os.path.exists(
+        resolve.pose_image_path(tree.root, tree.char, "base__blue", "EAST")
+    )
+    # Sidecar must have variant_of provenance
+    red_sidecar = json.loads(
+        open(resolve.pose_sidecar_path(tree.root, tree.char, "base__red", "EAST")).read()
+    )
+    assert red_sidecar["variant_of"] == {"id": "base", "variant": "red"}
+    assert red_sidecar.get("render_id", "").startswith("rid:")
+
+
+def test_color_variant_batcher_animation_writes_sibling_frames(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()
+    tree.animation("fighting_stance_idle", "EAST", frames=3)
+    src_d = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
+    for i in range(3):
+        images.save_image_png(_img(), os.path.join(src_d, f"frame_{i:05d}.png"))
+
+    dirs, count = nodes.ColorVariantBatcher().write(
+        manifest, tree.char, "animation", "fighting_stance_idle", "EAST",
+        "green: #00FF00"
+    )
+
+    assert count == 1
+    dst_d = resolve.animation_frame_dir(
+        tree.root, tree.char, "fighting_stance_idle__green", "EAST"
+    )
+    assert os.path.exists(os.path.join(dst_d, "frame_00000.png"))
+    meta = json.loads(
+        open(resolve.animation_meta_path(
+            tree.root, tree.char, "fighting_stance_idle__green", "EAST"
+        )).read()
+    )
+    assert meta["frames"]["count"] == 3
+    assert meta["variant_of"] == {"id": "fighting_stance_idle", "variant": "green"}
+
+
+def test_color_variant_batcher_raises_when_source_missing(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()
+    with pytest.raises(RuntimeError, match="not generated"):
+        nodes.ColorVariantBatcher().write(
+            manifest, tree.char, "pose", "base", "EAST", "red: hue=0, sat=1, val=1"
+        )
+
+
+def test_color_variant_batcher_raises_on_empty_variants(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()
+    tree.pose("base", "EAST")
+    images.save_image_png(
+        _img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST")
+    )
+    with pytest.raises(RuntimeError, match="no valid variants"):
+        nodes.ColorVariantBatcher().write(
+            manifest, tree.char, "pose", "base", "EAST", "   \n  "
+        )
+
+
+def test_color_variant_batcher_is_changed_nan_without_id(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    token = nodes.ColorVariantBatcher.IS_CHANGED(
+        manifest, tree.char, "pose", "", "EAST", "red: hue=0"
+    )
+    assert token != token  # NaN

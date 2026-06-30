@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from datetime import datetime, timezone
 
 import torch
@@ -1882,6 +1883,206 @@ class FrameTimingNormalizer:
         return (out, int(out.shape[0]))
 
 
+_HEX_SPEC_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_HSV_PART_RE = re.compile(r"(hue|sat|val)\s*=\s*([0-9]*\.?[0-9]+)")
+
+
+def _parse_variants(text: str) -> "list[tuple[str, dict]]":
+    """Parse a multiline variants spec into a list of ``(name, spec)`` pairs.
+
+    Each non-blank line must be of one of these forms::
+
+        name: hue=DEG, sat=X, val=Y     → {"hue": DEG, "sat": X, "val": Y}
+        name: #RRGGBB                    → {"hex": "#RRGGBB"}
+
+    Missing HSV keys default to ``hue=0``, ``sat=1``, ``val=1``.
+    Lines that don't match either form are skipped silently.
+    """
+    result: list[tuple[str, dict]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
+        name_part, _, rest = line.partition(":")
+        name = name_part.strip()
+        rest = rest.strip()
+        if not name or not rest:
+            continue
+        if _HEX_SPEC_RE.match(rest):
+            result.append((name, {"hex": rest}))
+            continue
+        parts = dict(_HSV_PART_RE.findall(rest))
+        if parts:
+            spec = {
+                "hue": float(parts.get("hue", 0)),
+                "sat": float(parts.get("sat", 1)),
+                "val": float(parts.get("val", 1)),
+            }
+            result.append((name, spec))
+    return result
+
+
+class ColorVariantBatcher:
+    """Derive team-colour / skin variants of an already-rendered pose or animation
+    by deterministic HSV recolor, writing each variant to a sibling
+    ``<id>__<variant>`` target.  No sampling — reads source pixels, transforms
+    hue/sat/val (or remaps to a target hex hue), and writes the result with a
+    sidecar/meta that copies the source's prompt_hash + seed plus a ``variant_of``
+    provenance stamp.
+
+    Variant lines (one per line in the *variants* widget)::
+
+        red_team:  hue=0,   sat=1.2, val=1.0
+        blue_team: hue=240, sat=1.0, val=1.0
+        teal_skin: #00CED1
+    """
+
+    CATEGORY = "andypack/Animation"
+    FUNCTION = "write"
+    OUTPUT_NODE = True
+    RETURN_TYPES = ("STRING", "INT")
+    RETURN_NAMES = ("OUTPUT_DIRS", "COUNT")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+                "kind": (["animation", "pose"],),
+                "id": ("STRING", {"default": ""}),
+                "direction": ("STRING", {"default": ""}),
+                "variants": ("STRING", {"multiline": True, "default": ""}),
+            }
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character, kind, id, direction, variants):
+        if character in ("", _NO_CHARACTER) or not id or not direction:
+            return float("nan")
+        root = _characters_root()
+        try:
+            if kind == "pose":
+                src = resolve.pose_image_path(root, character, id, direction)
+            else:
+                src = resolve.animation_meta_path(root, character, id, direction)
+        except Exception:
+            return float("nan")
+        return f"{kind}:{id}@{direction}:{_mtime(src)}|char:{character}|variants:{variants}"
+
+    def write(self, manifest, character, kind, id, direction, variants):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("ColorVariantBatcher: select a character first")
+        if not id or not direction:
+            raise RuntimeError("ColorVariantBatcher: pick an id and direction")
+        parsed = _parse_variants(variants)
+        if not parsed:
+            raise RuntimeError(
+                "ColorVariantBatcher: no valid variants parsed from the 'variants' widget.\n"
+                "Expected lines like:\n"
+                "  red_team:  hue=0, sat=1.0, val=1.0\n"
+                "  blue_team: hue=240, sat=1.0, val=1.0\n"
+                "  teal_skin: #00CED1"
+            )
+        root = _characters_root()
+        manifest = effective_manifest(manifest, root, character)
+        dest_dirs = []
+        for variant_name, spec in parsed:
+            if kind == "pose":
+                dest_dirs.append(
+                    self._write_pose_variant(
+                        root, character, id, direction, variant_name, spec
+                    )
+                )
+            else:
+                dest_dirs.append(
+                    self._write_animation_variant(
+                        root, character, id, direction, variant_name, spec
+                    )
+                )
+        return ("\n".join(dest_dirs), len(dest_dirs))
+
+    def _write_pose_variant(self, root, character, pose_id, direction, variant_name, spec):
+        src_png = resolve.pose_image_path(root, character, pose_id, direction)
+        if not os.path.exists(src_png):
+            raise RuntimeError(
+                f"ColorVariantBatcher: source pose {pose_id}@{direction} is not generated "
+                f"(expected {src_png})"
+            )
+        dest_id = f"{pose_id}__{variant_name}"
+        dst_png = resolve.pose_image_path(root, character, dest_id, direction)
+        dst_sidecar = resolve.pose_sidecar_path(root, character, dest_id, direction)
+        # Incomplete-first: drop sidecar before writing payload
+        io.remove_if_exists(dst_sidecar)
+        tensor = images.load_image_tensor(src_png, keep_alpha=True)
+        recolored = images.recolor(tensor, spec)
+        images.save_image_png(recolored, dst_png)
+        # Build sidecar from source sidecar, copying prompt_hash/seed provenance
+        src_sidecar = resolve._read_json(
+            resolve.pose_sidecar_path(root, character, pose_id, direction)
+        ) or {}
+        variant_meta = {
+            **src_sidecar,
+            "pose": dest_id,
+            "image": f"{direction}.png",
+            "variant_of": {"id": pose_id, "variant": variant_name},
+        }
+        io.atomic_write_json(
+            dst_sidecar, io.build_pose_sidecar(variant_meta, created_utc=_utc_now())
+        )
+        return resolve._pose_basedir(root, character, dest_id)
+
+    def _write_animation_variant(
+        self, root, character, anim_id, direction, variant_name, spec
+    ):
+        src_meta_path = resolve.animation_meta_path(root, character, anim_id, direction)
+        src_meta = resolve._read_json(src_meta_path)
+        if src_meta is None:
+            raise RuntimeError(
+                f"ColorVariantBatcher: source animation {anim_id}@{direction} "
+                "is not generated"
+            )
+        src_d = resolve.animation_frame_dir(root, character, anim_id, direction)
+        frames = sorted(
+            n for n in os.listdir(src_d)
+            if n.startswith("frame_") and n.endswith(".png")
+        )
+        if not frames:
+            raise RuntimeError(
+                f"ColorVariantBatcher: source animation {anim_id}@{direction} "
+                "has meta.json but no frames to recolor"
+            )
+        dest_id = f"{anim_id}__{variant_name}"
+        dst_d = resolve.animation_frame_dir(root, character, dest_id, direction)
+        os.makedirs(dst_d, exist_ok=True)
+        meta_path = resolve.animation_meta_path(root, character, dest_id, direction)
+        # Incomplete-first: drop meta before writing frames
+        io.remove_if_exists(meta_path)
+        io.clear_frames(dst_d)
+        for name in frames:
+            tensor = images.load_image_tensor(
+                os.path.join(src_d, name), keep_alpha=True
+            )
+            recolored = images.recolor(tensor, spec)
+            images.save_image_png(recolored, os.path.join(dst_d, name))
+        count = len(frames)
+        variant_meta = {
+            **src_meta,
+            "animation": dest_id,
+            "variant_of": {"id": anim_id, "variant": variant_name},
+        }
+        full = io.build_animation_meta(
+            variant_meta,
+            count=count,
+            start_frame=io.frame_name(0),
+            last_frame=io.frame_name(count - 1),
+            seed=src_meta.get("seed"),
+            created_utc=_utc_now(),
+        )
+        io.atomic_write_json(meta_path, full)
+        return dst_d
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
@@ -1901,6 +2102,7 @@ NODE_CLASS_MAPPINGS = {
     "AnimationUnpack": AnimationUnpack,
     "AnimationPlayback": AnimationPlayback,
     "MirrorFrameWriter": MirrorFrameWriter,
+    "ColorVariantBatcher": ColorVariantBatcher,
     "ManifestLint": ManifestLint,
     "CoverageReport": CoverageReport,
     "MergedPromptReport": MergedPromptReport,
@@ -1933,6 +2135,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationUnpack": "Unpack Animation",
     "AnimationPlayback": "Animation Playback",
     "MirrorFrameWriter": "Mirror Frame Writer",
+    "ColorVariantBatcher": "Color Variant Batcher",
     "ManifestLint": "Animation Manifest Lint",
     "CoverageReport": "Coverage Report",
     "MergedPromptReport": "Prompt Report",

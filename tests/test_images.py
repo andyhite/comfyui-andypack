@@ -182,3 +182,34 @@ def test_retime_empty_batch_returns_unchanged():
     f = torch.zeros((0, 2, 2, 3))
     out = images.retime_batch(f, 4, "resample")
     assert out.shape[0] == 0
+
+
+def test_recolor_hue_preserves_alpha():
+    import torch
+    rgba = torch.ones((1, 2, 2, 4))
+    rgba[..., 3] = 0.5
+    rgba[..., 0] = 1.0
+    rgba[..., 1:3] = 0.0
+    out = images.recolor(rgba, {"hue": 120, "sat": 1.0, "val": 1.0})
+    assert out.shape[-1] == 4 and abs(float(out[0, 0, 0, 3]) - 0.5) < 1e-3
+
+
+def test_recolor_hue_rotates_color():
+    import torch
+    # Pure red pixel: h=0, s=1, v=1 → rotate +120° → green
+    rgb = torch.zeros((1, 1, 1, 3))
+    rgb[..., 0] = 1.0
+    out = images.recolor(rgb, {"hue": 120, "sat": 1.0, "val": 1.0})
+    assert out.shape == (1, 1, 1, 3)
+    assert float(out[0, 0, 0, 1]) > 0.9  # green channel high
+
+
+def test_recolor_hex_remaps_hue():
+    import torch
+    # Pure red → hex blue (#0000FF target hue), sat+val preserved
+    rgb = torch.zeros((1, 1, 1, 3))
+    rgb[..., 0] = 1.0
+    out = images.recolor(rgb, {"hex": "#0000FF"})
+    assert out.shape == (1, 1, 1, 3)
+    # Blue hue: b channel should dominate
+    assert float(out[0, 0, 0, 2]) > 0.9
