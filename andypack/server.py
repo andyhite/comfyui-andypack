@@ -47,22 +47,3 @@ if _routes is not None:
         root, character = _root_and_char(request)
         manifest = _manifest_from_request(request)
         return web.json_response(api.list_options(manifest, root, character))
-
-    @_routes.get("/anim_coord/resolve")
-    async def _resolve(request):
-        root, character = _root_and_char(request)
-        ref = request.query.get("id", "")
-        direction = request.query.get("direction", "")
-        manifest = _manifest_from_request(request)
-        return web.json_response(
-            api.resolve_payload(manifest, root, character, ref, direction)
-        )
-
-    @_routes.get("/anim_coord/frame")
-    async def _frame(request):
-        root = request.query.get("root", "")
-        rel = request.query.get("path", "")
-        target = api.frame_path(root, rel)
-        if target is None:
-            return web.Response(status=404)
-        return web.FileResponse(target)

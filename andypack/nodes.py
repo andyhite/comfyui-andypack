@@ -17,6 +17,20 @@ def _utc_now() -> str:
 
 _NO_CHARACTER = "(select character)"
 
+# The leaf keys a selector emits in its POSE / ANIMATION dict — the resolved
+# values + image tensors. The resolver meta rides along bundled under the private
+# `_meta` key (a JSON-safe subset the writer uses to build the sidecar) and is not
+# a leaf output. The Unpack nodes fan these out as static, typed outputs; a test
+# asserts they stay in sync with the keys the selectors actually build (less
+# `_meta`).
+POSE_OUTPUT_KEYS = sorted([
+    "source_image", "positive", "negative", "output_dir",
+])
+ANIMATION_OUTPUT_KEYS = sorted([
+    "start_image", "end_image", "positive", "negative",
+    "is_fflf", "length", "fps", "output_dir",
+])
+
 
 def _mtime(path) -> float:
     try:
@@ -114,8 +128,9 @@ class ConceptImageWriter:
 class CharacterPoseSelector:
     CATEGORY = "andypack"
     FUNCTION = "select"
-    RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING", "ANIM_META")
-    RETURN_NAMES = ("SOURCE_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT", "OUTPUT_DIR", "META")
+    # One bundled POSE dict (unpack it with Unpack Pose) instead of loose outputs.
+    RETURN_TYPES = ("ANIM_POSE",)
+    RETURN_NAMES = ("POSE",)
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -162,7 +177,17 @@ class CharacterPoseSelector:
         # source_image is always a real image (never the empty sentinel).
         src = r["source_image"]
         image = images.load_image_tensor(src) if src else images.empty_image()
-        return (image, r["positive"], r["negative"], r["output_dir"], r["meta"])
+        # Bundle the loose outputs into one POSE dict. The resolver meta rides
+        # along under `_meta` (JSON-safe, for the writer's sidecar); it is not a
+        # selectable getter output. See POSE_OUTPUT_KEYS.
+        pose = {
+            "source_image": image,
+            "positive": r["positive"],
+            "negative": r["negative"],
+            "output_dir": r["output_dir"],
+            "_meta": r["meta"],
+        }
+        return (pose,)
 
 
 class PoseFrameWriter:
@@ -176,13 +201,14 @@ class PoseFrameWriter:
     def INPUT_TYPES(cls):
         return {
             "required": {
+                "pose": ("ANIM_POSE",),
                 "image": ("IMAGE",),
-                "output_dir": ("STRING",),
-                "meta": ("ANIM_META",),
             }
         }
 
-    def write(self, image, output_dir, meta):
+    def write(self, pose, image):
+        output_dir = pose["output_dir"]
+        meta = pose["_meta"]
         # Re-render discipline: drop the sidecar (completion sentinel) FIRST so an
         # interrupted rewrite reads as incomplete, then payload, then sidecar last.
         png_path = os.path.join(output_dir, meta["image"])
@@ -197,13 +223,9 @@ class PoseFrameWriter:
 class CharacterAnimationSelector:
     CATEGORY = "andypack"
     FUNCTION = "select"
-    RETURN_TYPES = (
-        "IMAGE", "IMAGE", "STRING", "STRING", "BOOLEAN", "INT", "INT", "STRING", "ANIM_META",
-    )
-    RETURN_NAMES = (
-        "START_IMAGE", "END_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT",
-        "IS_FFLF", "LENGTH", "FPS", "OUTPUT_DIR", "META",
-    )
+    # One bundled ANIMATION dict (unpack it with Unpack Animation) instead of outputs.
+    RETURN_TYPES = ("ANIM_ANIMATION",)
+    RETURN_NAMES = ("ANIMATION",)
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -255,10 +277,21 @@ class CharacterAnimationSelector:
         meta = r["meta"]
         length = int(meta["length"]) if meta.get("length") is not None else 0
         fps = int(meta["fps"]) if meta.get("fps") is not None else 0
-        return (
-            start_image, end_image, r["positive"], r["negative"], is_fflf,
-            length, fps, r["output_dir"], meta,
-        )
+        # Bundle the loose outputs into one ANIMATION dict. The resolver meta rides
+        # along under `_meta` (JSON-safe, for the writer's meta.json); it is not a
+        # selectable getter output. See ANIMATION_OUTPUT_KEYS.
+        animation = {
+            "start_image": start_image,
+            "end_image": end_image,
+            "positive": r["positive"],
+            "negative": r["negative"],
+            "is_fflf": is_fflf,
+            "length": length,
+            "fps": fps,
+            "output_dir": r["output_dir"],
+            "_meta": meta,
+        }
+        return (animation,)
 
 
 class AnimationFrameWriter:
@@ -272,16 +305,22 @@ class AnimationFrameWriter:
     def INPUT_TYPES(cls):
         return {
             "required": {
+                "animation": ("ANIM_ANIMATION",),
                 "frames": ("IMAGE",),
-                "output_dir": ("STRING",),
-                "meta": ("ANIM_META",),
             },
             "optional": {
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
+                # Provenance only: the seed that drove the upstream sampler, wired
+                # in so meta.json records what produced these frames. forceInput
+                # makes it link-only — no widget, and crucially no ComfyUI
+                # `control_after_generate` magic (which a `seed`-named widget gets)
+                # that would mutate the recorded value out of sync with the sampler.
+                "seed": ("INT", {"default": 0, "forceInput": True}),
             },
         }
 
-    def write(self, frames, output_dir, meta, seed=0):
+    def write(self, animation, frames, seed=0):
+        output_dir = animation["output_dir"]
+        meta = animation["_meta"]
         os.makedirs(output_dir, exist_ok=True)
         # Re-render discipline: drop meta.json (the completion sentinel) FIRST and
         # clear any stale frames so an interrupted rewrite reads as incomplete and
@@ -310,6 +349,151 @@ class AnimationFrameWriter:
         )
         io.atomic_write_json(meta_path, full_meta)
         return (output_dir,)
+
+
+# (key, output name) for each Unpack output, in slot order. The keys must cover
+# the selector's leaf keys (POSE_OUTPUT_KEYS / ANIMATION_OUTPUT_KEYS) — a test
+# enforces it — so unpacking exposes every leaf the selector produces.
+_POSE_UNPACK = (
+    ("source_image", "SOURCE_IMAGE"),
+    ("positive", "POSITIVE_PROMPT"),
+    ("negative", "NEGATIVE_PROMPT"),
+    ("output_dir", "OUTPUT_DIR"),
+)
+_ANIMATION_UNPACK = (
+    ("start_image", "START_IMAGE"),
+    ("end_image", "END_IMAGE"),
+    ("positive", "POSITIVE_PROMPT"),
+    ("negative", "NEGATIVE_PROMPT"),
+    ("is_fflf", "IS_FFLF"),
+    ("length", "LENGTH"),
+    ("fps", "FPS"),
+    ("output_dir", "OUTPUT_DIR"),
+)
+
+
+class PoseUnpack:
+    """Fan a POSE dict out into its individual typed outputs."""
+
+    CATEGORY = "andypack"
+    FUNCTION = "unpack"
+    RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING")
+    RETURN_NAMES = tuple(name for _key, name in _POSE_UNPACK)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"pose": ("ANIM_POSE",)}}
+
+    def unpack(self, pose):
+        return tuple(pose[key] for key, _name in _POSE_UNPACK)
+
+
+class AnimationUnpack:
+    """Fan an ANIMATION dict out into its individual typed outputs."""
+
+    CATEGORY = "andypack"
+    FUNCTION = "unpack"
+    RETURN_TYPES = ("IMAGE", "IMAGE", "STRING", "STRING", "BOOLEAN", "INT", "INT", "STRING")
+    RETURN_NAMES = tuple(name for _key, name in _ANIMATION_UNPACK)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"animation": ("ANIM_ANIMATION",)}}
+
+    def unpack(self, animation):
+        return tuple(animation[key] for key, _name in _ANIMATION_UNPACK)
+
+
+def _animation_fps(manifest, root, character, animation, direction) -> int:
+    """The animation's resolved fps (manifest fps, else default), at least 1."""
+    meta = resolve.resolve_animation(manifest, root, character, animation, direction)["meta"]
+    return int(meta.get("fps") or 0) or 1
+
+
+def _animated_preview(frames, fps) -> dict:
+    """Write `frames` to ComfyUI's temp dir as an animated WEBP and return the UI
+    payload that makes the node play it. Returns {} outside ComfyUI (no temp dir),
+    so the node still works headless / under test."""
+    try:
+        import folder_paths
+    except Exception:
+        return {}
+    full_dir, name, counter, subfolder, _ = folder_paths.get_save_image_path(
+        "andypack_play", folder_paths.get_temp_directory(),
+        int(frames.shape[2]), int(frames.shape[1]),
+    )
+    file = f"{name}_{counter:05}_.webp"
+    images.save_animated_webp(frames, os.path.join(full_dir, file), fps)
+    return {"images": [{"filename": file, "subfolder": subfolder, "type": "temp"}],
+            "animated": (True,)}
+
+
+class AnimationPlayback:
+    """Play a rendered animation at the manifest fps, chaining its dependent clips:
+    the start_from dep is prepended and the end_at dep appended (an animation dep
+    plays its frames; a pose/concept dep is held for `fps` frames ~1s). An action
+    that returns to its start state loops `loops` times before the exit. Uses the
+    same cascading selectors as the Character Animation Selector. Shows an in-node
+    animated preview and outputs the assembled frame batch + fps."""
+
+    CATEGORY = "andypack"
+    FUNCTION = "play"
+    RETURN_TYPES = ("IMAGE", "INT")
+    RETURN_NAMES = ("FRAMES", "FPS")
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+                "category": ("STRING", {"default": ""}),
+                "animation": ("STRING", {"default": ""}),
+                "direction": ("STRING", {"default": ""}),
+                "loops": ("INT", {"default": 1, "min": 1, "max": 64}),
+            }
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character, category, animation, direction, loops):
+        # Re-resolve so the cache reflects the rendered tree (the action and its
+        # chained clips being (re)rendered), plus the loop count.
+        if character in ("", _NO_CHARACTER) or not animation or not direction:
+            return float("nan")
+        root = _characters_root()
+        try:
+            eff = effective_manifest(manifest, root, character)
+            fps = _animation_fps(eff, root, character, animation, direction)
+            segs = resolve.playback_segments(
+                eff, root, character, animation, direction, loops=int(loops), fps=fps
+            )
+        except Exception:
+            return float("nan")
+        parts = [str(loops)]
+        for s in segs:
+            src = s["dir"] if s["kind"] == "anim" else s["image"]
+            n = s.get("repeat", s.get("count"))
+            parts.append(f"{s['kind']}:{n}:{src}:{_mtime(src)}")
+        return "|".join(parts)
+
+    def play(self, manifest, character, category, animation, direction, loops):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("AnimationPlayback: select a character first")
+        if not animation or not direction:
+            raise RuntimeError("AnimationPlayback: pick an animation and a direction")
+        root = _characters_root()
+        manifest = effective_manifest(manifest, root, character)
+        fps = _animation_fps(manifest, root, character, animation, direction)
+        segs = resolve.playback_segments(
+            manifest, root, character, animation, direction, loops=int(loops), fps=fps
+        )
+        frames = images.assemble_playback(segs)
+        if frames.shape[0] == 0:
+            raise RuntimeError(
+                f"AnimationPlayback: no rendered frames for {animation}@{direction}"
+            )
+        return {"ui": _animated_preview(frames, fps), "result": (frames, fps)}
 
 
 class ConceptImageLoader:
@@ -450,7 +634,7 @@ class MirrorFrameWriter:
             "required": {
                 "manifest": ("ANIM_MANIFEST",),
                 "character": (_character_choices(),),
-                "kind": (["pose", "animation"],),
+                "kind": (["animation", "pose"],),
                 "id": ("STRING", {"default": ""}),
                 "direction": ("STRING", {"default": ""}),
             }
@@ -518,8 +702,11 @@ NODE_CLASS_MAPPINGS = {
     "ConceptImageLoader": ConceptImageLoader,
     "CharacterPoseSelector": CharacterPoseSelector,
     "PoseFrameWriter": PoseFrameWriter,
+    "PoseUnpack": PoseUnpack,
     "CharacterAnimationSelector": CharacterAnimationSelector,
     "AnimationFrameWriter": AnimationFrameWriter,
+    "AnimationUnpack": AnimationUnpack,
+    "AnimationPlayback": AnimationPlayback,
     "MirrorFrameWriter": MirrorFrameWriter,
     "ManifestLint": ManifestLint,
     "CoverageReport": CoverageReport,
@@ -531,8 +718,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ConceptImageLoader": "Concept Image Loader",
     "CharacterPoseSelector": "Character Pose Selector",
     "PoseFrameWriter": "Pose Frame Writer",
+    "PoseUnpack": "Unpack Pose",
     "CharacterAnimationSelector": "Character Animation Selector",
     "AnimationFrameWriter": "Animation Frame Writer",
+    "AnimationUnpack": "Unpack Animation",
+    "AnimationPlayback": "Animation Playback",
     "MirrorFrameWriter": "Mirror Frame Writer",
     "ManifestLint": "Manifest Lint",
     "CoverageReport": "Coverage Report",

@@ -49,43 +49,6 @@ def test_list_options_includes_character_specific_entities(manifest, tree):
     assert ("animation", "punch") in ids  # main manifest still present
 
 
-def test_resolve_payload_pose_has_source_preview(manifest, tree):
-    tree.concept()
-    p = api.resolve_payload(manifest, tree.root, tree.char, "base", "EAST")
-    assert p["selectable"] is True
-    assert p["source_preview"]["ref"] == "concept"
-    assert "/anim_coord/frame?" in p["source_preview"]["url"]
-
-
-def test_resolve_payload_free_clip_has_default_start_preview(manifest, tree):
-    # walk has no explicit start_from -> default base; its start preview must
-    # still resolve to the base image once base is generated.
-    tree.concept().pose("base", "EAST")
-    p = api.resolve_payload(manifest, tree.root, tree.char, "walk", "EAST")
-    assert p["selectable"] is True
-    assert p["start_preview"]["ref"] == "base"
-    assert p["end_preview"] is None  # plain I2V
-
-
-def test_resolve_payload_animation_has_dual_previews(manifest, tree):
-    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST").animation(
-        "fighting_stance_idle", "EAST", frames=3
-    )
-    p = api.resolve_payload(manifest, tree.root, tree.char, "punch", "EAST")
-    assert p["selectable"] is True
-    assert p["start_preview"]["ref"] == "fighting_stance_idle"
-    assert p["end_preview"]["ref"] == "fighting_stance_idle"
-    assert p["start_preview"]["url"].count("path=") == 1
-
-
-def test_frame_path_confines_to_root(tree):
-    tree.concept()
-    ok = api.frame_path(tree.root, os.path.join("Cortex", "_concept.png"))
-    assert ok is not None and ok.endswith("_concept.png")
-    assert api.frame_path(tree.root, "../escape.png") is None
-    assert api.frame_path(tree.root, "Cortex/missing.png") is None  # 404: doesn't exist
-
-
 def test_coverage_report_counts_by_status(manifest, tree):
     tree.concept()  # only concept -> base ready, deeper poses/anims blocked
     rep = api.coverage_report(manifest, tree.root, tree.char)
@@ -110,25 +73,6 @@ def test_regen_queue_is_dependency_ordered_and_skips_blocked(manifest, tree):
     q2 = api.regen_queue(manifest, tree.root, tree.char)
     ids = [q["id"] for q in q2]
     assert "fighting_stance" in ids
-
-
-def test_frame_path_rejects_root_outside_output(tmp_path, monkeypatch):
-    # Simulate running inside ComfyUI: the output tree is `tmp_path/output`.
-    output = tmp_path / "output"
-    chars = output / "characters" / "Cortex"
-    chars.mkdir(parents=True)
-    (chars / "_concept.png").write_text("png")
-    secret = tmp_path / "secret.txt"
-    secret.write_text("top secret")
-    monkeypatch.setattr(api, "output_dir", lambda: str(output))
-
-    # A legit root under the output tree still serves its files.
-    ok = api.frame_path(str(output / "characters"), os.path.join("Cortex", "_concept.png"))
-    assert ok is not None and ok.endswith("_concept.png")
-
-    # A root pointed outside the output tree is refused even though the file exists.
-    assert api.frame_path(str(tmp_path), "secret.txt") is None
-    assert api.frame_path("/etc", "passwd") is None
 
 
 def test_user_default_base_is_none_outside_comfyui():

@@ -17,6 +17,7 @@ let READY = false;
 const SELECTOR_NODES = {
   CharacterPoseSelector: { idWidget: "pose", kind: "pose" },
   CharacterAnimationSelector: { idWidget: "animation", kind: "animation" },
+  AnimationPlayback: { idWidget: "animation", kind: "animation" },
 };
 
 const enc = encodeURIComponent;
@@ -104,7 +105,6 @@ function lockAll(node, cfg, text) {
   setPlaceholder(node, "category", text);
   setPlaceholder(node, cfg.idWidget, text);
   setPlaceholder(node, "direction", text);
-  if (node.__anim_previewHost) node.__anim_previewHost.innerHTML = "";
   node.setDirtyCanvas(true, true);
 }
 
@@ -172,7 +172,6 @@ async function refreshCascade(node, cfg) {
       ? "(connect manifest)" : "(select character)");
     setPlaceholder(node, cfg.idWidget, "(select category)");
     setPlaceholder(node, "direction", `(select ${cfg.kind})`);
-    if (node.__anim_previewHost) node.__anim_previewHost.innerHTML = "";
     node.setDirtyCanvas(true, true);
     return;
   }
@@ -195,7 +194,7 @@ async function refreshCascade(node, cfg) {
 
 function buildCategoryCombo(node, cfg) {
   const opts = node.__anim_opts || [];
-  const cats = [...new Set(opts.map(categoryOf))];
+  const cats = [...new Set(opts.map(categoryOf))].sort();
   const entries = cats.map((c) => ({ raw: c, label: c }));
   applyCombo(node, "category", entries, () => buildIdCombo(node, cfg));
   buildIdCombo(node, cfg);
@@ -208,7 +207,7 @@ function buildIdCombo(node, cfg) {
   const byId = {};
   for (const o of inCat) (byId[o.id] ||= []).push(o);
   node.__anim_byId = byId;
-  const entries = Object.keys(byId).map((id) => ({
+  const entries = Object.keys(byId).sort().map((id) => ({
     raw: id,
     label: `${GLYPH[groupStatus(byId[id])]} ${id}`,
   }));
@@ -218,74 +217,19 @@ function buildIdCombo(node, cfg) {
 
 function buildDirectionCombo(node, cfg) {
   const id = selectedRaw(node, cfg.idWidget);
-  const opts = (node.__anim_byId && node.__anim_byId[id]) || [];
+  const opts = [...((node.__anim_byId && node.__anim_byId[id]) || [])].sort(
+    (a, b) => a.direction.localeCompare(b.direction)
+  );
   const entries = opts.map((o) => ({ raw: o.direction, label: `${GLYPH[o.status]} ${o.direction}` }));
-  applyCombo(node, "direction", entries, () => renderPreviews(node, cfg));
-  renderPreviews(node, cfg).catch(() => {});
+  applyCombo(node, "direction", entries);
   node.setDirtyCanvas(true, true);
 }
 
-// --- anchor thumbnails (guarded DOM widget) --------------------------------- //
-
-function previewCard(label, preview) {
-  const card = document.createElement("div");
-  card.style.cssText =
-    "display:flex;flex-direction:column;align-items:center;font-size:10px;gap:2px;flex:1;color:#bbb";
-  const cap = document.createElement("div");
-  cap.textContent = preview ? `${label}: ${preview.ref}.${preview.direction}` : `${label}: —`;
-  card.appendChild(cap);
-  if (preview && preview.url) {
-    const img = document.createElement("img");
-    img.src = api.apiURL ? api.apiURL(preview.url) : preview.url;
-    img.style.cssText =
-      "width:72px;height:72px;object-fit:contain;border:1px solid #444;background:#222";
-    if (preview.stale) img.style.outline = "2px solid #d9a521";
-    card.appendChild(img);
-  }
-  return card;
-}
-
-async function renderPreviews(node, cfg) {
-  const host = node.__anim_previewHost;
-  if (!host) return;
-  const character = characterValue(node);
-  const id = selectedRaw(node, cfg.idWidget);
-  const direction = selectedRaw(node, "direction");
-  const manifestName = manifestNameFor(node);
-  if (!character || character === NO_CHARACTER || !id || !direction || !manifestName) {
-    host.innerHTML = "";
-    return;
-  }
-  const url =
-    `/anim_coord/resolve?manifest=${enc(manifestName)}&character=${enc(character)}` +
-    `&id=${enc(id)}&direction=${enc(direction)}`;
-  const data = await fetchJSON(url);
-  host.innerHTML = "";
-  if (!data) return;
-  if (cfg.kind === "pose") {
-    host.appendChild(previewCard("from", data.source_preview));
-  } else {
-    host.appendChild(previewCard("start", data.start_preview));
-    host.appendChild(previewCard("end", data.end_preview));
-  }
-}
-
-function ensurePreviewHost(node) {
-  if (node.__anim_previewHost || typeof node.addDOMWidget !== "function") return;
-  const host = document.createElement("div");
-  host.style.cssText = "display:flex;gap:6px;padding:4px;width:100%";
-  try {
-    node.addDOMWidget("anim_preview", "preview", host, {});
-    node.__anim_previewHost = host;
-  } catch (e) {
-    console.warn(`${TAG} addDOMWidget unavailable`, e);
-  }
-}
+// --- selector wiring -------------------------------------------------------- //
 
 function wire(node) {
   const cfg = SELECTOR_NODES[node.comfyClass];
   if (!cfg) return;
-  ensurePreviewHost(node);
   if (!node.__anim_wired) {
     node.__anim_wired = true;
     const prevOCC = node.onConnectionsChange;

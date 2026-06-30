@@ -4,17 +4,13 @@ from __future__ import annotations
 
 import os
 from typing import Any, Optional
-from urllib.parse import quote
 
 from andypack import io
 from andypack.manifest import node_kind, topo_order
 from andypack.resolve import (
     effective_manifest,
-    effective_start_dep,
-    read_rendered_hash,
     resolve_animation,
     resolve_pose,
-    resolved_dir,
     status,
 )
 
@@ -239,85 +235,3 @@ def regen_queue(manifest: Manifest, root: str, character: str) -> list[dict]:
     return out
 
 
-def _preview(
-    manifest: Manifest, root: str, character: str,
-    dep_ref: str, dep_dir: str, image_path: Optional[str], stale: bool,
-) -> Optional[dict]:
-    if not image_path:
-        return None
-    rel = os.path.relpath(image_path, root)
-    version = read_rendered_hash(manifest, root, character, dep_ref, dep_dir) or ""
-    url = (
-        "/anim_coord/frame?"
-        f"root={quote(root, safe='')}&path={quote(rel, safe='')}&v={quote(version, safe='')}"
-    )
-    return {"ref": dep_ref, "direction": dep_dir, "url": url, "stale": stale}
-
-
-def resolve_payload(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> dict:
-    """Full resolve trimmed to UI fields, with source/dual anchor previews."""
-    manifest = effective_manifest(manifest, root, character)
-    kind = node_kind(manifest, ref)
-    if kind == "pose":
-        r = resolve_pose(manifest, root, character, ref, direction)
-        frm = manifest["poses"][ref]["from"]
-        sdir = resolved_dir(frm, direction)
-        return {
-            "selectable": r["selectable"],
-            "blocked_by": format_blocked(r["blocked_by"]),
-            "source_preview": _preview(
-                manifest, root, character, frm["ref"], sdir, r["source_image"], bool(r["stale"])
-            ),
-        }
-    r = resolve_animation(manifest, root, character, ref, direction)
-    anim = manifest["animations"][ref]
-    previews: dict[str, Any] = {"start_preview": None, "end_preview": None}
-    for slot, key in (("start_from", "start_preview"), ("end_at", "end_preview")):
-        # start_from falls back to the manifest default (so free clips preview
-        # their I2V seed too); end_at is only ever explicit.
-        dep = effective_start_dep(manifest, ref) if slot == "start_from" else anim.get(slot)
-        if not dep:
-            continue
-        ddir = resolved_dir(dep, direction)
-        image = r["start_image"] if slot == "start_from" else r["end_image"]
-        previews[key] = _preview(
-            manifest, root, character, dep["ref"], ddir, image, slot in r["stale"]
-        )
-    return {
-        "selectable": r["selectable"],
-        "blocked_by": format_blocked(r["blocked_by"]),
-        **previews,
-    }
-
-
-def _root_within_output(root: str) -> bool:
-    """Whether a client-supplied frame `root` is allowed to be served from.
-
-    The `/frame` route streams files, so `root` must not be attacker-controlled:
-    confining `rel` under `root` is meaningless if the caller also chooses `root`.
-    Inside ComfyUI we require `root` to resolve to (or under) the output
-    directory — the only place legitimate character trees live. Outside ComfyUI
-    (no output dir, e.g. unit tests / CLI) there is no sandbox to enforce, so the
-    root is accepted as-is.
-    """
-    base = output_dir()
-    if base is None:
-        return True
-    base_real = os.path.realpath(base)
-    root_real = os.path.realpath(root)
-    return root_real == base_real or root_real.startswith(base_real + os.sep)
-
-
-def frame_path(root: str, rel: str) -> Optional[str]:
-    """Confine `rel` under `root` and require it to exist; else None (=> 404).
-
-    `root` itself is first clamped to the ComfyUI output tree (see
-    `_root_within_output`) so a caller cannot point the route at an arbitrary
-    directory and read files outside the character store.
-    """
-    if not _root_within_output(root):
-        return None
-    target = io.safe_path(root, rel)
-    if target is None or not os.path.isfile(target):
-        return None
-    return target

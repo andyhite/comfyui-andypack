@@ -33,3 +33,46 @@ def test_mirror_png_flips_horizontally(tmp_path):
     out = np.asarray(Image.open(dst).convert("RGB"))
     assert tuple(out[0, 0]) == (0, 0, 255)  # columns swapped
     assert tuple(out[0, 1]) == (255, 0, 0)
+
+
+def _frames_dir(tmp_path, name, count):
+    d = tmp_path / name
+    d.mkdir(parents=True, exist_ok=True)
+    for i in range(count):
+        Image.new("RGB", (2, 2), (i, i, i)).save(d / f"frame_{i:05d}.png")
+    return str(d)
+
+
+def test_assemble_playback_repeats_holds_and_drops_seams(tmp_path):
+    pre = _frames_dir(tmp_path, "pre", 3)
+    action = _frames_dir(tmp_path, "act", 4)
+    hold_png = tmp_path / "pose.png"
+    Image.new("RGB", (2, 2), (9, 9, 9)).save(hold_png)
+
+    batch = images.assemble_playback([
+        {"kind": "anim", "dir": pre, "repeat": 1, "drop_first": False, "drop_last": False},
+        {"kind": "anim", "dir": action, "repeat": 2, "drop_first": True, "drop_last": True},
+        {"kind": "hold", "image": str(hold_png), "count": 5},
+    ])
+    # pre(3) + action(4*2, minus first & last = 6) + hold(5) = 14
+    assert batch.shape[0] == 3 + 6 + 5
+    assert batch.shape[1:] == (2, 2, 3)
+
+
+def test_assemble_playback_skips_empty_dirs(tmp_path):
+    empty = str(tmp_path / "empty")
+    (tmp_path / "empty").mkdir()
+    batch = images.assemble_playback([{"kind": "anim", "dir": empty, "repeat": 1}])
+    assert batch.shape[0] == 1  # empty_image sentinel, nothing to concat
+
+
+def test_save_animated_webp_writes_all_frames(tmp_path):
+    import torch
+    frames = torch.stack([
+        torch.full((2, 2, 3), v / 255.0, dtype=torch.float32) for v in (10, 20, 30)
+    ])
+    out = tmp_path / "clip.webp"
+    images.save_animated_webp(frames, str(out), fps=12)
+    assert out.exists()
+    with Image.open(out) as im:
+        assert getattr(im, "n_frames", 1) == 3

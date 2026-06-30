@@ -87,3 +87,60 @@ def mirror_png(src: str, dst: str) -> None:
 def empty_image() -> torch.Tensor:
     """A 1x1 black image — the 'no anchor present' sentinel."""
     return torch.zeros((1, 1, 1, 3), dtype=torch.float32)
+
+
+def _load_frames_dir(directory: str) -> "torch.Tensor | None":
+    """Load `frame_*.png` from a directory as a [N, H, W, C] batch (sorted by
+    name), or None when the directory holds no frames."""
+    try:
+        names = sorted(
+            n for n in os.listdir(directory)
+            if n.startswith("frame_") and n.endswith(".png")
+        )
+    except OSError:
+        return None
+    if not names:
+        return None
+    frames = [load_image_tensor(os.path.join(directory, n)) for n in names]
+    return torch.cat(frames, dim=0)
+
+
+def assemble_playback(segments: list) -> torch.Tensor:
+    """Concatenate a playback plan (see resolve.playback_segments) into one IMAGE
+    batch. `anim` segments load their frame dir, tile `repeat` times, then drop the
+    seam boundary frame(s); `hold` segments repeat a single image `count` times.
+    Segments with no readable frames are skipped."""
+    parts: list[torch.Tensor] = []
+    for seg in segments:
+        if seg["kind"] == "anim":
+            batch = _load_frames_dir(seg["dir"])
+            if batch is None:
+                continue
+            repeat = max(int(seg.get("repeat", 1)), 1)
+            if repeat > 1:
+                batch = batch.repeat(repeat, 1, 1, 1)
+            if seg.get("drop_first") and batch.shape[0] > 1:
+                batch = batch[1:]
+            if seg.get("drop_last") and batch.shape[0] > 1:
+                batch = batch[:-1]
+            parts.append(batch)
+        else:  # hold a single image for `count` frames
+            img = load_image_tensor(seg["image"])
+            parts.append(img.repeat(max(int(seg.get("count", 1)), 1), 1, 1, 1))
+    if not parts:
+        return empty_image()
+    return torch.cat(parts, dim=0)
+
+
+def save_animated_webp(frames: torch.Tensor, path: str, fps: int) -> None:
+    """Encode an IMAGE batch [N, H, W, C] as an animated WEBP at `path`, played at
+    `fps`. A single frame writes a still WEBP."""
+    arr = (frames.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
+    pil = [Image.fromarray(a, mode="RGB") for a in arr]
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    duration = int(round(1000.0 / max(int(fps), 1)))
+    pil[0].save(
+        path, format="WEBP", save_all=True, append_images=pil[1:],
+        duration=duration, loop=0, quality=80, method=4,
+    )

@@ -14,6 +14,24 @@ def _batch(n, h=2, w=2):
     return torch.zeros((n, h, w, 3), dtype=torch.float32)
 
 
+def _pose_dict(meta, output_dir, image=None):
+    """An ANIM_POSE dict as the selector emits it (the writer reads `output_dir`
+    and the bundled `_meta`)."""
+    return {
+        "source_image": image, "positive": "", "negative": "",
+        "output_dir": output_dir, "_meta": meta,
+    }
+
+
+def _anim_dict(meta, output_dir):
+    """An ANIM_ANIMATION dict (writer reads `output_dir` + the bundled `_meta`)."""
+    return {
+        "start_image": None, "end_image": None, "positive": "", "negative": "",
+        "is_fflf": False, "length": meta.get("length", 0), "fps": meta.get("fps", 0),
+        "output_dir": output_dir, "_meta": meta,
+    }
+
+
 # --- re-render discipline ---------------------------------------------------- #
 
 def test_animation_rewrite_clears_stale_frames(tmp_path):
@@ -24,11 +42,11 @@ def test_animation_rewrite_clears_stale_frames(tmp_path):
         "prompt_hash": "sha1:abc",
     }
     writer = nodes.AnimationFrameWriter()
-    writer.write(_batch(5), out, meta)
+    writer.write(_anim_dict(meta, out), _batch(5))
     assert sum(n.startswith("frame_") for n in os.listdir(out)) == 5
 
     # A shorter re-render must not leave the old frame_00003/00004 behind.
-    writer.write(_batch(3), out, dict(meta, length=3))
+    writer.write(_anim_dict(dict(meta, length=3), out), _batch(3))
     frames = sorted(n for n in os.listdir(out) if n.startswith("frame_"))
     assert frames == ["frame_00000.png", "frame_00001.png", "frame_00002.png"]
     import json
@@ -44,7 +62,7 @@ def test_animation_writer_drops_last_frame_for_loop(tmp_path):
         "fps": 16, "length": 5, "loop": True, "manifest_version": 1,
         "prompt_hash": "sha1:abc",
     }
-    nodes.AnimationFrameWriter().write(_batch(5), out, meta)
+    nodes.AnimationFrameWriter().write(_anim_dict(meta, out), _batch(5))
     frames = sorted(n for n in os.listdir(out) if n.startswith("frame_"))
     assert frames == ["frame_00000.png", "frame_00001.png", "frame_00002.png", "frame_00003.png"]
     full = json.loads(open(os.path.join(out, "meta.json")).read())
@@ -59,10 +77,10 @@ def test_pose_rewrite_replaces_sidecar(tmp_path):
         "manifest_version": 1, "prompt_hash": "sha1:one",
     }
     writer = nodes.PoseFrameWriter()
-    writer.write(_img(), out, meta)
+    writer.write(_pose_dict(meta, out), _img())
     assert os.path.exists(os.path.join(out, "EAST.png"))
 
-    writer.write(_img(), out, dict(meta, prompt_hash="sha1:two"))
+    writer.write(_pose_dict(dict(meta, prompt_hash="sha1:two"), out), _img())
     import json
     side = json.loads(open(os.path.join(out, "EAST.json")).read())
     assert side["prompt_hash"] == "sha1:two"
@@ -183,11 +201,98 @@ def test_animation_selector_outputs_length_and_fps(manifest, tree, monkeypatch):
     idle = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
     for i in range(3):  # real PNGs so the anchor frames load
         images.save_image_png(_img(), os.path.join(idle, f"frame_{i:05d}.png"))
-    out = nodes.CharacterAnimationSelector().select(manifest, tree.char, "", "punch", "EAST")
-    # order: START, END, POS, NEG, IS_FFLF, LENGTH, FPS, OUTPUT_DIR, META
-    assert out[5] == manifest["animations"]["punch"]["length"]  # 21
-    assert out[6] == manifest["defaults"]["fps"]                # 16 (punch inherits default)
-    assert out[8]["animation"] == "punch"
+    (anim,) = nodes.CharacterAnimationSelector().select(manifest, tree.char, "", "punch", "EAST")
+    assert anim["length"] == manifest["animations"]["punch"]["length"]  # 21
+    assert anim["fps"] == manifest["defaults"]["fps"]                   # 16 (punch inherits default)
+    assert anim["_meta"]["animation"] == "punch"
+
+
+# --- dict outputs + getters -------------------------------------------------- #
+
+def test_pose_selector_returns_single_dict(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.concept()
+    images.save_image_png(_img(), resolve.concept_image_path(tree.root, tree.char))
+    (pose,) = nodes.CharacterPoseSelector().select(manifest, tree.char, "", "base", "EAST")
+    # Leaf outputs are selectable; the resolver meta rides bundled under `_meta`
+    # (not a leaf output) and the image rides along as a tensor.
+    assert isinstance(pose["positive"], str)
+    assert pose["source_image"].shape[0] == 1
+    assert pose["_meta"]["pose"] == "base" and pose["_meta"]["image"] == "EAST.png"
+    # Drift guard: the public (non-`_meta`) keys are exactly the leaf-output keys.
+    assert sorted(k for k in pose if k != "_meta") == nodes.POSE_OUTPUT_KEYS
+
+
+def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST").animation(
+        "fighting_stance_idle", "EAST", frames=3
+    )
+    idle = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
+    for i in range(3):
+        images.save_image_png(_img(), os.path.join(idle, f"frame_{i:05d}.png"))
+    (anim,) = nodes.CharacterAnimationSelector().select(manifest, tree.char, "", "punch", "EAST")
+    assert anim["_meta"]["animation"] == "punch"
+    assert isinstance(anim["is_fflf"], bool)
+    assert isinstance(anim["length"], int) and isinstance(anim["fps"], int)
+    assert anim["start_image"].shape[0] == 1 and anim["end_image"].shape[0] == 1
+    assert sorted(k for k in anim if k != "_meta") == nodes.ANIMATION_OUTPUT_KEYS
+
+
+def test_pose_unpack_fans_out_typed_outputs():
+    pose = {"positive": "hello", "negative": "blurry", "source_image": _img(),
+            "output_dir": "/x", "_meta": {}}
+    img, pos, neg, out_dir = nodes.PoseUnpack().unpack(pose)
+    assert nodes.PoseUnpack.RETURN_NAMES == (
+        "SOURCE_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT", "OUTPUT_DIR"
+    )
+    assert img.shape[0] == 1
+    assert (pos, neg, out_dir) == ("hello", "blurry", "/x")
+
+
+def test_animation_unpack_fans_out_typed_outputs():
+    anim = {"start_image": _img(), "end_image": _img(), "positive": "p", "negative": "n",
+            "is_fflf": True, "length": 21, "fps": 16, "output_dir": "/a", "_meta": {}}
+    start, end, pos, neg, fflf, length, fps, out_dir = nodes.AnimationUnpack().unpack(anim)
+    assert nodes.AnimationUnpack.RETURN_NAMES == (
+        "START_IMAGE", "END_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT",
+        "IS_FFLF", "LENGTH", "FPS", "OUTPUT_DIR",
+    )
+    assert start.shape[0] == 1 and end.shape[0] == 1
+    assert (pos, neg, fflf, length, fps, out_dir) == ("p", "n", True, 21, 16, "/a")
+
+
+def test_unpack_outputs_cover_selector_leaf_keys():
+    # Every leaf key a selector emits must have an Unpack output (and vice versa),
+    # and the declared types line up slot-for-slot.
+    assert {k for k, _n in nodes._POSE_UNPACK} == set(nodes.POSE_OUTPUT_KEYS)
+    assert {k for k, _n in nodes._ANIMATION_UNPACK} == set(nodes.ANIMATION_OUTPUT_KEYS)
+    assert len(nodes.PoseUnpack.RETURN_TYPES) == len(nodes._POSE_UNPACK)
+    assert len(nodes.AnimationUnpack.RETURN_TYPES) == len(nodes._ANIMATION_UNPACK)
+
+
+def test_animation_playback_chains_and_loops(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST").animation(
+        "fighting_stance_idle", "EAST", frames=3
+    ).animation("punch", "EAST", frames=3)
+    # Tree writes empty frame files; the playback node loads pixels, so write real
+    # PNGs for the idle (chained) and punch (action) frames.
+    for anim in ("fighting_stance_idle", "punch"):
+        d = resolve.animation_frame_dir(tree.root, tree.char, anim, "EAST")
+        for i in range(3):
+            images.save_image_png(_img(), os.path.join(d, f"frame_{i:05d}.png"))
+
+    out = nodes.AnimationPlayback().play(manifest, tree.char, "", "punch", "EAST", 3)
+    frames, fps = out["result"]
+    assert fps == manifest["defaults"]["fps"]  # punch inherits the default fps (16)
+    # idle(3) + punch(3*3, minus dropped first & last seam = 7) + idle(3) = 13
+    assert frames.shape[0] == 3 + 7 + 3
+
+
+def test_leaf_output_keys_exclude_private_meta():
+    assert "_meta" not in nodes.POSE_OUTPUT_KEYS
+    assert "_meta" not in nodes.ANIMATION_OUTPUT_KEYS
 
 
 def test_mirror_writer_rejects_unmapped_direction(manifest, tree, monkeypatch):
