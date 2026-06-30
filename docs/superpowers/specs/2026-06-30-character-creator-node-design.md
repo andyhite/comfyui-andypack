@@ -61,6 +61,11 @@ to the character directory, so the concept's provenance role disappears. The
    `positive_prompt` template is rewritten for multi-reference phrasing.
 7. **Selector-style node:** a `direction` dropdown, a single `ANIM_POSE` output,
    reusing `PoseUnpack` → `PoseFrameWriter`.
+8. **"concept" terminology is fully retired, replaced by "character."** The
+   prompt template variable `{identity_prompt}` becomes `{character_prompt}`, the
+   node identity inputs become `character_positive` / `character_negative`, and
+   the internal `read_identity` / `invalidate_identity` helpers become
+   `read_character` / `invalidate_character`.
 
 ## Components
 
@@ -88,20 +93,30 @@ to the character directory, so the concept's provenance role disappears. The
     `kind == "concept"` branches in `node_complete`, `read_node_meta`,
     `read_render_id`, `_anchor_from_dep`.
 
-### `character.json` = identity layer only (`io.py`, `resolve.py`)
+### `character.json` = character prompt layer only (`io.py`, `resolve.py`)
 
-- **`io.build_concept_sidecar` → `build_character_identity`** — writes only the
-  identity layer, merged over any existing file so the character-authored
+- **`io.build_concept_sidecar` → `build_character`** — writes only the character
+  prompt layer, merged over any existing file so the character-authored
   `poses`/`animations` overlay survives. **No** `prompt_hash` / `created_utc` /
   `render_id`. Owned keys: `positive_prompt`, `negative_prompt` (a cleared widget
   drops its key); all other existing keys pass through.
-- **`read_identity`** — reads `character.json` (memoized by path+mtime as today);
-  returns the identity dict (no `render_id`).
-- **`invalidate_identity`** — repointed to `character.json`; still called by the
-  node after writing identity (identity + effective-manifest caches). Docstring
-  updated (no render_id rationale).
+- **`read_identity` → `read_character`** — reads `character.json` (memoized by
+  path+mtime as today); returns the prompt dict (no `render_id`).
+- **`invalidate_identity` → `invalidate_character`** — repointed to
+  `character.json`; still called by the node after writing (character + effective-
+  manifest caches). Docstring updated (no render_id rationale).
 - **`effective_manifest`** — unchanged behavior; reads the `poses`/`animations`
   overlay from `character.json`.
+
+### Prompt template variable rename (`resolve.py`, seed manifest)
+
+- **`substitute_variables` / `_TEMPLATE_TOKEN`** — the opt-in token
+  `{identity_prompt}` becomes `{character_prompt}` (resolves to the character
+  layer's `positive_prompt` / `negative_prompt` by field, exactly as today).
+  `{direction_prompt}` / `{direction_name}` are unchanged.
+- **Seed manifest (`examples/animations.json`)** — every `{identity_prompt}`
+  occurrence (the `globals.pose` / `globals.animation` negatives, the base and
+  per-pose positives) is rewritten to `{character_prompt}`.
 
 ### `api.py` character-directory marker
 
@@ -119,17 +134,18 @@ direction with the manikin attached.
     reference), `character` (STRING — the new name the user types, *not* a combo
     of existing characters), `direction` (combo of the 8 canonical directions
     from a module constant matching the bundled manikins).
-  - optional: `identity_positive`, `identity_negative` (multiline STRING).
+  - optional: `character_positive`, `character_negative` (multiline STRING).
 - **`RETURN_TYPES`** `("ANIM_POSE",)`, `RETURN_NAMES` `("POSE",)`. Not an
   `OUTPUT_NODE` — it always feeds a sampler downstream.
-- **`IS_CHANGED`** — fingerprint over (`identity_positive`, `identity_negative`,
+- **`IS_CHANGED`** — fingerprint over (`character_positive`, `character_negative`,
   `character`, `direction`, resolved base prompt); `nan` on invalid inputs
   (mirrors the existing selectors' re-resolve discipline).
 - **`create`**
   1. Snake-case the character name; resolve the characters root.
-  2. Build the identity layer from the (stripped) positive/negative prompts.
-  3. Write `character.json` via `build_character_identity` (atomic), preserving
-     the overlay. Call `invalidate_identity`. (No image written, no provenance.)
+  2. Build the character prompt layer from the (stripped) positive/negative
+     prompts.
+  3. Write `character.json` via `build_character` (atomic), preserving the
+     overlay. Call `invalidate_character`. (No image written, no provenance.)
   4. `effective_manifest(...)`; `resolve_pose(..., "base", direction)`. Guard:
      error if `base` is missing or `direction` not in `base.directions`.
   5. Load the bundled manikin for `direction`.
@@ -137,9 +153,10 @@ direction with the manikin attached.
      (first), `pose_reference` = manikin tensor (second), `positive`/`negative`
      from the resolve result, `output_dir` (`_base`), `_meta`.
 
-Re-running per direction only rewrites `character.json` (idempotent identity
-text — no provenance to thrash). An identity-text change drifts the base prompt
-hash, correctly re-staling base (and, via `{identity_prompt}`, downstream).
+Re-running per direction only rewrites `character.json` (idempotent character
+prompt text — no provenance to thrash). A character-prompt change drifts the
+base prompt hash, correctly re-staling base (and, via `{character_prompt}`,
+downstream).
 
 ### Manikin assets + all-8 base directions
 
@@ -154,7 +171,7 @@ hash, correctly re-staling base (and, via `{identity_prompt}`, downstream).
   E/SE/S/NE/N exist today).
 - The base `positive_prompt` template is rewritten for multi-reference:
   attribute identity/design to "the first image" and body orientation + camera
-  angle to "the mannequin in the second image," keeping `{identity_prompt}`,
+  angle to "the mannequin in the second image," keeping `{character_prompt}`,
   `{direction_name}`, `{direction_prompt}`.
 
 ### `ANIM_POSE` bundle + `PoseUnpack`
@@ -186,7 +203,7 @@ updated (`ConceptImageWriter`→`CharacterCreator` "Character Creator";
 
 ```
 CharacterCreator(manifest, image, name, identity±, direction)
-  ├─ writes  character.json  (identity layer only, no provenance)
+  ├─ writes  character.json  (character prompt layer only, no provenance)
   └─ outputs ANIM_POSE { source_image=ref, pose_reference=manikin[dir],
                          positive, negative, output_dir=_base, _meta }
         → PoseUnpack → (SOURCE_IMAGE, POSE_REFERENCE, POSITIVE, NEGATIVE, …)
@@ -207,12 +224,13 @@ CharacterCreator(manifest, image, name, identity±, direction)
 ## Testing (TDD)
 
 - Rename `_concept.json`/`concept` usage to `character.json` across tests; drop
-  concept-node assertions.
+  concept-node assertions; update `{identity_prompt}` → `{character_prompt}`.
 - Root pose: a pose with no `from` validates, sorts as a leaf, resolves with
   empty `blocked_by`/`sources`, and is outdated only on its own prompt drift.
-- `character.json` identity round-trips; the `poses`/`animations` overlay
-  survives a rewrite; a cleared identity widget drops its key.
-- Identity-text change re-stales base (prompt-hash drift) and downstream.
+- `character.json` character layer round-trips; the `poses`/`animations` overlay
+  survives a rewrite; a cleared widget drops its key.
+- `{character_prompt}` substitutes by field (positive/negative); a
+  character-prompt change re-stales base (prompt-hash drift) and downstream.
 - `manikin_path` resolves for all 8 directions; a missing asset raises.
 - All 8 base directions are selectable from the seed manifest.
 - `pose_reference` flows through the bundle and `PoseUnpack`; the
