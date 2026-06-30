@@ -62,11 +62,20 @@ def test_merged_prompt_rows_apply_the_full_cascade(manifest, tree):
     assert "watermark" in punch["negative"]   # globals.animation negative
 
 
-def test_merged_prompt_rows_include_character_identity(manifest, tree):
+def test_merged_prompt_rows_splice_referenced_identity(manifest, tree):
+    # Identity is opt-in: it appears only where {identity_positive} is referenced.
+    tree.identity(positive_prompt="a brave hero")
+    manifest["poses"]["base"]["positive_prompt"] = "{identity_positive} in a neutral pose"
+    rows = api.merged_prompt_rows(manifest, tree.root, tree.char)
+    base = next(r for r in rows if r["id"] == "base" and r["direction"] == "EAST")
+    assert "a brave hero in a neutral pose" in base["positive"]
+
+
+def test_merged_prompt_rows_exclude_unreferenced_identity(manifest, tree):
     tree.identity(positive_prompt="a brave hero")
     rows = api.merged_prompt_rows(manifest, tree.root, tree.char)
     base = next(r for r in rows if r["id"] == "base" and r["direction"] == "EAST")
-    assert "a brave hero" in base["positive"]  # identity layer leads the cascade
+    assert "a brave hero" not in base["positive"]  # not referenced -> absent
 
 
 def test_format_merged_prompts_groups_each_cell(manifest):

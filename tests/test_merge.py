@@ -60,29 +60,62 @@ def test_read_identity_reads_concept_sidecar(tmp_path):
     assert read_identity(str(tmp_path), "Cortex") == {"positive_prompt": "a mouthless hero"}
 
 
-def test_merged_prompts_cascades_identity_global_entity_direction(tmp_path):
+def _identity(tmp_path, **layer):
     char_dir = tmp_path / "Cortex"
     char_dir.mkdir()
-    (char_dir / "_concept.json").write_text(json.dumps({"positive_prompt": "a mouthless hero"}))
-    m = base_manifest()
-    pos, neg = merged_prompts(m, str(tmp_path), "Cortex", "pose", "base", "EAST")
-    # identity -> (no globals.pose positive) -> pose.prompt -> base.directions.EAST.prompt
-    assert pos == "a mouthless hero\n\nneutral standing pose\n\nfacing right in profile"
-    assert neg == "blurry, low quality"  # globals.pose.negative only (single layer)
+    (char_dir / "_concept.json").write_text(json.dumps(layer))
+    return str(tmp_path)
 
 
-def test_merged_prompts_negative_dedupes_across_layers(tmp_path):
-    char_dir = tmp_path / "Cortex"
-    char_dir.mkdir()
-    # identity negative shares a term with globals.animation negative ("blurry")
-    (char_dir / "_concept.json").write_text(json.dumps({"negative_prompt": "blurry, ugly"}))
+def test_merged_prompts_cascade_excludes_identity_unless_referenced(tmp_path):
+    # Identity is opt-in: it is NOT auto-prepended. The cascade is
+    # globals[kind] -> entity -> direction, with no identity layer.
+    root = _identity(tmp_path, positive_prompt="a mouthless hero", negative_prompt="ugly")
     m = base_manifest()
-    pos, neg = merged_prompts(m, str(tmp_path), "Cortex", "animation", "punch", "EAST")
-    # identity(blurry, ugly) + globals.animation(blurry, low quality, watermark)
-    #   + punch(both arms extended, extra arm), comma-deduped, first wins
-    assert neg == (
-        "blurry, ugly, low quality, watermark, both arms extended, extra arm"
+    pos, neg = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
+    assert pos == "neutral standing pose\n\nfacing right in profile"
+    assert "a mouthless hero" not in pos
+    assert neg == "blurry, low quality"  # globals.pose.negative only; identity ugly absent
+    assert "ugly" not in neg
+
+
+def test_identity_positive_token_splices_in_place(tmp_path):
+    root = _identity(tmp_path, positive_prompt="a mouthless hero")
+    m = base_manifest()
+    m["poses"]["base"]["directions"]["EAST"]["positive_prompt"] = (
+        "a wide shot of {identity_positive} standing"
     )
+    pos, _ = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
+    assert pos == "neutral standing pose\n\na wide shot of a mouthless hero standing"
+    assert pos.count("a mouthless hero") == 1  # spliced once, not also prepended
+
+
+def test_identity_negative_token_expands_then_dedupes(tmp_path):
+    # {identity_negative} expands BEFORE the term-merge, so its terms dedupe
+    # against sibling negative terms ("blurry" shared with globals.animation).
+    root = _identity(tmp_path, negative_prompt="blurry, ugly")
+    m = base_manifest()
+    m["animations"]["punch"]["negative_prompt"] = "{identity_negative}, extra arm"
+    _, neg = merged_prompts(m, root, "Cortex", "animation", "punch", "EAST")
+    # globals.animation(blurry, low quality, watermark) + punch(blurry, ugly, extra arm)
+    assert neg == "blurry, low quality, watermark, ugly, extra arm"
+
+
+def test_identity_token_with_empty_identity_expands_to_blank(tmp_path):
+    root = _identity(tmp_path)  # no identity fields
+    m = base_manifest()
+    m["poses"]["base"]["directions"]["EAST"]["positive_prompt"] = "shot of {identity_positive}here"
+    pos, _ = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
+    assert "{identity_positive}" not in pos
+    assert pos == "neutral standing pose\n\nshot of here"
+
+
+def test_unknown_token_and_literal_braces_survive(tmp_path):
+    root = _identity(tmp_path, positive_prompt="hero")
+    m = base_manifest()
+    m["poses"]["base"]["directions"]["EAST"]["positive_prompt"] = "shot of {unknown} {thing}"
+    pos, _ = merged_prompts(m, root, "Cortex", "pose", "base", "EAST")
+    assert "{unknown}" in pos and "{thing}" in pos
 
 
 def test_compute_prompt_hash_matches_formula(tmp_path):

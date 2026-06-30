@@ -20,9 +20,13 @@ schema-by-example: `examples/animations.json`.
   `end_at` consumes the dep's FIRST frame. Do not invert.
   Single-image deps (concept/pose) resolve the same image for either slot.
 - Refs are typed: `concept` (seed), a pose id, or an animation id. Poses
-  cascade `identity → globals.pose → pose → direction`; animations cascade
-  `identity → globals.animation → animation → direction`. No facial/global
+  cascade `globals.pose → pose → direction`; animations cascade
+  `globals.animation → animation → direction`. No facial/global
   negative special-casing.
+- Identity is OPT-IN, not an automatic cascade layer: a layer references
+  `{identity_positive}` / `{identity_negative}` to splice the character's
+  `_concept.json` identity in place. Tokens expand per-layer BEFORE the merge
+  (so identity negative terms dedupe). Unreferenced identity never appears.
 - Dynamic character-scoped combos need a server route + web/ JS
   extension. Pure-Python INPUT_TYPES cannot do it.
 - `/frame` route must reject `..` / absolute / symlink escapes; 404

@@ -94,23 +94,43 @@ def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifes
     return merged
 
 
+def substitute_identity(text: Optional[str], identity: dict) -> Optional[str]:
+    """Expand the opt-in identity tokens in a single cascade layer.
+
+    `{identity_positive}` -> identity `positive_prompt`, `{identity_negative}`
+    -> identity `negative_prompt` (empty when absent). Literal token replacement
+    (not str.format), so unknown `{...}` tokens and stray braces survive. Applied
+    per-layer BEFORE the merge so an expanded negative term list dedupes against
+    sibling terms."""
+    if not text:
+        return text
+    pos = (identity.get("positive_prompt") or "").strip()
+    neg = (identity.get("negative_prompt") or "").strip()
+    return text.replace("{identity_positive}", pos).replace("{identity_negative}", neg)
+
+
 def merged_prompts(
     manifest: Manifest, root: str, character: str, kind: str, entity_id: str, direction: str
 ) -> tuple[str, str]:
-    """Cascade identity -> globals[kind] -> entity -> entity.directions[dir]."""
+    """Cascade globals[kind] -> entity -> entity.directions[dir]. Identity is NOT
+    an automatic layer: it appears only where a layer references
+    `{identity_positive}` / `{identity_negative}` (expanded per-layer first)."""
     identity = read_identity(root, character)
     glob = manifest.get("globals", {}).get(kind, {}) or {}
     collection = manifest["poses"] if kind == "pose" else manifest["animations"]
     entity = collection[entity_id]
     dlayer = (entity.get("directions", {}) or {}).get(direction) or {}
 
+    def sub(text: Optional[str]) -> Optional[str]:
+        return substitute_identity(text, identity)
+
     positive = merge_layers(
-        identity.get("positive_prompt"), glob.get("positive_prompt"),
-        entity.get("positive_prompt"), dlayer.get("positive_prompt"),
+        sub(glob.get("positive_prompt")),
+        sub(entity.get("positive_prompt")), sub(dlayer.get("positive_prompt")),
     )
     negative = merge_negative(
-        identity.get("negative_prompt"), glob.get("negative_prompt"),
-        entity.get("negative_prompt"), dlayer.get("negative_prompt"),
+        sub(glob.get("negative_prompt")),
+        sub(entity.get("negative_prompt")), sub(dlayer.get("negative_prompt")),
     )
     return positive, negative
 

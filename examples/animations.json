@@ -35,7 +35,7 @@
       "from": {
         "ref": "concept"
       },
-      "positive_prompt": "a neutral standing pose of the character, arms relaxed at its sides",
+      "positive_prompt": "a neutral standing pose of {identity_positive}, arms relaxed at its sides",
       "directions": {
         "EAST": {
           "positive_prompt": "the character facing directly to the right in profile"

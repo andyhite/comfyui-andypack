@@ -91,6 +91,8 @@ def test_pose_rewrite_replaces_sidecar(tmp_path):
 def test_pose_selector_is_changed_tracks_dependency_render(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.concept()
+    # Identity is opt-in, so the prompt must reference it for an edit to ripple.
+    manifest["poses"]["base"]["positive_prompt"] += " {identity_positive}"
     before = nodes.CharacterPoseSelector.IS_CHANGED(
         manifest, tree.char, "", "base", "EAST"
     )

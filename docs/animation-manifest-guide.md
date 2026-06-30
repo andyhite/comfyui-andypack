@@ -199,7 +199,7 @@ Final prompts are built by merging layers from **general → specific**. For an
 entity in a given direction:
 
 ```
-identity (_concept.json) → globals.<kind> → entity → entity.directions[<DIR>]
+globals.<kind> → entity → entity.directions[<DIR>]
 ```
 
 (`<kind>` is `pose` or `animation`.) Each layer optionally supplies
@@ -213,13 +213,33 @@ identity (_concept.json) → globals.<kind> → entity → entity.directions[<DI
   `", "`. Put shared boilerplate negatives in `globals`; they won't be
   duplicated when an entity adds more.
 
+### Identity tokens (opt-in)
+
+Character identity is **not** an automatic layer. To place it, reference it in
+any layer:
+
+- `{identity_positive}` → the character's `_concept.json` `positive_prompt`
+- `{identity_negative}` → the character's `_concept.json` `negative_prompt`
+
+```jsonc
+"positive_prompt": "a wide shot of {identity_positive} mid-stride, running"
+```
+
+Tokens expand **per-layer before the merge**, so identity negative terms dedupe
+against sibling negatives just like any other term. Replacement is literal:
+unknown `{...}` tokens and stray braces are left alone, and an empty/absent
+identity field expands to nothing. A prompt that references no token gets no
+identity text at all.
+
 Authoring guidance:
 - **`globals.animation` / `globals.pose`**: cross-cutting quality negatives
   (`deformed, blurry, low quality, …`) and any always-on positives.
-- **Entity `positive_prompt`**: describe the motion or pose itself.
+- **Entity `positive_prompt`**: describe the motion or pose itself; splice
+  identity with `{identity_positive}` wherever the character should appear.
 - **Per-direction layer**: only what changes with the angle (often nothing → `{}`).
 - **Character identity** (look, colors, "mouthless", etc.) goes in the
-  character's `_concept.json`, **not** here — see §8.
+  character's `_concept.json`, **not** here — see §8 — and is pulled in via the
+  identity tokens above.
 
 Never write a field literally called `prompt` or `negative`; the keys are
 `positive_prompt` and `negative_prompt`.
@@ -241,9 +261,10 @@ Each character directory holds `_concept.png` (the seed art) and an optional
 }
 ```
 
-- `positive_prompt` / `negative_prompt` are the **identity layer** — merged as
-  the most-general layer into every one of that character's renders. This is
-  where character look/identity lives.
+- `positive_prompt` / `negative_prompt` are the **identity layer** — spliced
+  into a render wherever a manifest layer references `{identity_positive}` /
+  `{identity_negative}` (see §7). This is where character look/identity lives;
+  it is opt-in, not auto-merged.
 - `poses` / `animations` (optional) are **merged into the manifest by id** when
   that character is selected. New ids add entries; existing ids override the
   shared ones. Their refs can point at shared *or* character entities. The

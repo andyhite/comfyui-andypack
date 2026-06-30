@@ -146,16 +146,25 @@ general → specific**. Each layer optionally supplies `prompt` (positive) and/o
 
 **Animation** `anim@dir` layer stack:
 ```
-identity (_concept.json) → globals.animation → animations[anim] → animations[anim].directions[dir]
+globals.animation → animations[anim] → animations[anim].directions[dir]
 ```
 
 **Pose** `pose@dir` layer stack:
 ```
-identity (_concept.json) → globals.pose → poses[pose] → poses[pose].directions[dir]
+globals.pose → poses[pose] → poses[pose].directions[dir]
 ```
 
 Positives merge into the final positive; negatives merge into the final
 negative; the merge rule is identical for both axes. Any layer may be omitted.
+
+**Identity is opt-in, not an automatic layer.** The per-character
+`_concept.json` identity is no longer prepended to the cascade. Instead, any
+layer may reference `{identity_positive}` (→ identity `positive_prompt`) or
+`{identity_negative}` (→ identity `negative_prompt`) to splice the identity in
+place. Tokens are expanded per-layer **before** the merge — so an expanded
+negative term list dedupes against sibling terms — via literal `str.replace`
+(unknown `{...}` tokens and stray braces survive; absent identity → `""`). See
+`2026-06-29-identity-prompt-variable-design.md`.
 
 ### Merge rule
 
@@ -176,9 +185,10 @@ prompt_hash = "sha1:" + sha1( normalize(merged_positive) + "␟" + normalize(mer
 ```
 where `normalize` strips ends and collapses internal whitespace runs to one
 space, and `␟` is U+241F (UNIT SEPARATOR). The hash is over the **fully merged**
-prompt, so a change at *any* layer — identity, global, entity, or direction —
-changes the hash. The identity layer is read from `_concept.json` at hash time,
-so editing identity invalidates descendants without any special-casing.
+prompt (identity tokens already expanded), so a change at *any* layer — global,
+entity, or direction — changes the hash. Identity is read from `_concept.json`
+at hash time, so editing identity invalidates only descendants that reference
+`{identity_positive}` / `{identity_negative}`, without any special-casing.
 
 ---
 
