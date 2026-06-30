@@ -274,15 +274,18 @@ def _extrude_frame(
     cell_w: int,
     cell_h: int,
     extrude: int,
+    padding: int,
 ) -> None:
     """Replicate the frame's edge pixels outward by `extrude` px into the gutter."""
-    ex = min(extrude, x)
-    ey = min(extrude, y)
+    # Clamp to both the canvas edge AND the gutter width so bleed never reaches
+    # a neighbouring frame's content box.
+    ex = min(extrude, x, padding)
+    ey = min(extrude, y, padding)
     # Canvas height and width for clamping right/bottom bleed.
     ch = int(canvas.shape[0])
     cw = int(canvas.shape[1])
-    ex_r = min(extrude, cw - (x + cell_w))
-    ey_b = min(extrude, ch - (y + cell_h))
+    ex_r = min(extrude, cw - (x + cell_w), padding)
+    ey_b = min(extrude, ch - (y + cell_h), padding)
 
     # Left bleed: replicate column x of frame leftward.
     if ex > 0:
@@ -402,7 +405,7 @@ def pack_sheet(
 
         # Optional extrude bleed into gutter.
         if extrude > 0:
-            _extrude_frame(canvas, frame, x, y, cw, ch, extrude)
+            _extrude_frame(canvas, frame, x, y, cw, ch, extrude, padding)
 
         # Composite frame onto canvas.
         canvas[y: y + ch, x: x + cw, :] = frame
