@@ -16,14 +16,14 @@
     "NORTH_WEST": "NORTH_EAST"
   },
   "view_phrases": {
-    "EAST": "shown in full right-side profile, the body turned ninety degrees to face the right edge of the frame; only the right side faces the camera and exactly one eye is visible",
-    "WEST": "shown in full left-side profile, the body turned ninety degrees to face the left edge of the frame; only the left side faces the camera and exactly one eye is visible",
-    "SOUTH": "shown in a symmetrical dead-on front view, the body squared to the camera and facing the viewer; both eyes visible, level and centered",
-    "NORTH": "shown in a symmetrical dead-on back view, the body turned a hundred and eighty degrees to face directly away; the back of the head and the back of the body face the camera, and no face is visible",
-    "SOUTH_EAST": "shown from a three-quarter front-right angle, the body turned about forty-five degrees toward the lower-right of the frame; both eyes are visible with the near right side reading larger than the far side",
-    "SOUTH_WEST": "shown from a three-quarter front-left angle, the body turned about forty-five degrees toward the lower-left of the frame; both eyes are visible with the near left side reading larger than the far side",
-    "NORTH_EAST": "shown from a three-quarter back-right angle, the body turned mostly away toward the upper-right; the back of the head faces the camera and the face is turned away out of view",
-    "NORTH_WEST": "shown from a three-quarter back-left angle, the body turned mostly away toward the upper-left; the back of the head faces the camera and the face is turned away out of view"
+    "EAST": "in full right-side profile, facing the right edge, only one eye visible",
+    "WEST": "in full left-side profile, facing the left edge, only one eye visible",
+    "SOUTH": "in a dead-on front view, facing the camera, both eyes visible",
+    "NORTH": "in a dead-on back view, facing directly away, back of the head to the camera, no face visible",
+    "SOUTH_EAST": "from a front-right three-quarter angle, facing the lower-right",
+    "SOUTH_WEST": "from a front-left three-quarter angle, facing the lower-left",
+    "NORTH_EAST": "from a back-right three-quarter angle, mostly facing away, no face visible",
+    "NORTH_WEST": "from a back-left three-quarter angle, mostly facing away, no face visible"
   },
   "defaults": {
     "fps": 16,
@@ -43,7 +43,7 @@
   },
   "poses": {
     "base": {
-      "positive_prompt": "Edit the first image, the character reference, so the same character is {view_phrase}. Use the gray articulated mannequin in the second image only as the guide for body pose, orientation, and camera angle; do not copy its gray color, blank surface, or proportions. Keep the character's exact identity, design, colors, and outfit from the first image: {character_prompt}. The character stands upright in a relaxed neutral pose, weight even on both feet, legs straight, both arms relaxed at the sides. Full-body shot, plain neutral background, flat even studio lighting, clean character-turnaround sheet style.",
+      "positive_prompt": "Edit the first image (the character reference) so the same character is shown {view_phrase}. Match the body pose and orientation of the gray mannequin in the second image, but keep the character's own colors and design — never the mannequin's gray. Preserve the character's identity exactly: {character_prompt}. Relaxed neutral standing pose, full body, plain background, flat even lighting.",
       "directions": {
         "EAST": {},
         "SOUTH_EAST": {},
@@ -60,7 +60,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing direction and camera angle as the reference — the character is still {view_phrase}. Change only the body pose, never the orientation. The character is frozen at a clear contact moment of a forward walking stride: the lead leg forward and planted heel-down, the trailing leg extended behind and rolling off the toe, the torso upright and balanced over the lead leg, the arms swung into natural front-to-back opposition. Keep the character's identity, design, colors, and outfit exactly as in the reference image: {character_prompt}. Full-body shot, plain neutral background, flat even studio lighting, clean character-turnaround sheet style.",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing and camera angle — still {view_phrase}. The character is frozen at a clear contact moment of a forward walking stride: the lead leg forward and planted heel-down, the trailing leg extended behind and rolling off the toe, the torso upright and balanced over the lead leg, the arms swung into natural front-to-back opposition. Keep the character's identity, colors, and design exactly as in the reference: {character_prompt}. Full body, plain background, flat even lighting.",
       "directions": {
         "EAST": {},
         "SOUTH_EAST": {},
@@ -77,7 +77,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing direction and camera angle as the reference — the character is still {view_phrase}. Change only the body pose, never the orientation. The character is frozen mid-run at a full sprint, the torso pitched forward into its momentum: one knee driven high and forward, the other leg extended fully behind in an explosive push-off, both feet off the ground, the arms bent sharp and thrown into strong opposition. Keep the character's identity, design, colors, and outfit exactly as in the reference image: {character_prompt}. Full-body shot, plain neutral background, flat even studio lighting, clean character-turnaround sheet style.",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing and camera angle — still {view_phrase}. The character is frozen mid-run at a full sprint, the torso pitched forward into its momentum: one knee driven high and forward, the other leg extended fully behind in an explosive push-off, both feet off the ground, the arms bent sharp and thrown into strong opposition. Keep the character's identity, colors, and design exactly as in the reference: {character_prompt}. Full body, plain background, flat even lighting.",
       "directions": {
         "EAST": {},
         "SOUTH_EAST": {},
@@ -94,7 +94,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing direction and camera angle as the reference — the character is still {view_phrase}. Change only the body pose, never the orientation. The character is held in a low braced crouch: the knees bent deeply and the hips sunk low, the torso leaned in over the legs and compacted toward the ground, the arms drawn loosely in toward the body, the head lowered. Keep the character's identity, design, colors, and outfit exactly as in the reference image: {character_prompt}. Full-body shot, plain neutral background, flat even studio lighting, clean character-turnaround sheet style.",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing and camera angle — still {view_phrase}. The character is held in a low braced crouch: the knees bent deeply and the hips sunk low, the torso leaned in over the legs and compacted toward the ground, the arms drawn loosely in toward the body, the head lowered. Keep the character's identity, colors, and design exactly as in the reference: {character_prompt}. Full body, plain background, flat even lighting.",
       "directions": {
         "EAST": {},
         "SOUTH_EAST": {},
@@ -111,7 +111,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing direction and camera angle as the reference — the character is still {view_phrase}. Change only the body pose, never the orientation. The character is held airborne at the peak of a jump, suspended off the ground with the legs tucked up beneath the body and the knees gathered toward the torso, the body compact and lifted, the arms raised slightly with the upward momentum. Keep the character's identity, design, colors, and outfit exactly as in the reference image: {character_prompt}. Full-body shot, plain neutral background, flat even studio lighting, clean character-turnaround sheet style.",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing and camera angle — still {view_phrase}. The character is held airborne at the peak of a jump, suspended off the ground with the legs tucked up beneath the body and the knees gathered toward the torso, the body compact and lifted, the arms raised slightly with the upward momentum. Keep the character's identity, colors, and design exactly as in the reference: {character_prompt}. Full body, plain background, flat even lighting.",
       "directions": {
         "EAST": {},
         "SOUTH_EAST": {},
@@ -128,7 +128,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing direction and camera angle as the reference — the character is still {view_phrase}. Change only the body pose, never the orientation. The character holds a ready fighting stance: weight low and balanced on staggered feet with the knees bent, the torso poised, both arms raised in a fists-up guard in front of the chest and head, the lead fist forward and lower and the rear fist tucked in close beside the head. Keep the character's identity, design, colors, and outfit exactly as in the reference image: {character_prompt}. Full-body shot, plain neutral background, flat even studio lighting, clean character-turnaround sheet style.",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing and camera angle — still {view_phrase}. The character holds a ready fighting stance: weight low and balanced on staggered feet with the knees bent, the torso poised, both arms raised in a fists-up guard in front of the chest and head, the lead fist forward and lower and the rear fist tucked in close beside the head. Keep the character's identity, colors, and design exactly as in the reference: {character_prompt}. Full body, plain background, flat even lighting.",
       "directions": {
         "EAST": {},
         "SOUTH_EAST": {},
@@ -145,7 +145,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing direction and camera angle as the reference — the character is still {view_phrase}. Change only the body pose, never the orientation. The character clings flat against a vertical wall, the limbs braced and gripping the surface, the body kept close and pressed flat to the wall, held off the ground. Keep the character's identity, design, colors, and outfit exactly as in the reference image: {character_prompt}. Full-body shot, plain neutral background, flat even studio lighting, clean character-turnaround sheet style.",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing and camera angle — still {view_phrase}. The character clings flat against a vertical wall, the limbs braced and gripping the surface, the body kept close and pressed flat to the wall, held off the ground. Keep the character's identity, colors, and design exactly as in the reference: {character_prompt}. Full body, plain background, flat even lighting.",
       "directions": {
         "EAST": {},
         "SOUTH_EAST": {},
@@ -162,7 +162,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing direction and camera angle as the reference — the character is still {view_phrase}. Change only the body pose, never the orientation. The character is held mid-climb on a vertical surface, caught at the top of a pull: one arm reached high overhead and gripping, the opposite arm pulled in low, one knee lifted to push from below while the other leg extends down, the body drawn close and vertical against the surface. Keep the character's identity, design, colors, and outfit exactly as in the reference image: {character_prompt}. Full-body shot, plain neutral background, flat even studio lighting, clean character-turnaround sheet style.",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the exact same facing and camera angle — still {view_phrase}. The character is held mid-climb on a vertical surface, caught at the top of a pull: one arm reached high overhead and gripping, the opposite arm pulled in low, one knee lifted to push from below while the other leg extends down, the body drawn close and vertical against the surface. Keep the character's identity, colors, and design exactly as in the reference: {character_prompt}. Full body, plain background, flat even lighting.",
       "directions": {
         "EAST": {},
         "SOUTH_EAST": {},
@@ -318,6 +318,9 @@
       },
       "start_from": {
         "ref": "jump_tuck"
+      },
+      "end_at": {
+        "ref": "jump_tuck"
       }
     },
     "fall": {
@@ -438,6 +441,9 @@
       },
       "start_from": {
         "ref": "base"
+      },
+      "end_at": {
+        "ref": "base"
       }
     },
     "crouch_idle": {
@@ -455,6 +461,9 @@
         "NORTH_EAST": {}
       },
       "start_from": {
+        "ref": "crouch"
+      },
+      "end_at": {
         "ref": "crouch"
       }
     },
@@ -494,6 +503,9 @@
         "NORTH_EAST": {}
       },
       "start_from": {
+        "ref": "fighting_stance"
+      },
+      "end_at": {
         "ref": "fighting_stance"
       }
     },
@@ -585,7 +597,7 @@
     "block": {
       "category": "combat",
       "length": 33,
-      "positive_prompt": "The character braces into a defensive guard: it plants its feet, tenses low and compact, and raises both arms crossed in front of the head and torso to shield itself, holding the braced protective stance steady with only faint tension and breathing. Returning to the starting pose for a seamless loop. Fixed locked-off camera, no camera movement, no panning or zooming. Plain solid static background, even flat lighting, crisp readable silhouette, clean game-sprite animation.",
+      "positive_prompt": "From the ready guard the character braces into a defensive block: it plants its feet, tenses low and compact, and raises both arms crossed in front of the head and torso to shield itself, holds the braced stance with faint tension and breathing, then lowers back to the ready guard. Returning to the starting pose for a seamless loop. Fixed locked-off camera, no camera movement, no panning or zooming. Plain solid static background, even flat lighting, crisp readable silhouette, clean game-sprite animation.",
       "directions": {
         "EAST": {},
         "SOUTH_EAST": {},
@@ -597,7 +609,10 @@
         "NORTH_EAST": {}
       },
       "start_from": {
-        "ref": "fighting_stance_idle"
+        "ref": "fighting_stance"
+      },
+      "end_at": {
+        "ref": "fighting_stance"
       }
     },
     "stomp": {
@@ -637,12 +652,15 @@
       },
       "start_from": {
         "ref": "wall_cling_pose"
+      },
+      "end_at": {
+        "ref": "wall_cling_pose"
       }
     },
     "wall_slide": {
       "category": "surface",
       "length": 25,
-      "positive_prompt": "The character presses flat against a vertical wall and slides slowly downward, the limbs braced against the surface to drag and slow the descent, the body kept close and flat, sliding down at a steady controlled rate in a smooth continuous loop. Fixed locked-off camera, no camera movement, no panning or zooming. Plain solid static background, even flat lighting, crisp readable silhouette, clean game-sprite animation.",
+      "positive_prompt": "The character presses flat against a vertical wall and slides slowly downward, the limbs braced against the surface to drag and slow the descent, the body kept close and flat, sliding down at a steady, controlled rate. Fixed locked-off camera, no camera movement, no panning or zooming. Plain solid static background, even flat lighting, crisp readable silhouette, clean game-sprite animation.",
       "directions": {
         "EAST": {},
         "SOUTH_EAST": {},
@@ -796,6 +814,9 @@
       },
       "start_from": {
         "ref": "base"
+      },
+      "end_at": {
+        "ref": "base"
       }
     },
     "idle_break": {
@@ -835,6 +856,9 @@
       },
       "start_from": {
         "ref": "base"
+      },
+      "end_at": {
+        "ref": "base"
       }
     },
     "wonder": {
@@ -871,6 +895,9 @@
       },
       "start_from": {
         "ref": "base"
+      },
+      "end_at": {
+        "ref": "base"
       }
     },
     "turn_around": {
@@ -888,9 +915,6 @@
         "NORTH_EAST": {}
       },
       "start_from": {
-        "ref": "base"
-      },
-      "end_at": {
         "ref": "base"
       }
     }

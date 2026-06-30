@@ -23,6 +23,7 @@ from andypack.resolve import (
     resolve_animation,
     resolve_pose,
     resolution_pass,
+    stale_locally,
     status,
     status_from_resolved,
 )
@@ -163,10 +164,26 @@ def save_manifest_text(name: str, text: str) -> dict:
     return {"ok": True, "warnings": lint or collect_warnings(data)}
 
 
+def _is_safe_segment(name: str) -> bool:
+    """True if `name` is a single, safe path segment — non-empty, not `.`/`..`, not
+    absolute, and containing no path separator. Character names addressed by the
+    routes must satisfy this so a client value can't traverse out of the characters
+    dir (the write paths already snake-case, which always yields a safe segment;
+    this guards the read path too)."""
+    if not name or name in (".", "..") or os.path.isabs(name):
+        return False
+    if os.sep in name or (os.altsep and os.altsep in name):
+        return False
+    return True
+
+
 def read_character_layer(root: str, name: str) -> dict:
     """The character's `character.json` dict (prompt layer + any overlay), or {}
-    when absent/corrupt. A fresh disk read (not the resolve cache) so the editor
-    always shows what's on disk."""
+    when absent/corrupt/unsafe. A fresh disk read (not the resolve cache) so the
+    editor always shows what's on disk. Rejects an unsafe `name` (path traversal)
+    rather than reading outside the characters dir."""
+    if not _is_safe_segment(name):
+        return {}
     path = os.path.join(root, name, "character.json")
     try:
         with open(path, encoding="utf-8") as fh:
@@ -422,6 +439,15 @@ def next_actionable(
             pose = eff.get("poses", {}).get(item["id"], {})
             if pose.get("from") is None:
                 continue
+        # Skip a cell that is stale ONLY because of an ancestor it can't fix by
+        # re-rendering itself — re-running it wouldn't clear the staleness, so the
+        # batch loop would wedge on it forever (e.g. every descendant of a stale
+        # root pose that an auto-selector won't regenerate). A `ready` cell, or one
+        # stale for its own reasons, is genuinely actionable.
+        if item["status"] == "stale" and not stale_locally(
+            eff, root, character, item["id"], item["direction"]
+        ):
+            continue
         return item
     return None
 

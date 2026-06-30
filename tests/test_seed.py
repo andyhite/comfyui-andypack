@@ -108,6 +108,42 @@ def test_seed_animation_globals_carry_standard_wan_negative():
         assert term in neg
 
 
+def test_seed_in_place_loops_are_fflf_pinned():
+    # Animations whose prompt promises a seamless loop and that return to their
+    # start pose must set end_at == start_from (a single-image dep resolves the same
+    # image for both slots -> derived loop -> the writer drops the duplicate frame).
+    m = _seed()
+    for aid in ("standing_idle", "crouch_idle", "fighting_stance_idle", "jump_apex",
+                "wall_cling", "block", "talk", "cheer", "edge_teeter"):
+        anim = m["animations"][aid]
+        assert anim.get("end_at"), f"{aid} should be FFLF-pinned"
+        assert anim["end_at"]["ref"] == anim["start_from"]["ref"], aid
+
+
+def test_seed_non_returning_clips_are_start_only():
+    # A 180° turn and a downward wall-slide do NOT return to their start, so they
+    # must NOT be same-image FFLF loops (that would pin a contradictory end frame).
+    m = _seed()
+    for aid in ("turn_around", "wall_slide"):
+        assert m["animations"][aid].get("end_at") is None, aid
+
+
+def test_seed_pose_prompts_stay_under_token_cap():
+    # FLUX.2 Klein caps at 512 tokens; keep pose prompts well under (word count is a
+    # rough proxy). Guards against the templates ballooning again.
+    import tempfile
+    from andypack.resolve import merged_prompts
+    root = tempfile.mkdtemp()
+    os.makedirs(os.path.join(root, "cortex"))
+    with open(os.path.join(root, "cortex", "character.json"), "w") as fh:
+        json.dump({"positive_prompt": "a mouthless cartoon hero, orange body"}, fh)
+    m = _seed()
+    for pid in m["poses"]:
+        for d in m["poses"][pid]["directions"]:
+            pos, _ = merged_prompts(m, root, "cortex", "pose", pid, d)
+            assert len(pos.split()) < 130, f"{pid}@{d} prompt too long: {len(pos.split())} words"
+
+
 def test_seed_every_animation_has_a_start_image_source():
     # Every animation needs an I2V start image: an explicit start_from or the
     # manifest default. validate_manifest enforces it, but assert here too.

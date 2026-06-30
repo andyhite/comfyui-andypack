@@ -275,6 +275,46 @@ def test_next_actionable_none_when_nothing_actionable(manifest, tree):
     assert api.next_actionable(manifest, tree.root, tree.char, "animation") is None
 
 
+def test_next_actionable_skips_ancestor_only_stale_to_avoid_wedge(manifest, tree):
+    # base (a root pose the pose auto-selector excludes) is stale (prompt drift);
+    # fighting_stance is freshly rendered but reads `stale` via ancestor recursion.
+    # next_actionable must NOT return fighting_stance (re-rendering it can't clear
+    # the staleness) — otherwise the batch loop wedges on it forever. With nothing
+    # else actionable it returns None, so the auto-selector stops loudly.
+    tree.pose("base", "EAST", stale=True)        # root pose stale
+    tree.pose("fighting_stance", "EAST")          # fresh, but ancestor-only stale
+    from andypack.resolve import status, stale_locally
+    assert status(manifest, tree.root, tree.char, "fighting_stance", "EAST") == "stale"
+    assert not stale_locally(manifest, tree.root, tree.char, "fighting_stance", "EAST")
+    job = api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+    assert job is None  # the ancestor-only-stale descendant is skipped, no wedge
+
+
+def test_next_actionable_returns_locally_stale_cell(manifest, tree):
+    # A cell stale for its OWN reason (prompt-hash drift) IS actionable.
+    tree.pose("base", "EAST")                      # base fresh/current
+    tree.pose("fighting_stance", "EAST", stale=True)  # own hash drifted
+    from andypack.resolve import stale_locally
+    assert stale_locally(manifest, tree.root, tree.char, "fighting_stance", "EAST")
+    job = api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+    assert job["id"] == "fighting_stance"
+
+
+def test_read_character_layer_rejects_path_traversal(tmp_path):
+    import json
+    # A character.json planted OUTSIDE the characters root must not be reachable
+    # via a traversal name.
+    outside = tmp_path / "secret"
+    outside.mkdir()
+    (outside / "character.json").write_text(json.dumps({"secret": "leaked"}))
+    root = str(tmp_path / "characters")
+    os.makedirs(root)
+    assert api.read_character_layer(root, "../secret") == {}
+    assert api.read_character_layer(root, "..") == {}
+    assert api.read_character_layer(root, "/etc") == {}
+    assert api.read_character_layer(root, "a/b") == {}
+
+
 def test_characters_dir_is_none_outside_comfyui():
     assert api.characters_dir() is None
 

@@ -792,8 +792,10 @@ class AutoPoseSelector:
         if not job:
             raise RuntimeError(
                 "AutoPoseSelector: no actionable poses remain — every non-root pose "
-                "is generated or blocked on an ungenerated dependency (generate the "
-                "base directions with the Character Creator first)"
+                "is generated, blocked on an ungenerated dependency, or stale only "
+                "because an upstream pose changed. Generate the base directions with "
+                "the Character Creator first, and if a root pose is stale (its prompt "
+                "changed) re-run the Character Creator to clear its descendants."
             )
         r = resolve_pose(manifest, root, character, job["id"], job["direction"])
         return (_build_pose_bundle(r),)
@@ -846,7 +848,9 @@ class AutoAnimationSelector:
         if not job:
             raise RuntimeError(
                 "AutoAnimationSelector: no actionable animations remain — every "
-                "animation is generated or blocked on an ungenerated anchor pose"
+                "animation is generated, blocked on an ungenerated anchor pose, or "
+                "stale only because an upstream pose/clip changed (regenerate that "
+                "upstream node to clear its dependents)"
             )
         r = resolve_animation(manifest, root, character, job["id"], job["direction"])
         return (_build_animation_bundle(r),)

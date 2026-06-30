@@ -484,6 +484,32 @@ def outdated(manifest: Manifest, root: str, character: str, ref: str, direction:
     return memo[key]
 
 
+def stale_locally(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> bool:
+    """True if a COMPLETE node is stale for its OWN reasons — its merged prompt hash
+    drifted, or a recorded source's `render_id` changed — so re-rendering THIS node
+    will clear the drift. A node that is `outdated` only because an ancestor is
+    outdated returns False here (re-rendering it wouldn't help). The batch
+    auto-selectors use this to avoid wedging on a cell whose staleness they can't
+    clear (e.g. every descendant of a stale root pose the selector won't regenerate)."""
+    if not node_complete(manifest, root, character, ref, direction):
+        return False
+    kind = node_kind(manifest, ref)
+    meta = read_node_meta(manifest, root, character, ref, direction)
+    if (meta or {}).get("prompt_hash") != compute_prompt_hash(
+        manifest, root, character, kind, ref, direction
+    ):
+        return True
+    sources = (meta or {}).get("sources")
+    if isinstance(sources, dict):
+        for key, recorded in sources.items():
+            if "@" not in key:
+                continue
+            dep_ref, ddir = key.rsplit("@", 1)
+            if read_render_id(manifest, root, character, dep_ref, ddir) != recorded:
+                return True
+    return False
+
+
 def _outdated(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> bool:
     kind = node_kind(manifest, ref)
     if not node_complete(manifest, root, character, ref, direction):
