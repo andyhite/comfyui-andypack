@@ -162,8 +162,21 @@ function charactersSection() {
   const newName = h("input", { style: fieldStyle, placeholder: "new character name" });
   const editorWrap = h("div", { style: { marginTop: "10px", display: "none" } });
   const editTitle = h("div", { style: { fontWeight: "600", fontSize: "12px", margin: "4px 0" } });
+  const thumbImg = h("img", {
+    style: {
+      maxWidth: "100%", maxHeight: "120px", objectFit: "contain",
+      display: "none", margin: "6px 0", borderRadius: "4px",
+    },
+  });
   const pos = h("textarea", { style: { ...fieldStyle, height: "90px", resize: "vertical" } });
   const neg = h("textarea", { style: { ...fieldStyle, height: "60px", resize: "vertical" } });
+  const overlayEditor = h("textarea", {
+    style: { ...fieldStyle, height: "120px", resize: "vertical" },
+    spellcheck: "false",
+  });
+  const overlayStatus = h("div", {
+    style: { fontSize: "11px", color: "#e66", minHeight: "14px", marginTop: "2px" },
+  });
   let current = null;
 
   async function refresh() {
@@ -184,7 +197,26 @@ function charactersSection() {
     editTitle.textContent = `Editing: ${name}`;
     pos.value = layer.positive_prompt || "";
     neg.value = layer.negative_prompt || "";
+    // Populate overlay editor with poses/animations subset of the layer.
+    const overlayData = {};
+    if (layer.poses) overlayData.poses = layer.poses;
+    if (layer.animations) overlayData.animations = layer.animations;
+    overlayEditor.value = Object.keys(overlayData).length
+      ? JSON.stringify(overlayData, null, 2)
+      : "";
+    overlayStatus.textContent = "";
     editorWrap.style.display = "block";
+    // Fetch reference thumbnail; show on success, hide on 404/error.
+    thumbImg.style.display = "none";
+    const thumbUrl = `/anim_coord/thumb?character=${enc(name)}&kind=reference&id=&direction=`;
+    api.fetchApi(thumbUrl).then(async (res) => {
+      if (!res.ok) return;
+      const tdata = await res.json().catch(() => ({}));
+      if (tdata.data_uri) {
+        thumbImg.src = tdata.data_uri;
+        thumbImg.style.display = "block";
+      }
+    }).catch((e) => console.warn(TAG, "reference thumb fetch failed", e));
   }
 
   async function create() {
@@ -203,19 +235,41 @@ function charactersSection() {
 
   async function save() {
     if (!current) return;
-    const res = await apiPost("/anim_coord/character/save", {
-      character: current, positive_prompt: pos.value, negative_prompt: neg.value,
-    });
+    const body = { character: current, positive_prompt: pos.value, negative_prompt: neg.value };
+    const rawOverlay = overlayEditor.value.trim();
+    if (rawOverlay) {
+      let parsed;
+      try {
+        parsed = JSON.parse(rawOverlay);
+      } catch (e) {
+        overlayStatus.textContent = `JSON parse error: ${e.message}`;
+        return;
+      }
+      overlayStatus.textContent = "";
+      if (parsed && typeof parsed.poses === "object" && parsed.poses !== null) {
+        body.poses = parsed.poses;
+      }
+      if (parsed && typeof parsed.animations === "object" && parsed.animations !== null) {
+        body.animations = parsed.animations;
+      }
+    } else {
+      overlayStatus.textContent = "";
+    }
+    const res = await apiPost("/anim_coord/character/save", body);
     if (res.ok) toast("success", `Saved ${res.name}`, "character.json written");
     else toast("error", "Save failed", res.error || "");
   }
 
   editorWrap.append(
     editTitle,
+    thumbImg,
     h("div", { style: labelStyle }, "Character positive ({character_prompt} in a positive field)"),
     pos,
     h("div", { style: labelStyle }, "Character negative ({character_prompt} in a negative field)"),
     neg,
+    h("div", { style: labelStyle }, "Poses / animations overlay (JSON — optional)"),
+    overlayEditor,
+    overlayStatus,
     h("div", { style: { marginTop: "6px" } }, button("Save character", save, { fontWeight: "600" })),
     h("div", { style: { fontSize: "10px", opacity: "0.6", marginTop: "4px" } },
       "The identity layer. FLUX.2 Klein ignores negatives — the negative is for the Wan path."),

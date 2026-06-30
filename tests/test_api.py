@@ -539,3 +539,11 @@ def test_thumb_path_returns_reference_path_when_exists(tmp_path):
 
 def test_thumb_path_returns_none_for_unknown_kind(tmp_path):
     assert api.thumb_path(str(tmp_path), "hero", "bogus", "x", "EAST") is None
+
+
+def test_save_character_layer_preserves_overlay(tmp_path):
+    root = str(tmp_path)
+    api.save_character_layer(root, "hero", "p", "n",
+        overlay={"poses": {"wave": {"from": {"ref": "base"}, "directions": {"EAST": {}}}}})
+    layer = api.read_character_layer(root, "hero")
+    assert "wave" in layer.get("poses", {})

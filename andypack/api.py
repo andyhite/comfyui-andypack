@@ -226,12 +226,23 @@ def create_character(root: str, name: str) -> dict:
     return {"ok": True, "name": snake, "created": True}
 
 
-def save_character_layer(root: str, name: str, positive: str, negative: str) -> dict:
+def save_character_layer(
+    root: str,
+    name: str,
+    positive: str,
+    negative: str,
+    overlay: Optional[dict] = None,
+) -> dict:
     """Write a character's prompt layer, preserving any poses/animations overlay.
 
     The widgets/fields are the source of truth: an empty positive/negative drops
     that key (matching the Character Creator node). Snake-cases the name to a path
-    segment and invalidates the resolve cache so descendants re-resolve."""
+    segment and invalidates the resolve cache so descendants re-resolve.
+
+    When `overlay` is a dict its `poses`/`animations` keys (when each is a dict)
+    are folded into the layer before `build_character`, so they are written to
+    character.json. Existing callers pass 4 args (overlay defaults None) —
+    unchanged behavior."""
     try:
         snake = io.to_snake_case(name)
     except ValueError as exc:
@@ -241,6 +252,11 @@ def save_character_layer(root: str, name: str, positive: str, negative: str) -> 
         layer["positive_prompt"] = positive.strip()
     if negative and negative.strip():
         layer["negative_prompt"] = negative.strip()
+    if isinstance(overlay, dict):
+        if isinstance(overlay.get("poses"), dict):
+            layer["poses"] = overlay["poses"]
+        if isinstance(overlay.get("animations"), dict):
+            layer["animations"] = overlay["animations"]
     existing = read_character_layer(root, snake)
     payload = io.build_character(layer, existing=existing)
     io.atomic_write_json(os.path.join(root, snake, "character.json"), payload)

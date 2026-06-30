@@ -140,6 +140,7 @@ if _routes is not None:
             root, str(body.get("character") or ""),
             str(body.get("positive_prompt") or ""),
             str(body.get("negative_prompt") or ""),
+            overlay={"poses": body.get("poses"), "animations": body.get("animations")},
         )
         return web.json_response(result, status=200 if result.get("ok") else 400)
 
