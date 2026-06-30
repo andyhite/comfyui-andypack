@@ -373,35 +373,37 @@ _ANIMATION_UNPACK = (
 
 
 class PoseUnpack:
-    """Fan a POSE dict out into its individual typed outputs."""
+    """Fan a POSE dict out into its individual typed outputs, while also forwarding
+    the whole POSE on — tap the fields you need and pass the rest along."""
 
     CATEGORY = "andypack"
     FUNCTION = "unpack"
-    RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING")
-    RETURN_NAMES = tuple(name for _key, name in _POSE_UNPACK)
+    RETURN_TYPES = ("ANIM_POSE", "IMAGE", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("POSE", *(name for _key, name in _POSE_UNPACK))
 
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {"pose": ("ANIM_POSE",)}}
 
     def unpack(self, pose):
-        return tuple(pose[key] for key, _name in _POSE_UNPACK)
+        return (pose, *(pose[key] for key, _name in _POSE_UNPACK))
 
 
 class AnimationUnpack:
-    """Fan an ANIMATION dict out into its individual typed outputs."""
+    """Fan an ANIMATION dict out into its individual typed outputs, while also
+    forwarding the whole ANIMATION on — tap what you need and pass the rest along."""
 
     CATEGORY = "andypack"
     FUNCTION = "unpack"
-    RETURN_TYPES = ("IMAGE", "IMAGE", "STRING", "STRING", "BOOLEAN", "INT", "INT", "STRING")
-    RETURN_NAMES = tuple(name for _key, name in _ANIMATION_UNPACK)
+    RETURN_TYPES = ("ANIM_ANIMATION", "IMAGE", "IMAGE", "STRING", "STRING", "BOOLEAN", "INT", "INT", "STRING")
+    RETURN_NAMES = ("ANIMATION", *(name for _key, name in _ANIMATION_UNPACK))
 
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {"animation": ("ANIM_ANIMATION",)}}
 
     def unpack(self, animation):
-        return tuple(animation[key] for key, _name in _ANIMATION_UNPACK)
+        return (animation, *(animation[key] for key, _name in _ANIMATION_UNPACK))
 
 
 def _animation_fps(manifest, root, character, animation, direction) -> int:
@@ -584,6 +586,37 @@ class CoverageReport:
         return (api.format_coverage_table(data), json.dumps(data, indent=2))
 
 
+class MergedPromptReport:
+    """Every entity×direction's fully merged positive/negative prompt — the exact
+    cascade output a sampler would receive (identity → globals → entity →
+    direction). A debugging aid. Character is optional: leave it on the placeholder
+    to preview the manifest's prompts without a character's identity layer."""
+
+    CATEGORY = "andypack"
+    FUNCTION = "report"
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("REPORT", "JSON")
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+            }
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character):
+        return float("nan")  # reflects manifest/identity edits: always recompute
+
+    def report(self, manifest, character):
+        char = "" if character == _NO_CHARACTER else character
+        rows = api.merged_prompt_rows(manifest, _characters_root(), char)
+        return (api.format_merged_prompts(rows), json.dumps(rows, indent=2))
+
+
 class RegenQueue:
     """The selectable-now (ready/stale) (entity, direction) cells in dependency
     order — the work list for a batch regeneration pass."""
@@ -710,6 +743,7 @@ NODE_CLASS_MAPPINGS = {
     "MirrorFrameWriter": MirrorFrameWriter,
     "ManifestLint": ManifestLint,
     "CoverageReport": CoverageReport,
+    "MergedPromptReport": MergedPromptReport,
     "RegenQueue": RegenQueue,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -726,5 +760,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MirrorFrameWriter": "Mirror Frame Writer",
     "ManifestLint": "Manifest Lint",
     "CoverageReport": "Coverage Report",
+    "MergedPromptReport": "Merged Prompt Report",
     "RegenQueue": "Regen Queue",
 }

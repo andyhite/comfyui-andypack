@@ -9,6 +9,7 @@ from andypack import io
 from andypack.manifest import node_kind, topo_order
 from andypack.resolve import (
     effective_manifest,
+    merged_prompts,
     resolve_animation,
     resolve_pose,
     status,
@@ -233,5 +234,42 @@ def regen_queue(manifest: Manifest, root: str, character: str) -> list[dict]:
             if st in ("ready", "stale"):
                 out.append({"kind": kind, "id": ref, "direction": direction, "status": st})
     return out
+
+
+def merged_prompt_rows(manifest: Manifest, root: str, character: str) -> list[dict]:
+    """Every (entity, direction) with its fully merged positive/negative prompts —
+    the cascade output a sampler would receive. With a character, the character's
+    effective manifest and identity layer are folded in; without one (``""``), the
+    base manifest is used and no identity layer applies."""
+    if character:
+        manifest = effective_manifest(manifest, root, character)
+    out: list[dict] = []
+    for collection, kind in (
+        (manifest.get("poses", {}), "pose"),
+        (manifest.get("animations", {}), "animation"),
+    ):
+        for eid, entity in collection.items():
+            for direction in entity.get("directions", {}) or {}:
+                positive, negative = merged_prompts(manifest, root, character, kind, eid, direction)
+                out.append({
+                    "kind": kind, "id": eid, "direction": direction,
+                    "category": entity.get("category"),
+                    "positive": positive, "negative": negative,
+                })
+    return out
+
+
+def format_merged_prompts(rows: list[dict]) -> str:
+    """Render merged_prompt_rows as a readable block per (entity, direction)."""
+    lines = [f"merged prompts — {len(rows)} cells"]
+    for r in sorted(
+        rows, key=lambda x: (x["kind"], x.get("category") or "", x["id"], x["direction"])
+    ):
+        cat = f"  ({r['category']})" if r.get("category") else ""
+        lines.append("")
+        lines.append(f"[{r['kind']}] {r['id']} @ {r['direction']}{cat}")
+        lines.append(f"  + {r['positive'] or '(empty)'}")
+        lines.append(f"  - {r['negative'] or '(empty)'}")
+    return "\n".join(lines)
 
 

@@ -158,6 +158,14 @@ def test_coverage_report_node(manifest, tree, monkeypatch):
     assert json.loads(blob)["total"] > 0
 
 
+def test_merged_prompt_report_node(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    report, blob = nodes.MergedPromptReport().report(manifest, nodes._NO_CHARACTER)
+    assert "[pose] base @ EAST" in report
+    data = json.loads(blob)
+    assert any(r["id"] == "punch" and r["negative"] for r in data)
+
+
 def test_regen_queue_node(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.concept()
@@ -239,36 +247,42 @@ def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
     assert sorted(k for k in anim if k != "_meta") == nodes.ANIMATION_OUTPUT_KEYS
 
 
-def test_pose_unpack_fans_out_typed_outputs():
+def test_pose_unpack_forwards_dict_and_fans_out_typed_outputs():
     pose = {"positive": "hello", "negative": "blurry", "source_image": _img(),
             "output_dir": "/x", "_meta": {}}
-    img, pos, neg, out_dir = nodes.PoseUnpack().unpack(pose)
+    passthrough, img, pos, neg, out_dir = nodes.PoseUnpack().unpack(pose)
     assert nodes.PoseUnpack.RETURN_NAMES == (
-        "SOURCE_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT", "OUTPUT_DIR"
+        "POSE", "SOURCE_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT", "OUTPUT_DIR"
     )
+    assert passthrough is pose  # whole POSE forwarded on, unchanged
     assert img.shape[0] == 1
     assert (pos, neg, out_dir) == ("hello", "blurry", "/x")
 
 
-def test_animation_unpack_fans_out_typed_outputs():
+def test_animation_unpack_forwards_dict_and_fans_out_typed_outputs():
     anim = {"start_image": _img(), "end_image": _img(), "positive": "p", "negative": "n",
             "is_fflf": True, "length": 21, "fps": 16, "output_dir": "/a", "_meta": {}}
-    start, end, pos, neg, fflf, length, fps, out_dir = nodes.AnimationUnpack().unpack(anim)
+    passthrough, start, end, pos, neg, fflf, length, fps, out_dir = (
+        nodes.AnimationUnpack().unpack(anim)
+    )
     assert nodes.AnimationUnpack.RETURN_NAMES == (
-        "START_IMAGE", "END_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT",
+        "ANIMATION", "START_IMAGE", "END_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT",
         "IS_FFLF", "LENGTH", "FPS", "OUTPUT_DIR",
     )
+    assert passthrough is anim  # whole ANIMATION forwarded on, unchanged
     assert start.shape[0] == 1 and end.shape[0] == 1
     assert (pos, neg, fflf, length, fps, out_dir) == ("p", "n", True, 21, 16, "/a")
 
 
 def test_unpack_outputs_cover_selector_leaf_keys():
-    # Every leaf key a selector emits must have an Unpack output (and vice versa),
-    # and the declared types line up slot-for-slot.
+    # Every leaf key a selector emits must have an Unpack output (and vice versa);
+    # the declared types line up slot-for-slot after the leading passthrough.
     assert {k for k, _n in nodes._POSE_UNPACK} == set(nodes.POSE_OUTPUT_KEYS)
     assert {k for k, _n in nodes._ANIMATION_UNPACK} == set(nodes.ANIMATION_OUTPUT_KEYS)
-    assert len(nodes.PoseUnpack.RETURN_TYPES) == len(nodes._POSE_UNPACK)
-    assert len(nodes.AnimationUnpack.RETURN_TYPES) == len(nodes._ANIMATION_UNPACK)
+    assert nodes.PoseUnpack.RETURN_TYPES[0] == "ANIM_POSE"
+    assert nodes.AnimationUnpack.RETURN_TYPES[0] == "ANIM_ANIMATION"
+    assert len(nodes.PoseUnpack.RETURN_TYPES) == len(nodes._POSE_UNPACK) + 1
+    assert len(nodes.AnimationUnpack.RETURN_TYPES) == len(nodes._ANIMATION_UNPACK) + 1
 
 
 def test_animation_playback_chains_and_loops(manifest, tree, monkeypatch):
