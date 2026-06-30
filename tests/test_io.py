@@ -145,3 +145,9 @@ def test_build_character_preserves_overlay_and_drops_cleared_keys():
     assert out["positive_prompt"] == "new"
     assert "negative_prompt" not in out
     assert out["poses"] == existing["poses"]
+
+
+def test_sidecar_records_has_alpha():
+    meta = {"prompt_hash": "sha1:x", "direction": "EAST"}
+    s = io.build_pose_sidecar(meta, created_utc="2026-01-01T00:00:00Z", has_alpha=True)
+    assert s["has_alpha"] is True

@@ -100,12 +100,13 @@ def build_character(layer: dict, existing: Optional[dict] = None) -> dict:
     return {**preserved, **layer}
 
 
-def build_pose_sidecar(meta: dict, created_utc: str) -> dict:
-    """Pose sidecar = resolve_pose meta + created_utc + render_id."""
+def build_pose_sidecar(meta: dict, created_utc: str, has_alpha: bool = False) -> dict:
+    """Pose sidecar = resolve_pose meta + created_utc + render_id + has_alpha."""
     return {
         **meta,
         "created_utc": created_utc,
         "render_id": render_id(meta["prompt_hash"], created_utc),
+        "has_alpha": has_alpha,
     }
 
 
@@ -117,8 +118,9 @@ def build_animation_meta(
     last_frame: str,
     seed: Optional[int],
     created_utc: str,
+    has_alpha: bool = False,
 ) -> dict:
-    """Animation meta.json = resolve_animation meta + frame pointers + provenance."""
+    """Animation meta.json = resolve_animation meta + frame pointers + provenance + has_alpha."""
     full: dict[str, Any] = {
         **meta,
         "seed": seed,
@@ -127,6 +129,7 @@ def build_animation_meta(
         "last_frame": last_frame,
         "created_utc": created_utc,
         "render_id": render_id(meta["prompt_hash"], created_utc),
+        "has_alpha": has_alpha,
     }
     return full
 
