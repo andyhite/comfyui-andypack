@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 from andypack import atlas
@@ -81,6 +82,15 @@ def test_unity_meta_yaml() -> None:
     assert ext == ".meta"
     assert "TextureImporter" in text
     assert "spriteSheet" in text
+    # Y-flip: sheet_size=[12,6], frame rect [0,0,6,6] -> unity_y = 6-0-6 = 0
+    assert "y: 0" in text
+    # GUID determinism: two calls with the same name produce identical output.
+    text2, _ = atlas.serialize(ATLAS, "walk", "unity")
+    assert text == text2
+    # GUID value is pinned to the MD5 of the name so a regression to hash()
+    # would be caught immediately.
+    expected_guid = hashlib.md5(b"walk").hexdigest()
+    assert expected_guid in text
 
 
 def test_serialize_unknown_fmt_raises() -> None:

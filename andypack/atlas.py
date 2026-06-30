@@ -13,6 +13,7 @@ The ``serialize`` dispatcher returns ``(text, file_extension)``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -241,16 +242,13 @@ def to_unity_meta(atlas: dict, name: str) -> str:
 
 
 def _name_guid(name: str) -> str:
-    """Produce a deterministic pseudo-GUID from a name string."""
-    raw = abs(hash(name)) % (16**32)
-    hex_str = f"{raw:032x}"
-    return (
-        f"{hex_str[0:8]}-"
-        f"{hex_str[8:12]}-"
-        f"{hex_str[12:16]}-"
-        f"{hex_str[16:20]}-"
-        f"{hex_str[20:32]}"
-    )
+    """Return a stable 32-hex-char Unity GUID derived from the name.
+
+    Uses MD5 (stdlib hashlib) so the result is identical across Python
+    interpreter restarts, regardless of PYTHONHASHSEED.  Unity .meta GUIDs
+    are 32 lowercase hex characters with no dashes.
+    """
+    return hashlib.md5(name.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
