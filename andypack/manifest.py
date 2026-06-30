@@ -39,15 +39,21 @@ def _validate_directions(label: str, entity: dict) -> None:
 
 
 def _validate_gen_params(label: str, obj: dict) -> None:
-    """`length`/`fps`, when present, must be ints — they are cast with int() on the
-    selector/playback path, so a non-int (e.g. a string) must fail at load time
-    with a clear message rather than a raw ValueError mid-graph."""
-    for field in ("length", "fps"):
+    """Generation params, when present, must be the right numeric type — they are
+    cast on the selector/playback path, so a bad value (e.g. a string) must fail at
+    load time with a clear message rather than a raw ValueError mid-graph.
+    `length`/`fps`/`width`/`height` are ints; `shift` may be an int or float."""
+    for field in ("length", "fps", "width", "height"):
         val = obj.get(field)
         if val is not None and not isinstance(val, int):
             raise ManifestError(
                 f"{label} {field!r} must be an integer, got {type(val).__name__}"
             )
+    shift = obj.get("shift")
+    if shift is not None and not isinstance(shift, (int, float)):
+        raise ManifestError(
+            f"{label} 'shift' must be a number, got {type(shift).__name__}"
+        )
 
 
 def _validate_view_phrases(manifest: Manifest) -> None:

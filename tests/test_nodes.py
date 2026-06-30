@@ -261,6 +261,10 @@ def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
     assert anim["_meta"]["animation"] == "punch"
     assert isinstance(anim["is_fflf"], bool)
     assert isinstance(anim["length"], int) and isinstance(anim["fps"], int)
+    # Generation params for the WanFirstLastFrameToVideo node ride along as wireable
+    # INT/FLOAT outputs (from the manifest defaults / per-animation override).
+    assert isinstance(anim["width"], int) and isinstance(anim["height"], int)
+    assert isinstance(anim["shift"], float)
     assert anim["start_image"].shape[0] == 1 and anim["end_image"].shape[0] == 1
     assert sorted(k for k in anim if k != "_meta") == nodes.ANIMATION_OUTPUT_KEYS
 
@@ -279,17 +283,19 @@ def test_pose_unpack_forwards_dict_and_fans_out_typed_outputs():
 
 def test_animation_unpack_forwards_dict_and_fans_out_typed_outputs():
     anim = {"start_image": _img(), "end_image": _img(), "positive": "p", "negative": "n",
-            "is_fflf": True, "length": 21, "fps": 16, "output_dir": "/a", "_meta": {}}
-    passthrough, start, end, pos, neg, fflf, length, fps, out_dir = (
-        nodes.AnimationUnpack().unpack(anim)
-    )
+            "is_fflf": True, "length": 21, "fps": 16, "width": 832, "height": 480,
+            "shift": 3.0, "output_dir": "/a", "_meta": {}}
+    (passthrough, start, end, pos, neg, fflf, length, fps,
+     width, height, shift, out_dir) = nodes.AnimationUnpack().unpack(anim)
     assert nodes.AnimationUnpack.RETURN_NAMES == (
         "ANIMATION", "START_IMAGE", "END_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT",
-        "IS_FFLF", "LENGTH", "FPS", "OUTPUT_DIR",
+        "IS_FFLF", "LENGTH", "FPS", "WIDTH", "HEIGHT", "SHIFT", "OUTPUT_DIR",
     )
     assert passthrough is anim  # whole ANIMATION forwarded on, unchanged
     assert start.shape[0] == 1 and end.shape[0] == 1
-    assert (pos, neg, fflf, length, fps, out_dir) == ("p", "n", True, 21, 16, "/a")
+    assert (pos, neg, fflf, length, fps, width, height, shift, out_dir) == (
+        "p", "n", True, 21, 16, 832, 480, 3.0, "/a"
+    )
 
 
 def test_unpack_outputs_cover_selector_leaf_keys():

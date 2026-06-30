@@ -28,7 +28,7 @@ POSE_OUTPUT_KEYS = sorted([
 ])
 ANIMATION_OUTPUT_KEYS = sorted([
     "start_image", "end_image", "positive", "negative",
-    "is_fflf", "length", "fps", "output_dir",
+    "is_fflf", "length", "fps", "width", "height", "shift", "output_dir",
 ])
 
 
@@ -342,11 +342,16 @@ class CharacterAnimationSelector:
             end_image, is_fflf = images.load_image_tensor(r["end_image"]), True
         else:
             end_image, is_fflf = images.empty_image(), False
-        # Surface the manifest's generation params (length/fps) as wireable INTs
-        # so they drive the WAN sampler directly, not just ride along in META.
+        # Surface the manifest's generation params as wireable INT/FLOAT outputs so
+        # they drive the WanFirstLastFrameToVideo node directly (it requires width,
+        # height, length), not just ride along in META. `shift` feeds the
+        # ModelSamplingSD3 shift (the quality lever — 3.0 @ 480p, 5.0 @ 720p).
         meta = r["meta"]
         length = int(meta["length"]) if meta.get("length") is not None else 0
         fps = int(meta["fps"]) if meta.get("fps") is not None else 0
+        width = int(meta["width"]) if meta.get("width") is not None else 0
+        height = int(meta["height"]) if meta.get("height") is not None else 0
+        shift = float(meta["shift"]) if meta.get("shift") is not None else 0.0
         # Bundle the loose outputs into one ANIMATION dict. The resolver meta rides
         # along under `_meta` (JSON-safe, for the writer's meta.json); it is not a
         # selectable getter output. See ANIMATION_OUTPUT_KEYS.
@@ -358,6 +363,9 @@ class CharacterAnimationSelector:
             "is_fflf": is_fflf,
             "length": length,
             "fps": fps,
+            "width": width,
+            "height": height,
+            "shift": shift,
             "output_dir": r["output_dir"],
             "_meta": meta,
         }
@@ -449,6 +457,9 @@ _ANIMATION_UNPACK = (
     ("is_fflf", "IS_FFLF"),
     ("length", "LENGTH"),
     ("fps", "FPS"),
+    ("width", "WIDTH"),
+    ("height", "HEIGHT"),
+    ("shift", "SHIFT"),
     ("output_dir", "OUTPUT_DIR"),
 )
 
@@ -476,7 +487,10 @@ class AnimationUnpack:
 
     CATEGORY = "andypack/Animation"
     FUNCTION = "unpack"
-    RETURN_TYPES = ("ANIM_ANIMATION", "IMAGE", "IMAGE", "STRING", "STRING", "BOOLEAN", "INT", "INT", "STRING")
+    RETURN_TYPES = (
+        "ANIM_ANIMATION", "IMAGE", "IMAGE", "STRING", "STRING", "BOOLEAN",
+        "INT", "INT", "INT", "INT", "FLOAT", "STRING",
+    )
     RETURN_NAMES = ("ANIMATION", *(name for _key, name in _ANIMATION_UNPACK))
 
     @classmethod

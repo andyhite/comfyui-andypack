@@ -28,6 +28,9 @@
   "defaults": {
     "fps": 16,
     "length": 33,
+    "width": 832,
+    "height": 480,
+    "shift": 3.0,
     "start_from": {
       "ref": "base"
     }

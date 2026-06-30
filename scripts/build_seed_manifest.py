@@ -400,8 +400,15 @@ def build() -> dict:
         },
         "view_phrases": VIEW_PHRASES,
         "defaults": {
+            # Wan 2.2 i2v sprite defaults: 16 fps, 4n+1 length, the 480p bucket
+            # (832x480) with shift 3.0 (the calmer, more controllable motion the
+            # research recommends for a single small character). Per-animation
+            # `width`/`height`/`length`/`shift` overrides are honored.
             "fps": 16,
             "length": 33,
+            "width": 832,
+            "height": 480,
+            "shift": 3.0,
             "start_from": {"ref": "base"},
         },
         "globals": {
