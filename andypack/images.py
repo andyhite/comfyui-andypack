@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import math
 import os
 import tempfile
+from io import BytesIO
 from typing import Optional
 
 import numpy as np
@@ -16,6 +18,20 @@ from PIL import Image
 # the 3-channel RGB that ComfyUI IMAGE tensors carry. White suits character art on
 # a transparent background; `.convert("RGB")` alone would composite onto black.
 _MATTE = (255, 255, 255)
+
+
+def thumbnail_data_uri(path: str, max_px: int = 96) -> str:
+    """Open *path*, shrink to fit ``max_px`` × ``max_px`` (preserving aspect
+    ratio), and return a ``data:image/png;base64,...`` URI string.
+
+    Raises/propagates if the file can't be opened — the caller guards existence.
+    """
+    buf = BytesIO()
+    with Image.open(path) as img:
+        img.thumbnail((max_px, max_px))
+        img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{b64}"
 
 
 def load_image_tensor(path: str, keep_alpha: bool = False) -> torch.Tensor:

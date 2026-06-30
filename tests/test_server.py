@@ -26,3 +26,11 @@ def test_manifest_from_request_defaults_and_wraps_errors(tmp_path, monkeypatch):
     with pytest.raises(web.HTTPBadRequest):
         server._manifest_from_request(_FakeRequest({}))
     assert seen["name"] == "default.json"  # empty param falls back to the default
+
+
+# NOTE: the /anim_coord/thumb route is defined inside the `if _routes is not None:`
+# block in server.py, so it is only registered when running inside ComfyUI
+# (where PromptServer is importable). In tests _routes is None and the route
+# function is never defined, so it cannot be unit-tested here. The route's two
+# helpers — api.thumb_path and images.thumbnail_data_uri — are tested thoroughly
+# in tests/test_api.py and tests/test_images.py.

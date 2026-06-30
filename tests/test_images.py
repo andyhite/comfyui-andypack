@@ -279,3 +279,43 @@ def test_onion_skin_blends_neighbors():
     f[1] = 1.0
     out = images.onion_skin(f, prev=1, next=1, opacity=0.5)
     assert abs(float(out[1].mean()) - 0.5) < 1e-4
+
+
+# --- thumbnail_data_uri -------------------------------------------------------
+
+def test_thumbnail_data_uri_returns_valid_png(tmp_path):
+    import base64
+    from io import BytesIO
+    p = tmp_path / "source.png"
+    Image.new("RGB", (200, 150), (255, 0, 0)).save(p)
+    uri = images.thumbnail_data_uri(str(p))
+    assert uri.startswith("data:image/png;base64,")
+    raw = base64.b64decode(uri[len("data:image/png;base64,"):])
+    # Valid PNG magic bytes
+    assert raw[:8] == b"\x89PNG\r\n\x1a\n"
+    thumb = Image.open(BytesIO(raw))
+    assert max(thumb.size) <= 96
+
+
+def test_thumbnail_data_uri_respects_max_px(tmp_path):
+    from io import BytesIO
+    import base64
+    p = tmp_path / "big.png"
+    Image.new("RGB", (300, 300), (0, 128, 0)).save(p)
+    uri = images.thumbnail_data_uri(str(p), max_px=32)
+    raw = base64.b64decode(uri[len("data:image/png;base64,"):])
+    thumb = Image.open(BytesIO(raw))
+    assert max(thumb.size) <= 32
+
+
+def test_thumbnail_data_uri_preserves_aspect_ratio(tmp_path):
+    from io import BytesIO
+    import base64
+    p = tmp_path / "wide.png"
+    Image.new("RGB", (200, 100), (0, 0, 255)).save(p)
+    uri = images.thumbnail_data_uri(str(p), max_px=96)
+    raw = base64.b64decode(uri[len("data:image/png;base64,"):])
+    thumb = Image.open(BytesIO(raw))
+    # Aspect ratio of 2:1 must be preserved
+    w, h = thumb.size
+    assert abs(w / h - 2.0) < 0.1

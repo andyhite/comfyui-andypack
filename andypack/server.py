@@ -6,7 +6,7 @@ import json
 
 from aiohttp import web
 
-from andypack import api
+from andypack import api, images
 from andypack.manifest import ManifestError, load_manifest
 
 try:
@@ -142,3 +142,21 @@ if _routes is not None:
             str(body.get("negative_prompt") or ""),
         )
         return web.json_response(result, status=200 if result.get("ok") else 400)
+
+    @_routes.get("/anim_coord/thumb")
+    async def _thumb(request):
+        # Returns a base64 data-URI for a rendered pose/animation/reference cell.
+        # All segments are validated by api.thumb_path — nothing the client sends
+        # can escape the server-resolved characters dir.
+        root = api.characters_dir() or ""
+        character = request.query.get("character", "")
+        kind = request.query.get("kind", "")
+        entity_id = request.query.get("id", "")
+        direction = request.query.get("direction", "")
+        path = api.thumb_path(root, character, kind, entity_id, direction)
+        if path is None:
+            raise web.HTTPNotFound(
+                text=json.dumps({"error": "thumbnail not found"}),
+                content_type="application/json",
+            )
+        return web.json_response({"data_uri": images.thumbnail_data_uri(path)})

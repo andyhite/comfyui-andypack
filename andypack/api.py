@@ -17,10 +17,13 @@ from andypack.manifest import (
     validate_manifest,
 )
 from andypack.resolve import (
+    animation_frame_dir,
     effective_manifest,
     effective_start_dep,
     invalidate_character,
     merged_prompts,
+    pose_image_path,
+    reference_image_path,
     resolve_animation,
     resolve_pose,
     resolution_pass,
@@ -291,6 +294,49 @@ def character_root_and_name(character_dir: str, character_name: str) -> tuple[st
         base = characters_dir() or "output/characters"
         return split_character_dir(os.path.join(base, character_name))
     return ("", "")
+
+
+def thumb_path(
+    root: str,
+    character: str,
+    kind: str,
+    entity_id: str,
+    direction: str,
+) -> Optional[str]:
+    """Return the on-disk path to the thumbnail source for a rendered cell.
+
+    Validates ``character``, and (for non-reference kinds) ``entity_id`` and
+    ``direction``, each via ``_is_safe_segment``. Returns ``None`` when any
+    segment is unsafe, the kind is unrecognised, or the file/dir is absent.
+
+    - ``kind="reference"`` → ``<char>/_reference.png``
+    - ``kind="pose"``      → ``<char>/_<entity_id>/<direction>.png``
+    - ``kind="animation"`` → first ``frame_*.png`` (sorted) in the frame dir
+    """
+    if not _is_safe_segment(character):
+        return None
+    if kind != "reference":
+        if not _is_safe_segment(entity_id) or not _is_safe_segment(direction):
+            return None
+    if kind == "reference":
+        path = reference_image_path(root, character)
+    elif kind == "pose":
+        path = pose_image_path(root, character, entity_id, direction)
+    elif kind == "animation":
+        frame_dir = animation_frame_dir(root, character, entity_id, direction)
+        try:
+            frames = sorted(
+                n for n in os.listdir(frame_dir)
+                if n.startswith("frame_") and n.endswith(".png")
+            )
+        except OSError:
+            return None
+        if not frames:
+            return None
+        path = os.path.join(frame_dir, frames[0])
+    else:
+        return None
+    return path if os.path.exists(path) else None
 
 
 def manifest_options(manifest: Manifest) -> dict:

@@ -477,3 +477,65 @@ def test_next_actionable_category_filters(tmp_path):
     )
     assert locomotion is not None
     assert locomotion["id"] == "walk"
+
+
+# --- thumb_path ----------------------------------------------------------------
+
+def test_thumb_path_rejects_traversal(tmp_path):
+    assert api.thumb_path(str(tmp_path), "../x", "pose", "base", "EAST") is None
+    assert api.thumb_path(str(tmp_path), "hero", "pose", "..", "EAST") is None
+
+
+def test_thumb_path_returns_none_for_missing_pose(tmp_path):
+    assert api.thumb_path(str(tmp_path), "hero", "pose", "base", "EAST") is None
+
+
+def test_thumb_path_returns_pose_path_when_exists(tmp_path):
+    from andypack import resolve
+    root = str(tmp_path)
+    character = "hero"
+    pose_id = "base"
+    direction = "EAST"
+    path = resolve.pose_image_path(root, character, pose_id, direction)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w").close()
+    result = api.thumb_path(root, character, "pose", pose_id, direction)
+    assert result == path
+
+
+def test_thumb_path_returns_none_for_empty_animation_dir(tmp_path):
+    root = str(tmp_path)
+    assert api.thumb_path(root, "hero", "animation", "walk", "EAST") is None
+
+
+def test_thumb_path_returns_first_frame_for_animation(tmp_path):
+    from andypack import resolve
+    root = str(tmp_path)
+    character = "hero"
+    anim_id = "walk"
+    direction = "EAST"
+    frame_dir = resolve.animation_frame_dir(root, character, anim_id, direction)
+    os.makedirs(frame_dir, exist_ok=True)
+    for name in ("frame_00001.png", "frame_00000.png"):
+        open(os.path.join(frame_dir, name), "w").close()
+    result = api.thumb_path(root, character, "animation", anim_id, direction)
+    assert result == os.path.join(frame_dir, "frame_00000.png")
+
+
+def test_thumb_path_returns_none_for_missing_reference(tmp_path):
+    assert api.thumb_path(str(tmp_path), "hero", "reference", "", "") is None
+
+
+def test_thumb_path_returns_reference_path_when_exists(tmp_path):
+    from andypack import resolve
+    root = str(tmp_path)
+    character = "hero"
+    path = resolve.reference_image_path(root, character)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w").close()
+    result = api.thumb_path(root, character, "reference", "", "")
+    assert result == path
+
+
+def test_thumb_path_returns_none_for_unknown_kind(tmp_path):
+    assert api.thumb_path(str(tmp_path), "hero", "bogus", "x", "EAST") is None
