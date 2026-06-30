@@ -234,6 +234,30 @@ function charactersSection() {
   return root;
 }
 
+// --- Thumbnail cache (coverage grid) --------------------------------------- //
+// Keyed by "character|kind|id|direction". Value is a data-uri string on hit,
+// null when the route returned 404/error. Cleared on execution events so
+// newly-rendered cells pick up fresh images on the next grid refresh.
+const _thumbCache = new Map();
+
+async function fetchThumb(character, kind, id, direction) {
+  const key = `${character}|${kind}|${id}|${direction}`;
+  if (_thumbCache.has(key)) return _thumbCache.get(key);
+  const url = `/anim_coord/thumb?character=${enc(character)}&kind=${enc(kind)}&id=${enc(id)}&direction=${enc(direction)}`;
+  try {
+    const res = await api.fetchApi(url);
+    if (!res.ok) { _thumbCache.set(key, null); return null; }
+    const data = await res.json();
+    const uri = data.data_uri || null;
+    _thumbCache.set(key, uri);
+    return uri;
+  } catch (e) {
+    console.warn(TAG, "thumb fetch failed", url, e);
+    _thumbCache.set(key, null);
+    return null;
+  }
+}
+
 // --- Coverage section (live status dashboard) ------------------------------- //
 function coverageSection() {
   const root = h("div", { style: { padding: PAD } });
@@ -291,10 +315,29 @@ function coverageSection() {
       const cells = byKey[k].slice().sort((a, b) => a.direction.localeCompare(b.direction));
       for (const o of cells) {
         const blocked = (o.blocked_by || []).join(", ");
-        row.appendChild(h("span", {
-          style: { fontSize: "12px", cursor: "default" },
-          title: `${o.id} @ ${o.direction} — ${o.status}${blocked ? ` (needs ${blocked})` : ""}`,
-        }, GLYPH[o.status] || "·"));
+        const title = `${o.id} @ ${o.direction} — ${o.status}${blocked ? ` (needs ${blocked})` : ""}`;
+        const glyphEl = h("span", {}, GLYPH[o.status] || "·");
+        const imgEl = h("img", {
+          loading: "lazy",
+          style: {
+            width: "24px", height: "24px", objectFit: "cover",
+            display: "none", borderRadius: "2px", verticalAlign: "middle",
+          },
+        });
+        const cellEl = h("span", {
+          style: { fontSize: "12px", cursor: "default", display: "inline-block" },
+          title,
+        }, [glyphEl, imgEl]);
+        if (o.status !== "blocked") {
+          fetchThumb(character, o.kind, o.id, o.direction).then((uri) => {
+            if (uri) {
+              imgEl.src = uri;
+              imgEl.style.display = "inline-block";
+              glyphEl.style.display = "none";
+            }
+          }).catch(() => {});
+        }
+        row.appendChild(cellEl);
       }
       grid.appendChild(row);
     }
@@ -311,7 +354,7 @@ function coverageSection() {
   );
   loadPickers().then(refresh);
   // Live refresh: re-pull status after any graph run (a writer just unlocked work).
-  const onExec = () => { if (charPick.value) refresh(); };
+  const onExec = () => { _thumbCache.clear(); if (charPick.value) refresh(); };
   api.addEventListener("execution_success", onExec);
   api.addEventListener("executed", onExec);
   root.__cleanup = () => {
