@@ -397,59 +397,66 @@ def apply_play_mode(
     return frames
 
 
-def save_animated_webp(frames: torch.Tensor, path: str, fps: int) -> None:
+def save_animated_webp(
+    frames: torch.Tensor, path: str, fps: int, loop: bool = True
+) -> None:
     """Encode an IMAGE batch [N, H, W, C] as an animated WEBP at `path`, played at
-    `fps`. A single frame writes a still WEBP."""
+    `fps`. A single frame writes a still WEBP.
+
+    When ``loop`` is True (the default) the animation repeats indefinitely
+    (loop count 0). When False it plays once (loop count 1).
+    """
     arr = (frames.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
     pil = [Image.fromarray(a, mode="RGB") for a in arr]
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
     duration = int(round(1000.0 / max(int(fps), 1)))
+    loop_count = 0 if loop else 1
     pil[0].save(
         path, format="WEBP", save_all=True, append_images=pil[1:],
-        duration=duration, loop=0, quality=80, method=4,
+        duration=duration, loop=loop_count, quality=80, method=4,
     )
 
 
-def save_animated_gif(frames: torch.Tensor, path: str, fps: int) -> None:
+def save_animated_gif(
+    frames: torch.Tensor, path: str, fps: int, loop: bool = True
+) -> None:
     """Encode an IMAGE batch [N, H, W, C] as an animated GIF at ``path``, played at
     ``fps``. A single frame writes a still GIF.
 
-    Uses PIL's legacy ``getheader``/``getdata`` API to write each frame directly,
-    bypassing PIL's identical-frame deduplication so the frame count is always N.
+    When ``loop`` is True (the default) the animation repeats indefinitely
+    (loop count 0). When False it plays once (loop count 1).
     """
-    from PIL import GifImagePlugin
-
     arr = (frames.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
     pil = [Image.fromarray(a, mode="RGB").convert("P") for a in arr]
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
     duration_ms = int(round(1000.0 / max(int(fps), 1)))
-    with open(path, "wb") as fp:
-        header_blocks, _palette = GifImagePlugin.getheader(pil[0].copy())
-        for block in header_blocks:
-            fp.write(block)
-        # NETSCAPE2.0 looping application extension (loop=0 → infinite).
-        fp.write(b"!\xff\x0bNETSCAPE2.0\x03\x01")
-        fp.write(GifImagePlugin.o16(0))
-        fp.write(b"\x00")
-        for frame in pil:
-            for block in GifImagePlugin.getdata(frame.copy(), duration=duration_ms):
-                fp.write(block)
-        fp.write(b"\x3b")  # GIF trailer
+    loop_count = 0 if loop else 1
+    pil[0].save(
+        path, format="GIF", save_all=True, append_images=pil[1:],
+        duration=duration_ms, loop=loop_count, disposal=2,
+    )
 
 
-def save_animated_apng(frames: torch.Tensor, path: str, fps: int) -> None:
+def save_animated_apng(
+    frames: torch.Tensor, path: str, fps: int, loop: bool = True
+) -> None:
     """Encode an IMAGE batch [N, H, W, C] as an animated PNG (APNG) at ``path``,
-    played at ``fps``. A single frame writes a still PNG."""
+    played at ``fps``. A single frame writes a still PNG.
+
+    When ``loop`` is True (the default) the animation repeats indefinitely
+    (loop count 0). When False it plays once (loop count 1).
+    """
     arr = (frames.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
     pil = [Image.fromarray(a, mode="RGB") for a in arr]
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
     duration = int(round(1000.0 / max(int(fps), 1)))
+    loop_count = 0 if loop else 1
     pil[0].save(
         path, format="PNG", save_all=True, append_images=pil[1:],
-        duration=duration, loop=0,
+        duration=duration, loop=loop_count,
     )
 
 

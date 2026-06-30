@@ -986,7 +986,10 @@ def test_animated_sprite_export_registered():
 
 def test_animated_sprite_export_writes_gif(tmp_path, monkeypatch):
     monkeypatch.setattr(nodes.api, "output_dir", lambda: str(tmp_path))
-    frames = torch.ones((3, 4, 4, 3))
+    # Use distinct frames so PIL does not deduplicate them.
+    frames = torch.stack([
+        torch.full((4, 4, 3), v, dtype=torch.float32) for v in (0.1, 0.4, 0.7)
+    ])
     result = nodes.AnimatedSpriteExport().export(
         frames, format="gif", loop=True, fps=8, name="hero"
     )

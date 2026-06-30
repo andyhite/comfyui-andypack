@@ -217,12 +217,30 @@ def test_recolor_hex_remaps_hue():
 
 def test_save_gif(tmp_path):
     import torch
-    f = torch.ones((3, 4, 4, 3))
+    from PIL import Image
+    # Use distinct frames so PIL does not deduplicate them.
+    f = torch.stack([torch.full((4, 4, 3), v, dtype=torch.float32) for v in (0.1, 0.4, 0.7)])
     p = str(tmp_path / "a.gif")
     images.save_animated_gif(f, p, 8)
-    from PIL import Image
     with Image.open(p) as im:
         assert im.is_animated and im.n_frames == 3
+
+
+def test_save_gif_loop_false_differs(tmp_path):
+    """loop=False must produce a non-infinite GIF (differs from loop=True)."""
+    import torch
+    from PIL import Image
+    f = torch.stack([torch.full((4, 4, 3), v, dtype=torch.float32) for v in (0.1, 0.4, 0.7)])
+    p_loop = str(tmp_path / "loop.gif")
+    p_once = str(tmp_path / "once.gif")
+    images.save_animated_gif(f, p_loop, 8, loop=True)
+    images.save_animated_gif(f, p_once, 8, loop=False)
+    with Image.open(p_loop) as im_loop:
+        loop_val = im_loop.info.get("loop")
+    with Image.open(p_once) as im_once:
+        once_val = im_once.info.get("loop")
+    # Infinite GIF (loop=True) → loop count 0; play-once (loop=False) must differ.
+    assert loop_val != once_val
 
 
 def test_save_apng(tmp_path):

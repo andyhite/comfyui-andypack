@@ -2187,11 +2187,11 @@ class AnimatedSpriteExport:
         ext = format
         out_path = os.path.join(out_dir, f"{name}.{ext}")
         if format == "gif":
-            images.save_animated_gif(frames, out_path, fps_safe)
+            images.save_animated_gif(frames, out_path, fps_safe, loop=loop)
         elif format == "apng":
-            images.save_animated_apng(frames, out_path, fps_safe)
+            images.save_animated_apng(frames, out_path, fps_safe, loop=loop)
         else:
-            images.save_animated_webp(frames, out_path, fps_safe)
+            images.save_animated_webp(frames, out_path, fps_safe, loop=loop)
         return {"ui": _animated_preview(frames, fps_safe), "result": (frames, out_dir)}
 
 
