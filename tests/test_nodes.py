@@ -324,8 +324,9 @@ def test_animation_playback_chains_and_loops(manifest, tree, monkeypatch):
     out = nodes.AnimationPlayback().play(manifest, tree.char, "", "punch", "EAST", 3)
     frames, fps = out["result"]
     assert fps == manifest["defaults"]["fps"]  # punch inherits the default fps (16)
-    # idle(3) + punch(3*3, minus dropped first & last seam = 7) + idle(3) = 13
-    assert frames.shape[0] == 3 + 7 + 3
+    # idle(3) + punch(1x, drop_first+drop_last = 1) + idle(3) = 7
+    # punch is not loopable: idle.last_frame != idle.start_frame (3 distinct frames)
+    assert frames.shape[0] == 3 + 1 + 3
 
 
 def test_animation_playback_raises_when_unrendered(manifest, tree, monkeypatch):

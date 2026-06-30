@@ -697,11 +697,9 @@ def playback_segments(
     pre_seg, drop_first = dep_segment(start)
     post_seg, drop_last = dep_segment(end)
 
-    loopable = bool(
-        start and end
-        and start["ref"] == end["ref"]
-        and resolved_dir(start, direction) == resolved_dir(end, direction)
-    )
+    start_img = start_anchor(manifest, root, character, anim_id, direction)
+    end_img = end_anchor(manifest, root, character, anim_id, direction)
+    loopable = start_img is not None and start_img == end_img
     action = {
         "kind": "anim", "dir": animation_frame_dir(root, character, anim_id, direction),
         "repeat": max(int(loops), 1) if loopable else 1,
