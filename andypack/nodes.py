@@ -221,7 +221,7 @@ def _build_animation_bundle(r: dict) -> dict:
         "negative": r["negative"],
         "is_fflf": is_fflf,
         "length": as_int("length"),
-        "fps": as_int("fps"),
+        "fps": max(as_int("fps"), 1),
         "width": as_int("width"),
         "height": as_int("height"),
         "shift": float(meta["shift"]) if meta.get("shift") is not None else 0.0,

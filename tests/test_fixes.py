@@ -120,3 +120,20 @@ def test_unsafe_direction_name_rejected():
          "animations": {}, "defaults": {}}
     with pytest.raises(ManifestError):
         validate_manifest(m)
+
+
+def test_missing_gen_params_rejected():
+    m = {"version": 1, "poses": {"base": {"directions": {"EAST": {}}}},
+         "animations": {"walk": {"start_from": {"ref": "base"}, "directions": {"EAST": {}}}},
+         "defaults": {}}  # no width/height/length/fps anywhere
+    with pytest.raises(ManifestError):
+        validate_manifest(m)
+
+
+def test_nonpositive_gen_params_rejected():
+    m = {"version": 1, "poses": {"base": {"directions": {"EAST": {}}}},
+         "animations": {"walk": {"start_from": {"ref": "base"}, "directions": {"EAST": {}},
+            "length": -3, "fps": 8, "width": 16, "height": 16}},
+         "defaults": {}}
+    with pytest.raises(ManifestError):
+        validate_manifest(m)

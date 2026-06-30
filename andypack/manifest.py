@@ -64,6 +64,22 @@ def _validate_gen_params(label: str, obj: dict) -> None:
         )
 
 
+def _require_positive_gen_params(label: str, anim: dict, defaults: dict) -> None:
+    """Each animation's effective width/height/length/fps must be a positive int.
+    Resolved value comes from the animation itself, falling back to `defaults`."""
+    for field in ("length", "fps", "width", "height"):
+        val = anim.get(field, defaults.get(field))
+        if val is None:
+            raise ManifestError(
+                f"{label} has no resolvable {field!r} (set it on the "
+                "animation or in defaults)"
+            )
+        if not isinstance(val, int) or val <= 0:
+            raise ManifestError(
+                f"{label} {field!r} must be a positive integer, got {val!r}"
+            )
+
+
 def _validate_view_phrases(manifest: Manifest) -> None:
     """`view_phrases`, when present, must be a map of direction-name -> string. It
     supplies the affirmative per-direction camera language injected via the
@@ -116,6 +132,9 @@ def _validate_refs(manifest: Manifest) -> None:
                 "(I2V needs a start image)"
             )
         _validate_gen_params(f"animation {aid!r}", anim)
+        _require_positive_gen_params(
+            f"animation {aid!r}", anim, manifest.get("defaults", {})
+        )
         _validate_directions(f"animation {aid!r}", anim)
 
 

@@ -205,7 +205,8 @@ def test_save_manifest_surfaces_lint_warnings(tmp_path, monkeypatch):
     # A 4n+1-violating length is a non-fatal lint warning.
     m = {
         "version": 1, "poses": {},
-        "animations": {"a": {"length": 30, "start_from": {"ref": "a"},
+        "animations": {"a": {"length": 30, "fps": 8, "width": 16, "height": 16,
+                              "start_from": {"ref": "a"},
                               "directions": {"EAST": {}}}},
         "defaults": {},
     }
