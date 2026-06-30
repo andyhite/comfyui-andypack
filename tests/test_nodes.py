@@ -550,3 +550,12 @@ def test_sprite_trim_pivot_node():
     )
     assert out.shape[-1] == 4
     assert trim["frames"][0]["pivot"]
+
+
+# --- SpritesheetPacker node -------------------------------------------------- #
+
+def test_spritesheet_packer_node():
+    batch = torch.ones((4, 6, 6, 4))
+    sheet, atlas = nodes.SpritesheetPacker().pack(batch, layout="grid", columns=2,
+        padding=1, extrude=0, power_of_two=False, fps=8)
+    assert sheet.shape[0] == 1 and atlas["frames"][0]["duration_ms"] == 125

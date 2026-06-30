@@ -1021,6 +1021,58 @@ class SpriteTrimPivot:
         return (out, {"frames": rects, "trim_mode": trim_mode, "pivot_kind": pivot})
 
 
+class SpritesheetPacker:
+    CATEGORY = "andypack/Sprite"
+    FUNCTION = "pack"
+    RETURN_TYPES = ("IMAGE", "ANIM_ATLAS")
+    RETURN_NAMES = ("SHEET", "ATLAS")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "layout": (["grid", "horizontal", "vertical", "maxrects"],),
+                "columns": ("INT", {"default": 0, "min": 0}),
+                "padding": ("INT", {"default": 2, "min": 0}),
+                "extrude": ("INT", {"default": 0, "min": 0}),
+                "power_of_two": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "trim_data": ("SPRITE_TRIM",),
+                "fps": ("INT", {"forceInput": True}),
+                "names": ("STRING", {"default": ""}),
+            },
+        }
+
+    def pack(
+        self,
+        image,
+        layout,
+        columns,
+        padding,
+        extrude,
+        power_of_two,
+        trim_data=None,
+        fps=None,
+        names="",
+    ):
+        sheet, atlas = sprites.pack_sheet(
+            image,
+            layout=layout,
+            columns=columns,
+            padding=padding,
+            extrude=extrude,
+            power_of_two=power_of_two,
+            trim_data=trim_data,
+        )
+        if fps is not None:
+            duration_ms = round(1000 / max(fps, 1))
+            for frame in atlas["frames"]:
+                frame["duration_ms"] = duration_ms
+        return (sheet, atlas)
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
@@ -1040,6 +1092,7 @@ NODE_CLASS_MAPPINGS = {
     "MergedPromptReport": MergedPromptReport,
     "RegenQueue": RegenQueue,
     "SpriteTrimPivot": SpriteTrimPivot,
+    "SpritesheetPacker": SpritesheetPacker,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
@@ -1060,4 +1113,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MergedPromptReport": "Prompt Report",
     "RegenQueue": "Regen Queue",
     "SpriteTrimPivot": "Sprite Trim & Pivot",
+    "SpritesheetPacker": "Spritesheet Packer",
 }
