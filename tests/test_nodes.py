@@ -574,3 +574,39 @@ def test_atlas_metadata_writer(tmp_path, monkeypatch):
     d = out["result"][0] if isinstance(out, dict) else out[0]
     assert os.path.exists(os.path.join(d, "walk.png"))
     assert os.path.exists(os.path.join(d, "walk.json"))
+
+
+# --- CharacterAtlasBuilder -------------------------------------------------- #
+
+def test_character_atlas_builder_renders_pose_sheet(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST")
+    images.save_image_png(
+        _img(4, 4),
+        resolve.pose_image_path(tree.root, tree.char, "base", "EAST"),
+    )
+    sheet, atlas, report = nodes.CharacterAtlasBuilder().build(
+        manifest, tree.char, "pose", "base", "all", "per_direction_rows", 2, False
+    )
+    assert sheet.shape[0] == 1
+    assert atlas["directions"] == ["EAST"]
+    assert atlas["columns"] == 1
+    assert "Rendered:" in report
+    assert "EAST" in report
+
+
+def test_character_atlas_builder_raises_when_nothing_rendered(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()
+    with pytest.raises(RuntimeError, match="no rendered directions"):
+        nodes.CharacterAtlasBuilder().build(
+            manifest, tree.char, "pose", "base", "all", "grid", 0, False
+        )
+
+
+def test_character_atlas_builder_is_changed_volatile_without_character(manifest, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: "output/characters")
+    token = nodes.CharacterAtlasBuilder.IS_CHANGED(
+        manifest, "", "pose", "", "all", "grid", 0, False
+    )
+    assert token != token

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from datetime import datetime, timezone
+
+import torch
 
 from andypack import api, atlas as _atlas_mod, images, io, manikins, resolve, sprites
 from andypack.manifest import collect_warnings, load_manifest
@@ -65,6 +68,15 @@ def _character_choices():
 
 def _characters_root():
     return api.characters_dir() or "output/characters"
+
+
+_CARDINAL_4 = ["EAST", "SOUTH", "WEST", "NORTH"]
+
+
+def _atlas_directions(directions_arg: str) -> list[str]:
+    if directions_arg == "cardinal_4":
+        return _CARDINAL_4
+    return list(manikins.CANONICAL_DIRECTIONS)
 
 
 class AnimationManifestLoader:
@@ -1121,6 +1133,110 @@ class AtlasMetadataWriter:
         return {"ui": {}, "result": (output_dir,)}
 
 
+class CharacterAtlasBuilder:
+    """Pack rendered directions of a pose or animation into a multi-direction sprite sheet.
+
+    Resolves which directions are complete (via rendered_directions), loads each
+    direction's image (first frame for animations), stacks them, and calls
+    pack_sheet. Reports rendered vs skipped directions."""
+
+    CATEGORY = "andypack/Sprite"
+    FUNCTION = "build"
+    RETURN_TYPES = ("IMAGE", "ANIM_ATLAS", "STRING")
+    RETURN_NAMES = ("SHEET", "ATLAS", "REPORT")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+                "kind": (["animation", "pose"],),
+                "id": ("STRING", {"default": ""}),
+                "directions": (["all", "cardinal_4", "custom"],),
+                "layout": (["per_direction_rows", "grid"],),
+                "padding": ("INT", {"default": 2, "min": 0}),
+                "power_of_two": ("BOOLEAN", {"default": False}),
+            }
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character, kind, id, directions, layout, padding, power_of_two):
+        if character in ("", _NO_CHARACTER) or not id:
+            return float("nan")
+        root = _characters_root()
+        try:
+            eff = effective_manifest(manifest, root, character)
+            dirs = _atlas_directions(directions)
+            pairs = resolve.rendered_directions(eff, root, character, kind, id, dirs)
+        except Exception:
+            return float("nan")
+        if not pairs:
+            return float("nan")
+        parts = []
+        for d, path in pairs:
+            if kind == "pose":
+                parts.append(f"{d}:{path}:{_mtime(path)}")
+            else:
+                meta = resolve.animation_meta_path(root, character, id, d)
+                parts.append(f"{d}:{path}:{_mtime(meta)}")
+        return "|".join(parts)
+
+    def build(self, manifest, character, kind, id, directions, layout, padding, power_of_two):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("CharacterAtlasBuilder: select a character first")
+        if not id:
+            raise RuntimeError("CharacterAtlasBuilder: pick a pose/animation id")
+        root = _characters_root()
+        manifest = effective_manifest(manifest, root, character)
+        dirs = _atlas_directions(directions)
+        pairs = resolve.rendered_directions(manifest, root, character, kind, id, dirs)
+        if not pairs:
+            raise RuntimeError(
+                f"CharacterAtlasBuilder: no rendered directions for {kind} {id!r} "
+                f"(tried: {dirs})"
+            )
+        rendered_dirs = [d for d, _ in pairs]
+        skipped = [d for d in dirs if d not in rendered_dirs]
+        tensors = []
+        for d, path in pairs:
+            if kind == "pose":
+                tensors.append(images.load_image_tensor(path, keep_alpha=True))
+            else:
+                frame_files = sorted(
+                    n for n in os.listdir(path)
+                    if n.startswith("frame_") and n.endswith(".png")
+                )
+                if not frame_files:
+                    raise RuntimeError(
+                        f"CharacterAtlasBuilder: {id!r}@{d} has no frames in {path}"
+                    )
+                tensors.append(
+                    images.load_image_tensor(
+                        os.path.join(path, frame_files[0]), keep_alpha=True
+                    )
+                )
+        batch = torch.cat(tensors, dim=0)
+        n = len(rendered_dirs)
+        if layout == "per_direction_rows":
+            columns = 1
+        else:
+            columns = math.ceil(math.sqrt(n))
+        sheet, _ = sprites.pack_sheet(
+            batch, layout="grid", columns=columns,
+            padding=padding, power_of_two=power_of_two,
+        )
+        atlas = {
+            "directions": rendered_dirs,
+            "layout": layout,
+            "columns": columns,
+        }
+        rendered_line = "Rendered: " + ", ".join(rendered_dirs)
+        skipped_line = "Skipped: " + (", ".join(skipped) if skipped else "none")
+        report = f"{rendered_line}\n{skipped_line}"
+        return (sheet, atlas, report)
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
@@ -1142,6 +1258,7 @@ NODE_CLASS_MAPPINGS = {
     "SpriteTrimPivot": SpriteTrimPivot,
     "SpritesheetPacker": SpritesheetPacker,
     "AtlasMetadataWriter": AtlasMetadataWriter,
+    "CharacterAtlasBuilder": CharacterAtlasBuilder,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
@@ -1164,4 +1281,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SpriteTrimPivot": "Sprite Trim & Pivot",
     "SpritesheetPacker": "Spritesheet Packer",
     "AtlasMetadataWriter": "Atlas Metadata Writer",
+    "CharacterAtlasBuilder": "Character Atlas Builder",
 }

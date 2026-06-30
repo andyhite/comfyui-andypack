@@ -568,6 +568,34 @@ def _outdated(manifest: Manifest, root: str, character: str, ref: str, direction
     return False
 
 
+# --- rendered direction enumeration ----------------------------------------- #
+
+def rendered_directions(
+    manifest: Manifest,
+    root: str,
+    character: str,
+    kind: str,
+    entity_id: str,
+    directions: list[str],
+) -> list[tuple[str, str]]:
+    """Return (direction, path) for each direction in `directions` that is complete.
+
+    For a pose, path is the PNG; for an animation, it is the frame directory.
+    Incomplete directions are skipped, preserving the input order.
+    No torch imports — pure path helpers + node_complete only.
+    """
+    result: list[tuple[str, str]] = []
+    for direction in directions:
+        if not node_complete(manifest, root, character, entity_id, direction):
+            continue
+        if kind == "pose":
+            path = pose_image_path(root, character, entity_id, direction)
+        else:
+            path = animation_frame_dir(root, character, entity_id, direction)
+        result.append((direction, path))
+    return result
+
+
 # --- resolve + status ------------------------------------------------------- #
 
 def resolve_pose(manifest: Manifest, root: str, character: str, pose_id: str, direction: str) -> dict:

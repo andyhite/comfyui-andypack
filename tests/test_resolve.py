@@ -235,3 +235,26 @@ def test_resolution_pass_memoizes_without_changing_results(manifest, tree):
         assert resolve.outdated(manifest, tree.root, tree.char, "base", "EAST") == memoed
     assert resolve._OUTDATED_MEMO is None  # dropped on exit
     assert memoed == bare is True
+
+
+def test_rendered_directions_skips_unrendered(tmp_path):
+    root = str(tmp_path)
+    char = "hero"
+    manifest = {
+        "version": 1,
+        "poses": {"base": {"directions": {"EAST": {}, "WEST": {}}}},
+        "animations": {},
+        "defaults": {},
+    }
+    base = os.path.join(root, char, "_base")
+    os.makedirs(base, exist_ok=True)
+    open(os.path.join(base, "EAST.png"), "wb").close()
+    from andypack import io
+    io.atomic_write_json(
+        os.path.join(base, "EAST.json"),
+        io.build_pose_sidecar(
+            {"prompt_hash": "sha1:x", "direction": "EAST"}, created_utc="t"
+        ),
+    )
+    got = resolve.rendered_directions(manifest, root, char, "pose", "base", ["EAST", "WEST"])
+    assert [d for d, _ in got] == ["EAST"]
