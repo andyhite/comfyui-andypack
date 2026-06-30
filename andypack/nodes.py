@@ -6,7 +6,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from andypack import api, images, io, manikins, resolve
+from andypack import api, images, io, manikins, resolve, sprites
 from andypack.manifest import collect_warnings, load_manifest
 from andypack.resolve import effective_manifest, resolve_animation, resolve_pose
 
@@ -978,6 +978,49 @@ class MirrorFrameWriter:
         return dst_d
 
 
+class SpriteTrimPivot:
+    CATEGORY = "andypack/Sprite"
+    FUNCTION = "trim"
+    RETURN_TYPES = ("IMAGE", "SPRITE_TRIM")
+    RETURN_NAMES = ("TRIMMED", "TRIM_DATA")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "alpha_threshold": (
+                    "FLOAT",
+                    {"default": 0.03, "min": 0.0, "max": 1.0, "step": 0.01},
+                ),
+                "trim_mode": (["union", "per_frame"],),
+                "pivot": (["center", "bottom_center", "top_center", "custom"],),
+            },
+            "optional": {
+                "pivot_x": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0}),
+                "pivot_y": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0}),
+                "pad": ("INT", {"default": 0, "min": 0, "max": 256}),
+            },
+        }
+
+    def trim(
+        self,
+        image,
+        alpha_threshold,
+        trim_mode,
+        pivot,
+        pivot_x=0.5,
+        pivot_y=1.0,
+        pad=0,
+    ):
+        out, rects = sprites.trim_batch(image, threshold=alpha_threshold, mode=trim_mode, pad=pad)
+        h, w = int(out.shape[1]), int(out.shape[2])
+        px, py = sprites.pivot_point(w, h, pivot, custom=(pivot_x, pivot_y))
+        for r in rects:
+            r["pivot"] = [px, py]
+        return (out, {"frames": rects, "trim_mode": trim_mode, "pivot_kind": pivot})
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
@@ -996,6 +1039,7 @@ NODE_CLASS_MAPPINGS = {
     "CoverageReport": CoverageReport,
     "MergedPromptReport": MergedPromptReport,
     "RegenQueue": RegenQueue,
+    "SpriteTrimPivot": SpriteTrimPivot,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
@@ -1015,4 +1059,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "CoverageReport": "Coverage Report",
     "MergedPromptReport": "Prompt Report",
     "RegenQueue": "Regen Queue",
+    "SpriteTrimPivot": "Sprite Trim & Pivot",
 }

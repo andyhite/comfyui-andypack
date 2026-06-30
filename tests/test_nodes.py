@@ -532,3 +532,21 @@ def test_pose_selector_sets_empty_pose_reference(manifest, tree, monkeypatch):
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
     (pose,) = nodes.CharacterPoseSelector().select(manifest, tree.char, "", "fighting_stance", "EAST")
     assert images.is_empty(pose["pose_reference"])
+
+
+# --- SpriteTrimPivot node ---------------------------------------------------- #
+
+def test_sprite_trim_pivot_node():
+    img = torch.zeros((1, 8, 8, 4))
+    img[0, 2:6, 2:6, :] = 1.0
+    out, trim = nodes.SpriteTrimPivot().trim(
+        img,
+        alpha_threshold=0.03,
+        trim_mode="union",
+        pivot="bottom_center",
+        pivot_x=0.5,
+        pivot_y=1.0,
+        pad=0,
+    )
+    assert out.shape[-1] == 4
+    assert trim["frames"][0]["pivot"]
