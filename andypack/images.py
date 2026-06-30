@@ -56,7 +56,7 @@ def _alpha_from_mask(mask: torch.Tensor, h: int, w: int) -> torch.Tensor:
 
 
 def to_rgba(image: torch.Tensor, mask: "torch.Tensor | None" = None) -> torch.Tensor:
-    """Return an [H,W,4] RGBA tensor from the first frame of an IMAGE batch.
+    """Return a [1,H,W,4] RGBA tensor from the first frame of an IMAGE batch.
 
     - If *mask* ([B,H,W]) is given, it becomes the alpha channel (resized if needed).
     - Else if *image* is already 4-ch, the existing alpha is kept.
@@ -72,7 +72,7 @@ def to_rgba(image: torch.Tensor, mask: "torch.Tensor | None" = None) -> torch.Te
         a = frame[..., 3:4]
     else:
         a = torch.ones((h, w, 1), dtype=frame.dtype)
-    return torch.cat([rgb, a], dim=-1)
+    return torch.cat([rgb, a], dim=-1).unsqueeze(0)
 
 
 def alpha_bbox(
@@ -107,7 +107,7 @@ def save_image_png(
     frame = image[0] if image.dim() == 4 else image
     has_alpha = mask is not None or frame.shape[-1] == 4
     if has_alpha:
-        rgba = to_rgba(image, mask)
+        rgba = to_rgba(image, mask)[0]
         arr = (rgba.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
     else:
         arr = (frame[..., :3].clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)

@@ -51,24 +51,24 @@ def test_to_rgba_with_mask(tmp_path):
     mask = torch.zeros((1, 4, 4))
     mask[:, :2, :2] = 1.0
     out = images.to_rgba(img, mask=mask)
-    assert out.shape == (4, 4, 4)
-    assert float(out[0, 0, 3]) == 1.0
-    assert float(out[3, 3, 3]) == 0.0
+    assert out.shape == (1, 4, 4, 4)
+    assert float(out[0, 0, 0, 3]) == 1.0
+    assert float(out[0, 3, 3, 3]) == 0.0
 
 
 def test_to_rgba_from_rgba_input():
     rgba = torch.ones((1, 2, 2, 4))
     rgba[..., 3] = 0.5
     out = images.to_rgba(rgba)
-    assert out.shape == (2, 2, 4)
-    assert abs(float(out[0, 0, 3]) - 0.5) < 1e-5
+    assert out.shape == (1, 2, 2, 4)
+    assert abs(float(out[0, 0, 0, 3]) - 0.5) < 1e-5
 
 
 def test_to_rgba_from_rgb_gets_full_alpha():
     rgb = torch.ones((1, 3, 3, 3)) * 0.5
     out = images.to_rgba(rgb)
-    assert out.shape == (3, 3, 4)
-    assert float(out[0, 0, 3]) == 1.0
+    assert out.shape == (1, 3, 3, 4)
+    assert float(out[0, 0, 0, 3]) == 1.0
 
 
 def test_alpha_bbox_rgb_returns_full_rect():
