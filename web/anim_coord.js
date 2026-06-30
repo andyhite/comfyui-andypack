@@ -7,9 +7,10 @@ console.debug(`${TAG} anim_coord.js loaded`);
 const NO_CHARACTER = "(select character)"; // must match nodes._NO_CHARACTER
 const ALL_CATEGORIES = "(all)"; // synthetic category: show every id, no filter
 const UNCATEGORIZED = "(uncategorized)"; // bucket label for ids with no category
-// Status indicators prefixed onto combo options.
-//   ✅ generated · 🟢 ready · 🟠 stale · 🔴 blocked
-const GLYPH = { generated: "✅", ready: "🟢", blocked: "🔴", stale: "🟠" };
+// Status indicators prefixed onto combo options. Distinct colors so "done"
+// (green check) and "ready" (blue) don't both read as green.
+//   ✅ generated · 🔵 ready · 🟠 stale · 🔴 blocked
+const GLYPH = { generated: "✅", ready: "🔵", blocked: "🔴", stale: "🟠" };
 
 // Inputs stay disabled until the extension is live AND the pack's routes answer.
 let READY = false;
