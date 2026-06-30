@@ -1813,6 +1813,75 @@ class BoomerangLoopWriter:
         return {"ui": {}, "result": (output_dir,)}
 
 
+class FrameTimingNormalizer:
+    """Retime a rendered frame batch to an exact target count.
+
+    All directions of a state (and mirror / interpolation pairs) share a
+    loop-clean frame count when every clip passes through this node before
+    writing.  Target resolution order:
+
+    1. ``target_length`` when > 0 (explicit override).
+    2. The wired ``animation``'s meta ``length`` field when an animation is
+       connected.
+    3. The current frame count (no-op pass-through when neither is wired).
+
+    When ``enforce_4n1`` is True the resolved target is snapped UP to the
+    nearest value satisfying ``(target - 1) % 4 == 0`` (Wan-friendly lengths:
+    5, 9, 13, 17, 21, 25, 29, 33, 37, …).  A target that already satisfies
+    the constraint is unchanged.
+
+    The LENGTH output always reflects the actual emitted frame count so a
+    downstream writer's meta count stays in sync.
+    """
+
+    CATEGORY = "andypack/Animation"
+    FUNCTION = "run"
+    RETURN_TYPES = ("IMAGE", "INT")
+    RETURN_NAMES = ("FRAMES", "LENGTH")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "frames": ("IMAGE",),
+                "mode": (["resample", "trim", "pad_hold"],),
+                "enforce_4n1": ("BOOLEAN", {"default": True}),
+            },
+            "optional": {
+                "animation": ("ANIM_ANIMATION", {"forceInput": True}),
+                "target_length": ("INT", {"default": 0, "min": 0}),
+            },
+        }
+
+    def run(
+        self,
+        frames: torch.Tensor,
+        mode: str,
+        enforce_4n1: bool,
+        animation=None,
+        target_length: int = 0,
+    ):
+        # Resolve target length from the three sources in priority order.
+        if target_length > 0:
+            target = int(target_length)
+        elif animation is not None:
+            target = int(animation["_meta"].get("length") or 0)
+        else:
+            target = int(frames.shape[0])
+        # A resolved zero means the animation meta carried no usable length;
+        # fall back to the current count so this node is a no-op.
+        if target <= 0:
+            target = int(frames.shape[0])
+        # Snap target UP to the nearest 4n+1 value when requested.
+        # Formula: n s.t. (n-1) % 4 == 0, e.g. 1,5,9,13,…,33,37,…
+        # The expression (4 - (target-1) % 4) % 4 gives the gap to add;
+        # it is 0 when target already satisfies the constraint.
+        if enforce_4n1 and target > 0:
+            target = target + (4 - (target - 1) % 4) % 4
+        out = images.retime_batch(frames, target, mode)
+        return (out, int(out.shape[0]))
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
@@ -1843,6 +1912,7 @@ NODE_CLASS_MAPPINGS = {
     "AtlasMetadataWriter": AtlasMetadataWriter,
     "CharacterAtlasBuilder": CharacterAtlasBuilder,
     "TurnaroundSheet": TurnaroundSheet,
+    "FrameTimingNormalizer": FrameTimingNormalizer,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
@@ -1874,4 +1944,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AtlasMetadataWriter": "Atlas Metadata Writer",
     "CharacterAtlasBuilder": "Character Atlas Builder",
     "TurnaroundSheet": "Turnaround Sheet",
+    "FrameTimingNormalizer": "Frame Timing Normalizer",
 }

@@ -788,3 +788,84 @@ def test_boomerang_writes_palindrome(tmp_path, monkeypatch):
 def test_tween_requires_fflf():
     with pytest.raises(RuntimeError):
         nodes.TweenClipProvider()._validate_fflf(start=None, end=None)
+
+
+# --- FrameTimingNormalizer -------------------------------------------------- #
+
+def test_frame_timing_normalizer_registered():
+    assert "FrameTimingNormalizer" in nodes.NODE_CLASS_MAPPINGS
+    assert "FrameTimingNormalizer" in nodes.NODE_DISPLAY_NAME_MAPPINGS
+
+
+def test_frame_timing_normalizer_resample_to_target():
+    f = torch.zeros((5, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "resample", enforce_4n1=False, target_length=9
+    )
+    assert out.shape[0] == 9
+    assert length == 9
+
+
+def test_frame_timing_normalizer_length_output_matches_frames():
+    # LENGTH must equal the actual emitted count, not the requested target.
+    f = torch.zeros((4, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "trim", enforce_4n1=False, target_length=10
+    )
+    assert length == int(out.shape[0])
+    assert length == 4  # trim can't invent frames
+
+
+def test_frame_timing_normalizer_4n1_snap_up():
+    # 6 -> nearest 4n+1 above = 9
+    f = torch.zeros((5, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "pad_hold", enforce_4n1=True, target_length=6
+    )
+    assert out.shape[0] == 9
+    assert length == 9
+
+
+def test_frame_timing_normalizer_4n1_no_snap_on_aligned():
+    # 33 is already 4n+1 (32 % 4 == 0); must not change.
+    f = torch.zeros((30, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "resample", enforce_4n1=True, target_length=33
+    )
+    assert length == 33
+
+
+def test_frame_timing_normalizer_target_from_animation():
+    anim = {"_meta": {"length": 17, "fps": 16}, "output_dir": ""}
+    f = torch.zeros((5, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "resample", enforce_4n1=False, animation=anim
+    )
+    assert length == 17
+
+
+def test_frame_timing_normalizer_target_length_overrides_animation():
+    anim = {"_meta": {"length": 33, "fps": 16}, "output_dir": ""}
+    f = torch.zeros((5, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "resample", enforce_4n1=False, animation=anim, target_length=9
+    )
+    assert length == 9  # explicit target_length wins
+
+
+def test_frame_timing_normalizer_noop_when_no_target():
+    f = torch.zeros((7, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "resample", enforce_4n1=False
+    )
+    assert length == 7  # pass-through when no target specified
+
+
+def test_frame_timing_normalizer_animation_zero_length_falls_back():
+    # When animation._meta.length is 0 the node should pass through.
+    anim = {"_meta": {"length": 0, "fps": 16}, "output_dir": ""}
+    f = torch.zeros((5, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "resample", enforce_4n1=False, animation=anim
+    )
+    assert length == 5

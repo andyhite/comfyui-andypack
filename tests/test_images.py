@@ -117,3 +117,68 @@ def test_ping_pong_appends_reversed_interior():
     f = torch.arange(4).float().reshape(4, 1, 1, 1).repeat(1, 2, 2, 3)
     out = images.apply_play_mode(f, "ping_pong")
     assert out.shape[0] == 6  # 0,1,2,3,2,1
+
+
+def test_retime_resample_to_target():
+    import torch
+    f = torch.arange(4).float().reshape(4, 1, 1, 1).repeat(1, 2, 2, 3)
+    out = images.retime_batch(f, 8, "resample")
+    assert out.shape[0] == 8
+
+
+def test_retime_resample_identity():
+    import torch
+    f = torch.zeros((5, 2, 2, 3))
+    out = images.retime_batch(f, 5, "resample")
+    assert out.shape[0] == 5
+
+
+def test_retime_resample_single_output():
+    import torch
+    f = torch.zeros((4, 2, 2, 3))
+    out = images.retime_batch(f, 1, "resample")
+    assert out.shape[0] == 1
+
+
+def test_retime_trim_truncates():
+    import torch
+    f = torch.zeros((8, 2, 2, 3))
+    out = images.retime_batch(f, 4, "trim")
+    assert out.shape[0] == 4
+
+
+def test_retime_trim_over_n_returns_all():
+    import torch
+    f = torch.zeros((4, 2, 2, 3))
+    out = images.retime_batch(f, 10, "trim")
+    assert out.shape[0] == 4  # can't invent frames via trim
+
+
+def test_retime_pad_hold_pads_last_frame():
+    import torch
+    f = torch.zeros((3, 2, 2, 3))
+    f[2] = 0.5  # last frame has distinct value
+    out = images.retime_batch(f, 6, "pad_hold")
+    assert out.shape[0] == 6
+    assert float(out[5].mean()) == pytest.approx(0.5)
+
+
+def test_retime_pad_hold_truncates_when_over():
+    import torch
+    f = torch.zeros((6, 2, 2, 3))
+    out = images.retime_batch(f, 4, "pad_hold")
+    assert out.shape[0] == 4
+
+
+def test_retime_target_clamped_to_1():
+    import torch
+    f = torch.zeros((4, 2, 2, 3))
+    out = images.retime_batch(f, 0, "resample")
+    assert out.shape[0] == 1
+
+
+def test_retime_empty_batch_returns_unchanged():
+    import torch
+    f = torch.zeros((0, 2, 2, 3))
+    out = images.retime_batch(f, 4, "resample")
+    assert out.shape[0] == 0

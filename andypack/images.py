@@ -247,6 +247,51 @@ def assemble_playback(segments: list) -> torch.Tensor:
     return torch.cat(parts, dim=0)
 
 
+def retime_batch(
+    frames: torch.Tensor, target: int, mode: str = "resample"
+) -> torch.Tensor:
+    """Retime an IMAGE batch [N, H, W, C] to a target frame count.
+
+    Args:
+        frames: Tensor of shape [N, H, W, C].
+        target: Desired output frame count; clamped to >=1.
+        mode: One of ``"resample"``, ``"trim"``, or ``"pad_hold"``.
+
+            - ``resample``: Maps each output index ``i`` to source index
+              ``round(i * (N-1) / (target-1))`` (when target > 1; a single
+              output takes frame 0). Handles target > N by duplicating frames
+              and target < N by dropping frames, uniformly.
+            - ``trim``: Returns the first ``min(target, N)`` frames.  When
+              target > N all N frames are returned; frames cannot be invented
+              by trimming.
+            - ``pad_hold``: Returns the first ``target`` frames when
+              target <= N; otherwise appends the last frame repeated until
+              the batch reaches ``target``.
+
+    Returns:
+        Retimed tensor [target', H, W, C].  For ``trim`` when target > N,
+        target' equals N (not target).
+    """
+    n = int(frames.shape[0])
+    target = max(1, int(target))
+    if n == 0:
+        return frames
+    if mode == "resample":
+        if target == 1:
+            indices = [0]
+        else:
+            indices = [round(i * (n - 1) / (target - 1)) for i in range(target)]
+        return torch.stack([frames[idx] for idx in indices])
+    if mode == "trim":
+        return frames[:min(target, n)]
+    if mode == "pad_hold":
+        if target <= n:
+            return frames[:target]
+        pad_count = target - n
+        return torch.cat([frames, frames[-1:].repeat(pad_count, 1, 1, 1)])
+    raise ValueError(f"retime_batch: unknown mode {mode!r}")
+
+
 def apply_play_mode(
     frames: torch.Tensor, mode: str, hold_frames: int = 0
 ) -> torch.Tensor:
