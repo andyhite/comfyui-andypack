@@ -2,6 +2,7 @@ import os
 
 from andypack import resolve
 from andypack import io
+from andypack import nodes
 
 
 def _render_pose(root, char, pose, direction, manifest):
@@ -75,3 +76,21 @@ def test_effective_manifest_reflects_base_edit_with_overlay(tmp_path):
              "globals": {"pose": {"positive_prompt": "v2"}}}
     eff2 = resolve.effective_manifest(base2, root, char)
     assert eff2["globals"]["pose"]["positive_prompt"] == "v2"
+
+
+def test_mirror_writer_is_changed_tracks_source_mtime(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    char = "hero"
+    manifest = {"version": 1, "mirror_map": {"WEST": "EAST"},
+                "poses": {"p": {"from": {"ref": "base"}, "directions": {"EAST": {}, "WEST": {}}},
+                          "base": {"directions": {"EAST": {}}}},
+                "animations": {}, "defaults": {}}
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    src = resolve.pose_image_path(root, char, "p", "EAST")
+    os.makedirs(os.path.dirname(src), exist_ok=True)
+    with open(src, "wb") as fh:
+        fh.write(b"a")
+    fp1 = nodes.MirrorFrameWriter.IS_CHANGED(manifest, char, "pose", "p", "WEST")
+    os.utime(src, (10**9, 10**9))  # bump mtime
+    fp2 = nodes.MirrorFrameWriter.IS_CHANGED(manifest, char, "pose", "p", "WEST")
+    assert fp1 != fp2

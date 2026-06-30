@@ -879,6 +879,25 @@ class MirrorFrameWriter:
             }
         }
 
+    @classmethod
+    def IS_CHANGED(cls, manifest, character, kind, id, direction):
+        if character in ("", _NO_CHARACTER) or not id or not direction:
+            return float("nan")
+        root = _characters_root()
+        try:
+            eff = effective_manifest(manifest, root, character)
+            src_dir = (eff.get("mirror_map") or {}).get(direction)
+            if not src_dir:
+                return float("nan")
+            if kind == "pose":
+                src = resolve.pose_image_path(root, character, id, src_dir)
+                return f"pose:{src}:{_mtime(src)}"
+            d = resolve.animation_frame_dir(root, character, id, src_dir)
+            meta = resolve.animation_meta_path(root, character, id, src_dir)
+            return f"anim:{d}:{_mtime(meta)}"
+        except Exception:
+            return float("nan")
+
     def write(self, manifest, character, kind, id, direction):
         if character in ("", _NO_CHARACTER):
             raise RuntimeError("MirrorFrameWriter: select a character first")
