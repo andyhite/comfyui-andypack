@@ -24,18 +24,15 @@
   },
   "globals": {
     "animation": {
-      "negative_prompt": "{identity_prompt}, extra limbs, extra arms, mutated hands, fused fingers, deformed, blurry, low quality, jpeg artifacts, watermark, text"
+      "negative_prompt": "{character_prompt}, extra limbs, extra arms, mutated hands, fused fingers, deformed, blurry, low quality, jpeg artifacts, watermark, text"
     },
     "pose": {
-      "negative_prompt": "{identity_prompt}, {direction_prompt}, deformed, blurry, low quality, jpeg artifacts, watermark, text"
+      "negative_prompt": "{character_prompt}, {direction_prompt}, deformed, blurry, low quality, jpeg artifacts, watermark, text"
     }
   },
   "poses": {
     "base": {
-      "from": {
-        "ref": "concept"
-      },
-      "positive_prompt": "Edit the reference image to capture the character facing {direction_name}.\n\nThe character holds the exact same neutral standing pose in every direction — standing upright and still, weight even on both feet, legs straight and together, both arms relaxed at the sides. Only the facing direction changes; the pose itself never changes between directions.\n\nPreserve the character's identity exactly as in the reference image: {identity_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
+      "positive_prompt": "Edit the first image — the character reference — to show that exact character facing {direction_name}, using the gray articulated mannequin in the second image purely as the pose-and-camera-angle guide for the body orientation.\n\nThe character holds a neutral standing pose: standing upright and still, weight even on both feet, legs straight and together, both arms relaxed at the sides. Match the body's facing direction and viewing angle to the mannequin; do not copy the mannequin's gray featureless surface, proportions, or lack of detail.\n\nPreserve the character's identity, design, colors, and proportions exactly as in the first image: {character_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "a clean full-body side profile, the whole character turned 90 degrees to face the right edge of the frame — the side-on orientation a character has when facing right in a 2D side-scrolling platformer, standing upright with legs straight and together. The head is shown in pure lateral profile: a single hemisphere fills the head silhouette as one rounded lobe, with the deep central groove that divides the two halves running along the top of the head and away from the camera, out of view. Exactly one eye is visible, on the side facing us. The body is fully sideways, chest toward the right edge, one arm at the near side, the near leg overlapping the far leg, both shoes seen edge-on with the toes pointing right.",
@@ -54,6 +51,17 @@
         "NORTH": {
           "positive_prompt": "a symmetrical back view, the whole character turned 180 degrees to face directly away — an orthographic character-turnaround back pose. The smooth rounded rear of the head faces the viewer and the face is turned fully away. The deep central groove that divides the two hemispheres runs straight down the vertical midline of the back of the head, splitting it into symmetric left and right halves. The back of the body and clothing is in view, both arms at the sides, both shoes seen from behind with the heels and soles showing, toes pointing away, symmetrical down the center line.",
           "negative_prompt": "face, facial features, eyes"
+        },
+        "WEST": {
+          "positive_prompt": "a clean full-body side profile, the whole character turned 90 degrees to face the left edge of the frame — the side-on orientation a character has when facing left in a 2D side-scrolling platformer, standing upright with legs straight and together. The head is shown in pure lateral profile: a single hemisphere fills the head silhouette as one rounded lobe, with the deep central groove that divides the two halves running along the top of the head and away from the camera, out of view. Exactly one eye is visible, on the side facing us. The body is fully sideways, chest toward the left edge, one arm at the near side, the near leg overlapping the far leg, both shoes seen edge-on with the toes pointing left.",
+          "negative_prompt": "far eye, second eye, both eyes visible, two eyes"
+        },
+        "SOUTH_WEST": {
+          "positive_prompt": "a three-quarter front view, the character turned about 45 degrees to face toward the lower-left of the frame — halfway between the front view and the left side profile, an orthographic character-turnaround three-quarter front pose, the head angled toward the lower left. Both eyes are in view, the near eye larger and the far eye foreshortened. The deep central groove that divides the two hemispheres runs down the front but off-center, shifted toward the near side and curving up over the crown, so the near hemisphere reads larger than the far one. The near arm is full and forward; the far arm recedes behind the torso with just its edge showing. The legs angle toward the left, both shoes pointing toward the lower left, the far shoe partly behind the near one."
+        },
+        "NORTH_WEST": {
+          "positive_prompt": "a three-quarter back view, the character turned to face mostly away and toward the left edge of the frame — halfway between the back view and the left side profile, an orthographic character-turnaround three-quarter back pose. The rounded rear of the head is toward the viewer and the face is turned away to the far side. The deep central groove that divides the two hemispheres runs down the back but off-center, shifted toward the near side and curving up over the crown. The back of the body and clothing is in view; the near arm shows at its side and the far arm is tucked behind the torso. The legs angle toward the left, the shoes seen from behind and the side with the heels showing, toes pointing away to the left.",
+          "negative_prompt": "face, facial features, eyes"
         }
       }
     },
@@ -62,7 +70,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character is frozen at a clear contact moment of a forward walking stride: the lead leg is forward and planted heel-down, the trailing leg extended behind and rolling off the toe, the body upright and balanced over the lead leg with the weight mid-transfer between the feet. The arms are swung into natural opposition, the forward arm and trailing arm clearly separated front-to-back. A single held mid-step pose, plainly in motion rather than standing still.\n\nPreserve the character's identity exactly as in the reference image: {identity_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character is frozen at a clear contact moment of a forward walking stride: the lead leg is forward and planted heel-down, the trailing leg extended behind and rolling off the toe, the body upright and balanced over the lead leg with the weight mid-transfer between the feet. The arms are swung into natural opposition, the forward arm and trailing arm clearly separated front-to-back. A single held mid-step pose, plainly in motion rather than standing still.\n\nPreserve the character's identity exactly as in the reference image: {character_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "The same right-facing side profile and head facing as the reference are preserved; only the body re-poses. In profile the mid-stride reads clearly: the near leg crossing in front of the far leg, the arms swung into opposition front-to-back, both feet edge-on with the toes pointing right.",
@@ -75,7 +83,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character is frozen mid-run at full sprint, the torso pitched forward into its momentum. One knee is driven high and forward while the other leg extends fully behind in an explosive push-off, the body suspended at the airborne moment of the stride with neither foot flat on the ground. The arms are bent sharp at the elbows and thrown into strong opposition, one forward and one back. A single held mid-run pose with clear forward drive and energy.\n\nPreserve the character's identity exactly as in the reference image: {identity_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character is frozen mid-run at full sprint, the torso pitched forward into its momentum. One knee is driven high and forward while the other leg extends fully behind in an explosive push-off, the body suspended at the airborne moment of the stride with neither foot flat on the ground. The arms are bent sharp at the elbows and thrown into strong opposition, one forward and one back. A single held mid-run pose with clear forward drive and energy.\n\nPreserve the character's identity exactly as in the reference image: {character_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "The same right-facing side profile and head facing as the reference are preserved; only the body re-poses. In profile the sprint reads clearly: the lead knee high and forward, the trailing leg extended back off the toe, the arms pumping in opposition, both feet edge-on and off the ground, toes pointing right.",
@@ -88,7 +96,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character is held in a low braced crouch: the knees bent deeply and the hips sunk low, the torso leaned in over the legs and compacted downward toward the ground, the arms drawn loosely in toward the body between the knees, the head lowered. A compact, hunkered, settled-low pose with the weight balanced and stable.\n\nPreserve the character's identity exactly as in the reference image: {identity_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character is held in a low braced crouch: the knees bent deeply and the hips sunk low, the torso leaned in over the legs and compacted downward toward the ground, the arms drawn loosely in toward the body between the knees, the head lowered. A compact, hunkered, settled-low pose with the weight balanced and stable.\n\nPreserve the character's identity exactly as in the reference image: {character_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "The same right-facing side profile and head facing as the reference are preserved; only the body re-poses. In profile the crouch reads clearly: the bent knees pushing forward, the hips dropped low and back, the body folded compact toward the ground, both feet flat and edge-on with the toes pointing right.",
@@ -101,7 +109,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character is held airborne at the peak of a jump, suspended off the ground with the legs tucked up beneath the body and the knees gathered in toward the torso. The body is compact and lifted, the arms raised slightly with the upward momentum, the head held level and pulled upward. A floating, weightless mid-air tuck, plainly off the ground.\n\nPreserve the character's identity exactly as in the reference image: {identity_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character is held airborne at the peak of a jump, suspended off the ground with the legs tucked up beneath the body and the knees gathered in toward the torso. The body is compact and lifted, the arms raised slightly with the upward momentum, the head held level and pulled upward. A floating, weightless mid-air tuck, plainly off the ground.\n\nPreserve the character's identity exactly as in the reference image: {character_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "The same right-facing side profile and head facing as the reference are preserved; only the body re-poses. In profile the airborne tuck reads clearly: the knees pulled up in front of the torso, the lower legs folded back beneath, the feet lifted and edge-on with the toes pointing right, the figure suspended off the ground.",
@@ -115,7 +123,7 @@
         "direction": "same"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character holds a ready fighting stance: the weight low and balanced on staggered feet with the knees bent, the torso squared and poised, both arms raised in a fists-up guard in front of the chest and head, the lead fist forward and a little lower and the rear fist tucked in close beside the head. A braced, coiled, combat-ready pose.\n\nPreserve the character's identity exactly as in the reference image: {identity_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character holds a ready fighting stance: the weight low and balanced on staggered feet with the knees bent, the torso squared and poised, both arms raised in a fists-up guard in front of the chest and head, the lead fist forward and a little lower and the rear fist tucked in close beside the head. A braced, coiled, combat-ready pose.\n\nPreserve the character's identity exactly as in the reference image: {character_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "The same right-facing side profile and head facing as the reference are preserved; only the body re-poses. In profile the guard reads clearly: the lead foot forward and rear foot staggered back, the knees bent and weight low, both fists raised and stacked toward the right, both feet edge-on with the toes pointing right.",
@@ -128,7 +136,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character clings flat against a vertical wall, the limbs braced and gripping the surface, the body kept close and pressed flat to the wall, the head turned in toward it. A tense, held grip pose, supported entirely by its hold on the wall.\n\nPreserve the character's identity exactly as in the reference image: {identity_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character clings flat against a vertical wall, the limbs braced and gripping the surface, the body kept close and pressed flat to the wall, the head turned in toward it. A tense, held grip pose, supported entirely by its hold on the wall.\n\nPreserve the character's identity exactly as in the reference image: {character_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "The same right-facing side profile and head facing as the reference are preserved; only the body re-poses. In profile the cling reads clearly: the body pressed flat and vertical against a wall on the right, the near arm gripping the surface, the knees bent and the feet braced against the wall, the figure held off the ground.",
@@ -141,7 +149,7 @@
         "ref": "base"
       },
       "category": "anchor",
-      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character is held mid-climb on a vertical surface, caught at the top of a pull: one arm reached high overhead and gripping, the opposite arm pulled in low after its last pull, one knee lifted to push from below while the other leg extends down, the body drawn close and vertical against the surface, the head tilted up toward the climb. A single held climbing pose, plainly hauling itself upward.\n\nPreserve the character's identity exactly as in the reference image: {identity_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
+      "positive_prompt": "Edit the reference image to re-pose the character while keeping the same {direction_name}-facing direction as the reference.\n\nThe character is held mid-climb on a vertical surface, caught at the top of a pull: one arm reached high overhead and gripping, the opposite arm pulled in low after its last pull, one knee lifted to push from below while the other leg extends down, the body drawn close and vertical against the surface, the head tilted up toward the climb. A single held climbing pose, plainly hauling itself upward.\n\nPreserve the character's identity exactly as in the reference image: {character_prompt}\n\nAs viewed from the {direction_name}: {direction_prompt}",
       "directions": {
         "EAST": {
           "positive_prompt": "The same right-facing side profile and head facing as the reference are preserved; only the body re-poses. In profile the climb reads clearly: the upper arm reached high overhead and gripping, the lower arm bent in low, one knee drawn up and the other leg extended down, the body vertical and off the ground.",

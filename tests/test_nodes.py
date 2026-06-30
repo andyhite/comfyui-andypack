@@ -19,7 +19,7 @@ def _pose_dict(meta, output_dir, image=None):
     """An ANIM_POSE dict as the selector emits it (the writer reads `output_dir`
     and the bundled `_meta`)."""
     return {
-        "source_image": image, "positive": "", "negative": "",
+        "source_image": image, "pose_reference": None, "positive": "", "negative": "",
         "output_dir": output_dir, "_meta": meta,
     }
 
@@ -74,7 +74,7 @@ def test_pose_rewrite_replaces_sidecar(tmp_path):
     out = str(tmp_path / "_base")
     meta = {
         "kind": "pose", "pose": "base", "direction": "EAST",
-        "from": {"ref": "concept"}, "image": "EAST.png",
+        "from": None, "image": "EAST.png",
         "manifest_version": 1, "prompt_hash": "sha1:one",
     }
     writer = nodes.PoseFrameWriter()
@@ -91,24 +91,23 @@ def test_pose_rewrite_replaces_sidecar(tmp_path):
 
 def test_pose_selector_is_changed_tracks_dependency_render(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    tree.concept()
-    # Identity is opt-in, so the prompt must reference it for an edit to ripple.
-    manifest["poses"]["base"]["positive_prompt"] += " {identity_prompt}"
+    # The character layer is opt-in, so the prompt must reference it to ripple.
+    manifest["poses"]["fighting_stance"]["positive_prompt"] += " {character_prompt}"
+    tree.pose("base", "EAST")  # base (root) rendered -> fighting_stance selectable
     before = nodes.CharacterPoseSelector.IS_CHANGED(
-        manifest, tree.char, "", "base", "EAST"
+        manifest, tree.char, "", "fighting_stance", "EAST"
     )
-    # Rendering the dependency (concept already there) vs editing identity must
-    # move the fingerprint — selectable/prompt_hash/source mtime are folded in.
-    tree.identity(positive_prompt="a brand new identity line")
+    # Editing the character layer must move the fingerprint (prompt_hash folds it in).
+    tree.character(positive_prompt="a brand new character line")
     after = nodes.CharacterPoseSelector.IS_CHANGED(
-        manifest, tree.char, "", "base", "EAST"
+        manifest, tree.char, "", "fighting_stance", "EAST"
     )
     assert before != after
 
 
 def test_animation_selector_is_changed_tracks_anchor_render(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST")
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST")
     before = nodes.CharacterAnimationSelector.IS_CHANGED(
         manifest, tree.char, "", "punch", "EAST"
     )  # idle not rendered -> blocked, no anchor image
@@ -126,33 +125,6 @@ def test_selector_is_changed_volatile_without_character(manifest, monkeypatch):
 
 
 # --- new utility / writer nodes --------------------------------------------- #
-
-def test_concept_writer_writes_provenance_sidecar(tmp_path, monkeypatch):
-    # Even with no identity text, the concept sidecar is written with a render_id so
-    # re-rendering the concept can propagate staleness to its descendants.
-    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
-    (char_dir,) = nodes.ConceptImageWriter().write(_img(), "cortex")
-    side = json.loads(open(os.path.join(char_dir, "_concept.json")).read())
-    assert side["render_id"].startswith("rid:")
-
-
-def test_concept_writer_preserves_authored_poses(tmp_path, monkeypatch):
-    # Re-rendering the concept must not clobber character-authored poses/animations
-    # stored in _concept.json (which effective_manifest folds into the manifest).
-    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
-    (char_dir,) = nodes.ConceptImageWriter().write(_img(), "cortex", identity_positive="hero")
-    side_path = os.path.join(char_dir, "_concept.json")
-    side = json.loads(open(side_path).read())
-    side["poses"] = {"wave": {"from": {"ref": "concept"}, "directions": {"EAST": {}}}}
-    with open(side_path, "w") as fh:
-        json.dump(side, fh)
-
-    # Re-render the concept (new identity text).
-    nodes.ConceptImageWriter().write(_img(), "cortex", identity_positive="reworked hero")
-    after = json.loads(open(side_path).read())
-    assert after["poses"] == {"wave": {"from": {"ref": "concept"}, "directions": {"EAST": {}}}}
-    assert after["positive_prompt"] == "reworked hero"
-
 
 def test_animation_writer_rejects_empty_batch(tmp_path):
     # An empty frame batch must raise, not write a count=0 "complete" meta with a
@@ -183,32 +155,6 @@ def test_animation_writer_empty_batch_keeps_prior_render(tmp_path):
     assert frames == ["frame_00000.png", "frame_00001.png", "frame_00002.png"]
 
 
-def test_pose_resolve_records_concept_render_id(manifest, tmp_path, monkeypatch):
-    # A pose's recorded sources capture the concept's render_id, closing the gap
-    # where re-rendering the concept left descendants looking fresh.
-    root = str(tmp_path)
-    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
-    (char_dir,) = nodes.ConceptImageWriter().write(_img(), "cortex")
-    rid = json.loads(open(os.path.join(char_dir, "_concept.json")).read())["render_id"]
-    r = resolve.resolve_pose(manifest, root, "cortex", "base", "EAST")
-    assert r["meta"]["sources"]["concept@EAST"] == rid
-
-
-def test_concept_image_loader_reads_image_and_identity(tree, monkeypatch):
-    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    images.save_image_png(_img(), resolve.concept_image_path(tree.root, tree.char))
-    tree.identity(positive_prompt="a brave hero", negative_prompt="blurry")
-    image, has, pos, neg = nodes.ConceptImageLoader().load(tree.char)
-    assert has is True and image.shape[0] == 1
-    assert pos == "a brave hero" and neg == "blurry"
-
-
-def test_concept_image_loader_missing_concept(tree, monkeypatch):
-    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    image, has, pos, neg = nodes.ConceptImageLoader().load(tree.char)
-    assert has is False and pos == "" and neg == ""
-
-
 def test_manifest_lint_reports_findings(manifest):
     manifest["poses"]["base"]["directions"]["UP"] = {}  # unknown direction
     (report,) = nodes.ManifestLint().lint(manifest)
@@ -222,7 +168,7 @@ def test_manifest_lint_clean(manifest):
 
 def test_coverage_report_node(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    tree.concept()
+    tree.character()
     report, blob = nodes.CoverageReport().report(manifest, tree.char)
     assert "base" in report
     assert json.loads(blob)["total"] > 0
@@ -238,7 +184,7 @@ def test_merged_prompt_report_node(manifest, tree, monkeypatch):
 
 def test_regen_queue_node(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    tree.concept()
+    tree.character()
     text, count = nodes.RegenQueue().build(manifest, tree.char)
     assert count >= 1
     assert "base@EAST" in text
@@ -246,7 +192,7 @@ def test_regen_queue_node(manifest, tree, monkeypatch):
 
 def test_mirror_writer_pose(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    tree.concept()
+    tree.character()
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
     (out_dir,) = nodes.MirrorFrameWriter().write(manifest, tree.char, "pose", "base", "WEST")
     assert os.path.exists(resolve.pose_image_path(tree.root, tree.char, "base", "WEST"))
@@ -273,7 +219,7 @@ def test_mirror_writer_animation(manifest, tree, monkeypatch):
 
 def test_animation_selector_outputs_length_and_fps(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST").animation(
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST").animation(
         "fighting_stance_idle", "EAST", frames=3
     )
     idle = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
@@ -289,21 +235,23 @@ def test_animation_selector_outputs_length_and_fps(manifest, tree, monkeypatch):
 
 def test_pose_selector_returns_single_dict(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    tree.concept()
-    images.save_image_png(_img(), resolve.concept_image_path(tree.root, tree.char))
-    (pose,) = nodes.CharacterPoseSelector().select(manifest, tree.char, "", "base", "EAST")
+    # Select a non-root pose: base (root) is created via the Character Creator.
+    tree.pose("base", "EAST")  # base rendered so fighting_stance has a source
+    # Write a real PNG at base@EAST so the selector can load it as the source image.
+    images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
+    (pose,) = nodes.CharacterPoseSelector().select(manifest, tree.char, "", "fighting_stance", "EAST")
     # Leaf outputs are selectable; the resolver meta rides bundled under `_meta`
     # (not a leaf output) and the image rides along as a tensor.
     assert isinstance(pose["positive"], str)
     assert pose["source_image"].shape[0] == 1
-    assert pose["_meta"]["pose"] == "base" and pose["_meta"]["image"] == "EAST.png"
+    assert pose["_meta"]["pose"] == "fighting_stance" and pose["_meta"]["image"] == "EAST.png"
     # Drift guard: the public (non-`_meta`) keys are exactly the leaf-output keys.
     assert sorted(k for k in pose if k != "_meta") == nodes.POSE_OUTPUT_KEYS
 
 
 def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST").animation(
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST").animation(
         "fighting_stance_idle", "EAST", frames=3
     )
     idle = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
@@ -319,13 +267,13 @@ def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
 
 def test_pose_unpack_forwards_dict_and_fans_out_typed_outputs():
     pose = {"positive": "hello", "negative": "blurry", "source_image": _img(),
-            "output_dir": "/x", "_meta": {}}
-    passthrough, img, pos, neg, out_dir = nodes.PoseUnpack().unpack(pose)
+            "pose_reference": _img(), "output_dir": "/x", "_meta": {}}
+    passthrough, img, manikin, pos, neg, out_dir = nodes.PoseUnpack().unpack(pose)
     assert nodes.PoseUnpack.RETURN_NAMES == (
-        "POSE", "SOURCE_IMAGE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT", "OUTPUT_DIR"
+        "POSE", "SOURCE_IMAGE", "POSE_REFERENCE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT", "OUTPUT_DIR"
     )
     assert passthrough is pose  # whole POSE forwarded on, unchanged
-    assert img.shape[0] == 1
+    assert img.shape[0] == 1 and manikin.shape[0] == 1
     assert (pos, neg, out_dir) == ("hello", "blurry", "/x")
 
 
@@ -357,7 +305,7 @@ def test_unpack_outputs_cover_selector_leaf_keys():
 
 def test_animation_playback_chains_and_loops(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST").animation(
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST").animation(
         "fighting_stance_idle", "EAST", frames=3
     ).animation("punch", "EAST", frames=3)
     # Tree writes empty frame files; the playback node loads pixels, so write real
@@ -390,7 +338,7 @@ def test_leaf_output_keys_exclude_private_meta():
 
 def test_mirror_writer_rejects_unmapped_direction(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    tree.concept()
+    tree.character()
     try:
         nodes.MirrorFrameWriter().write(manifest, tree.char, "pose", "base", "EAST")
     except RuntimeError as e:
@@ -420,14 +368,14 @@ def test_mirror_animation_rejects_frameless_source(manifest, tree, monkeypatch):
 def test_pose_selector_rejects_unknown_id(manifest, tree, monkeypatch):
     # A stale/renamed serialized id must give a friendly error, not a raw KeyError.
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    tree.concept()
+    tree.character()
     with pytest.raises(RuntimeError, match="unknown pose"):
         nodes.CharacterPoseSelector().select(manifest, tree.char, "", "ghost_pose", "EAST")
 
 
 def test_animation_selector_rejects_unknown_id(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    tree.concept()
+    tree.character()
     with pytest.raises(RuntimeError, match="unknown animation"):
         nodes.CharacterAnimationSelector().select(manifest, tree.char, "", "ghost_anim", "EAST")
 
@@ -437,7 +385,7 @@ def test_animation_selector_tolerates_missing_start_anchor(manifest, tree, monke
     # lacks 'last_frame' resolves start_image to None; the selector must fall back to
     # the empty sentinel, not call load_image_tensor(None).
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    tree.concept().pose("base", "EAST")
+    tree.pose("base", "EAST")
     # Real PNG for the end_at -> base anchor (the conftest touch leaves it empty).
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
     tree.animation("fighting_stance_idle", "EAST", frames=3)
@@ -457,11 +405,47 @@ def test_animation_selector_tolerates_missing_start_anchor(manifest, tree, monke
     assert images.is_empty(anim["start_image"])  # empty sentinel, no crash
 
 
-def test_concept_writer_invalidates_identity_cache(tmp_path, monkeypatch):
-    # After rewriting _concept.json the writer must drop the cached identity so a
-    # re-render within the filesystem's mtime resolution still propagates.
+
+
+# --- CharacterCreator + pose_reference -------------------------------------- #
+
+def test_character_creator_writes_character_json_without_provenance(manifest, tmp_path, monkeypatch):
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    (pose,) = nodes.CharacterCreator().create(
+        manifest, _img(), "Cortex", "EAST",
+        character_positive="a brave hero", character_negative="blurry",
+    )
+    data = json.load(open(os.path.join(root, "cortex", "character.json")))
+    assert data == {"positive_prompt": "a brave hero", "negative_prompt": "blurry"}
+    assert pose["output_dir"].endswith(os.path.join("cortex", "_base"))
+    assert pose["_meta"]["pose"] == "base" and pose["_meta"]["direction"] == "EAST"
+
+
+def test_character_creator_attaches_manikin_as_pose_reference(manifest, tmp_path, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
-    calls = []
-    monkeypatch.setattr(resolve, "invalidate_identity", lambda root, char: calls.append((root, char)))
-    nodes.ConceptImageWriter().write(_img(), "Cortex")
-    assert calls == [(str(tmp_path), "cortex")]  # snake-cased character name
+    (pose,) = nodes.CharacterCreator().create(manifest, _img(), "cortex", "EAST")
+    # The manikin rides along as a real (non-empty) second reference image.
+    assert pose["pose_reference"] is not None
+    assert not images.is_empty(pose["pose_reference"])
+
+
+def test_character_creator_rejects_unknown_direction(manifest, tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    with pytest.raises(RuntimeError, match="direction"):
+        nodes.CharacterCreator().create(manifest, _img(), "cortex", "UP")
+
+
+def test_pose_selector_rejects_root_pose(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST")
+    with pytest.raises(RuntimeError, match="root pose"):
+        nodes.CharacterPoseSelector().select(manifest, tree.char, "", "base", "EAST")
+
+
+def test_pose_selector_sets_empty_pose_reference(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST")
+    images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
+    (pose,) = nodes.CharacterPoseSelector().select(manifest, tree.char, "", "fighting_stance", "EAST")
+    assert images.is_empty(pose["pose_reference"])

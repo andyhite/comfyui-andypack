@@ -4,7 +4,7 @@ from andypack import api
 
 
 def test_list_characters_finds_dirs_with_concept(tree):
-    tree.concept()  # creates <root>/Cortex/_concept.png
+    tree.character()  # creates <root>/Cortex/_concept.png
     os.makedirs(os.path.join(tree.root, "NotAChar"), exist_ok=True)  # empty -> excluded
     names = [c["name"] for c in api.list_characters(tree.root)]
     assert names == ["Cortex"]
@@ -17,7 +17,7 @@ def test_format_blocked_renders_ref_at_dir():
 
 
 def test_list_options_reports_status_and_blocked(manifest, tree):
-    tree.concept()  # only concept present
+    tree.character()  # only concept present
     opts = {(o["kind"], o["id"], o["direction"]): o for o in api.list_options(manifest, tree.root, tree.char)}
 
     assert opts[("pose", "base", "EAST")]["status"] == "ready"
@@ -35,7 +35,7 @@ def test_list_options_reports_status_and_blocked(manifest, tree):
 
 
 def test_list_options_includes_character_specific_entities(manifest, tree):
-    tree.identity(
+    tree.character(
         animations={
             "special_move": {
                 "category": "combat", "directions": {"EAST": {}},
@@ -43,7 +43,6 @@ def test_list_options_includes_character_specific_entities(manifest, tree):
             }
         }
     )
-    tree.concept()
     ids = {(o["kind"], o["id"]) for o in api.list_options(manifest, tree.root, tree.char)}
     assert ("animation", "special_move") in ids  # character-defined
     assert ("animation", "punch") in ids  # main manifest still present
@@ -63,16 +62,16 @@ def test_merged_prompt_rows_apply_globals_and_entity(manifest, tree):
 
 
 def test_merged_prompt_rows_splice_referenced_identity(manifest, tree):
-    # Identity is opt-in: it appears only where {identity_prompt} is referenced.
-    tree.identity(positive_prompt="a brave hero")
-    manifest["poses"]["base"]["positive_prompt"] = "{identity_prompt} in a neutral pose"
+    # Identity is opt-in: it appears only where {character_prompt} is referenced.
+    tree.character(positive_prompt="a brave hero")
+    manifest["poses"]["base"]["positive_prompt"] = "{character_prompt} in a neutral pose"
     rows = api.merged_prompt_rows(manifest, tree.root, tree.char)
     base = next(r for r in rows if r["id"] == "base" and r["direction"] == "EAST")
     assert "a brave hero in a neutral pose" in base["positive"]
 
 
 def test_merged_prompt_rows_exclude_unreferenced_identity(manifest, tree):
-    tree.identity(positive_prompt="a brave hero")
+    tree.character(positive_prompt="a brave hero")
     rows = api.merged_prompt_rows(manifest, tree.root, tree.char)
     base = next(r for r in rows if r["id"] == "base" and r["direction"] == "EAST")
     assert "a brave hero" not in base["positive"]  # not referenced -> absent
@@ -87,7 +86,7 @@ def test_format_merged_prompts_groups_each_cell(manifest):
 
 
 def test_coverage_report_counts_by_status(manifest, tree):
-    tree.concept()  # only concept -> base ready, deeper poses/anims blocked
+    tree.character()  # only concept -> base ready, deeper poses/anims blocked
     rep = api.coverage_report(manifest, tree.root, tree.char)
     assert rep["total"] == len(rep["rows"])
     assert rep["summary"]["ready"] >= 1   # base@{EAST,SOUTH_EAST,SOUTH}
@@ -97,7 +96,7 @@ def test_coverage_report_counts_by_status(manifest, tree):
 
 
 def test_regen_queue_is_dependency_ordered_and_skips_blocked(manifest, tree):
-    tree.concept()
+    tree.character()
     queue = api.regen_queue(manifest, tree.root, tree.char)
     cells = [(q["id"], q["direction"]) for q in queue]
     # only base (ready) is actionable now; blocked downstream is omitted
@@ -118,11 +117,11 @@ def test_user_default_base_is_none_outside_comfyui():
 
 
 def test_diagnostics_degrade_on_invalid_character_overlay(manifest, tree):
-    # A character _concept.json with a structurally bad pose (unknown source ref)
+    # A character character.json with a structurally bad pose (unknown source ref)
     # makes effective_manifest's re-validation raise; the read paths must degrade
     # to the base manifest rather than abort the queued graph with a traceback.
-    tree.concept()
-    tree.identity(poses={"oops": {"from": {"ref": "nope"}, "directions": {"EAST": {}}}})
+    tree.character()
+    tree.character(poses={"oops": {"from": {"ref": "nope"}, "directions": {"EAST": {}}}})
     ids = {o["id"] for o in api.list_options(manifest, tree.root, tree.char)}
     assert "base" in ids       # base manifest is still reported
     assert "oops" not in ids   # the invalid overlay is dropped, not crashed on
@@ -184,3 +183,11 @@ def test_resolve_manifest_path_passthrough_without_comfyui():
     # No ComfyUI base -> relative path falls back to itself (CWD-relative).
     assert api.resolve_manifest_path("default.json") == "default.json"
     assert api.resolve_manifest_path("/abs/animations.json") == "/abs/animations.json"
+
+
+def test_list_options_marks_root_poses(manifest, tmp_path):
+    rows = api.list_options(manifest, str(tmp_path), "cortex")
+    by_id = {(r["kind"], r["id"], r["direction"]): r for r in rows}
+    assert by_id[("pose", "base", "EAST")]["root"] is True
+    assert by_id[("pose", "fighting_stance", "EAST")]["root"] is False
+    assert by_id[("animation", "walk", "EAST")]["root"] is False

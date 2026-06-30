@@ -3,7 +3,7 @@ from andypack.resolve import animation_frame_dir, playback_segments, pose_image_
 
 def test_animation_anchors_chain_and_drop_action_boundaries(manifest, tree):
     # punch: start_from=idle (anim), end_at=idle (anim). Both rendered.
-    tree.concept().pose("base", "EAST").pose("fighting_stance", "EAST").animation(
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST").animation(
         "fighting_stance_idle", "EAST", frames=3
     ).animation("punch", "EAST", frames=3)
     root, char = tree.root, tree.char
@@ -24,7 +24,7 @@ def test_animation_anchors_chain_and_drop_action_boundaries(manifest, tree):
 
 def test_pose_anchor_is_held_for_fps_frames_and_not_dropped(manifest, tree):
     # walk: no start_from -> default base (pose); no end_at.
-    tree.concept().pose("base", "EAST").animation("walk", "EAST", frames=3)
+    tree.pose("base", "EAST").animation("walk", "EAST", frames=3)
     root, char = tree.root, tree.char
 
     segs = playback_segments(manifest, root, char, "walk", "EAST", loops=2, fps=8)
@@ -40,7 +40,7 @@ def test_pose_anchor_is_held_for_fps_frames_and_not_dropped(manifest, tree):
 
 def test_unrendered_anchors_are_skipped_but_loops_still_apply(manifest, tree):
     # Only punch rendered; its idle anchor is missing.
-    tree.concept().animation("punch", "EAST", frames=3)
+    tree.animation("punch", "EAST", frames=3)
     root, char = tree.root, tree.char
 
     segs = playback_segments(manifest, root, char, "punch", "EAST", loops=3, fps=16)

@@ -28,9 +28,15 @@ def test_load_valid_manifest_returns_dict():
 
 def test_node_kind_classifies_each_ref():
     m = base_manifest()
-    assert node_kind(m, "concept") == "concept"
     assert node_kind(m, "base") == "pose"
     assert node_kind(m, "punch") == "animation"
+
+
+def test_root_pose_with_no_from_validates_and_sorts_as_leaf():
+    m = base_manifest()                     # fixture base has no `from`
+    validate_manifest(m)
+    order = topo_order(m)
+    assert order.index("base") < order.index("fighting_stance")
 
 
 def test_node_kind_unknown_ref_raises():
@@ -47,7 +53,7 @@ def test_validate_rejects_bad_animation_ref():
 
 def test_validate_rejects_pose_from_animation():
     m = base_manifest()
-    m["poses"]["base"]["from"] = {"ref": "punch"}  # a pose may only edit concept/pose
+    m["poses"]["base"]["from"] = {"ref": "punch"}  # a pose may only reference a pose
     with pytest.raises(ManifestError):
         validate_manifest(m)
 

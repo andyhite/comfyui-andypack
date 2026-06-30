@@ -6,7 +6,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from andypack import api, images, io, resolve
+from andypack import api, images, io, manikins, resolve
 from andypack.manifest import collect_warnings, load_manifest
 from andypack.resolve import effective_manifest, resolve_animation, resolve_pose
 
@@ -24,7 +24,7 @@ _NO_CHARACTER = "(select character)"
 # asserts they stay in sync with the keys the selectors actually build (less
 # `_meta`).
 POSE_OUTPUT_KEYS = sorted([
-    "source_image", "positive", "negative", "output_dir",
+    "source_image", "pose_reference", "positive", "negative", "output_dir",
 ])
 ANIMATION_OUTPUT_KEYS = sorted([
     "start_image", "end_image", "positive", "negative",
@@ -91,53 +91,89 @@ class AnimationManifestLoader:
         return (load_manifest(api.resolve_manifest_path(manifest)),)
 
 
-class ConceptImageWriter:
-    CATEGORY = "andypack/Concept"
-    FUNCTION = "write"
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("CHARACTER_DIR",)
-    OUTPUT_NODE = True
+class CharacterCreator:
+    """Persist a character's prompt layer (character.json — no image, no
+    provenance) and emit the base-pose job for one direction, pairing the
+    reference image (first) with the bundled manikin for that direction (second)
+    for a multi-reference FLUX.2 edit. Selector-style: pick a direction, get one
+    ANIM_POSE; the base pose is the tree root."""
+
+    CATEGORY = "andypack/Character"
+    FUNCTION = "create"
+    RETURN_TYPES = ("ANIM_POSE",)
+    RETURN_NAMES = ("POSE",)
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
+                "manifest": ("ANIM_MANIFEST",),
                 "image": ("IMAGE",),
                 "character": ("STRING", {"default": "cortex"}),
+                "direction": (manikins.CANONICAL_DIRECTIONS,),
             },
             "optional": {
-                "identity_positive": ("STRING", {"default": "", "multiline": True}),
-                "identity_negative": ("STRING", {"default": "", "multiline": True}),
+                "character_positive": ("STRING", {"default": "", "multiline": True}),
+                "character_negative": ("STRING", {"default": "", "multiline": True}),
             },
         }
 
-    def write(self, image, character, identity_positive="", identity_negative=""):
-        # Character names become path segments — force lowercase snake_case. Write
-        # under the same characters root the selectors read from, so a written
-        # concept always shows up in their character dropdowns.
+    @classmethod
+    def IS_CHANGED(cls, manifest, image, character, direction,
+                   character_positive="", character_negative=""):
+        # Re-resolve the base pose so the fingerprint reflects prompt edits going
+        # stale, plus the character-layer widgets that this node persists.
+        if not character or not direction:
+            return float("nan")
+        root = _characters_root()
+        try:
+            char_name = io.to_snake_case(character)
+            eff = effective_manifest(manifest, root, char_name)
+            r = resolve_pose(eff, root, char_name, "base", direction)
+        except Exception:
+            return float("nan")
+        return "|".join([
+            r["meta"]["prompt_hash"], direction,
+            character_positive.strip(), character_negative.strip(),
+        ])
+
+    def create(self, manifest, image, character, direction,
+               character_positive="", character_negative=""):
+        if direction not in manikins.CANONICAL_DIRECTIONS:
+            raise RuntimeError(f"CharacterCreator: unknown direction {direction!r}")
         root = _characters_root()
         char_name = io.to_snake_case(character)
-        char_dir = os.path.join(root, char_name)
-        images.save_image_png(image, os.path.join(char_dir, "_concept.png"))
         layer = {}
-        if identity_positive.strip():
-            layer["positive_prompt"] = identity_positive.strip()
-        if identity_negative.strip():
-            layer["negative_prompt"] = identity_negative.strip()
-        # Always write the sidecar — even with no identity — so the concept carries a
-        # render_id. That makes re-rendering the concept (the root of the tree)
-        # propagate staleness to every pose/animation that recorded it. Read-merge
-        # over any existing sidecar so character-authored fields (poses/animations
-        # that effective_manifest reads) survive a concept re-render. The payload
-        # (_concept.png) is written first, the sidecar last (atomic).
-        existing = resolve.read_identity(root, char_name)
-        sidecar = io.build_concept_sidecar(layer, created_utc=_utc_now(), existing=existing)
-        io.atomic_write_json(os.path.join(char_dir, "_concept.json"), sidecar)
-        # Drop the cached identity so descendants re-resolve against this render's
-        # new render_id even if the rewrite landed within the filesystem's mtime
-        # resolution (read_identity's mtime check alone could miss it).
-        resolve.invalidate_identity(root, char_name)
-        return (char_dir,)
+        if character_positive.strip():
+            layer["positive_prompt"] = character_positive.strip()
+        if character_negative.strip():
+            layer["negative_prompt"] = character_negative.strip()
+        # Persist the character prompt layer (merging over any existing overlay).
+        # No image is written and no provenance is stamped — base sidecars carry
+        # the tree's provenance.
+        existing = resolve.read_character(root, char_name)
+        payload = io.build_character(layer, existing=existing)
+        io.atomic_write_json(os.path.join(root, char_name, "character.json"), payload)
+        # Drop the cached character layer so the resolve below (and descendants)
+        # see this write even within the filesystem's mtime resolution window.
+        resolve.invalidate_character(root, char_name)
+
+        eff = effective_manifest(manifest, root, char_name)
+        if "base" not in eff.get("poses", {}):
+            raise RuntimeError("CharacterCreator: manifest has no 'base' pose")
+        if direction not in eff["poses"]["base"]["directions"]:
+            raise RuntimeError(f"CharacterCreator: base has no direction {direction!r}")
+        r = resolve_pose(eff, root, char_name, "base", direction)
+        manikin = images.load_image_tensor(manikins.manikin_path(direction))
+        pose = {
+            "source_image": image,        # the character reference (first reference)
+            "pose_reference": manikin,    # the manikin for this direction (second)
+            "positive": r["positive"],
+            "negative": r["negative"],
+            "output_dir": r["output_dir"],
+            "_meta": r["meta"],
+        }
+        return (pose,)
 
 
 class CharacterPoseSelector:
@@ -187,6 +223,10 @@ class CharacterPoseSelector:
             raise RuntimeError(
                 f"CharacterPoseSelector: unknown pose {pose!r} (stale or renamed) — pick a pose"
             )
+        if not manifest["poses"][pose].get("from"):
+            raise RuntimeError(
+                f"CharacterPoseSelector: {pose!r} is a root pose — use the Character Creator node"
+            )
         r = resolve_pose(manifest, root, character, pose, direction)
         if not r["selectable"]:
             raise RuntimeError(
@@ -201,6 +241,7 @@ class CharacterPoseSelector:
         # selectable getter output. See POSE_OUTPUT_KEYS.
         pose = {
             "source_image": image,
+            "pose_reference": images.empty_image(),  # normal poses have no manikin
             "positive": r["positive"],
             "negative": r["negative"],
             "output_dir": r["output_dir"],
@@ -395,6 +436,7 @@ class AnimationFrameWriter:
 # enforces it — so unpacking exposes every leaf the selector produces.
 _POSE_UNPACK = (
     ("source_image", "SOURCE_IMAGE"),
+    ("pose_reference", "POSE_REFERENCE"),
     ("positive", "POSITIVE_PROMPT"),
     ("negative", "NEGATIVE_PROMPT"),
     ("output_dir", "OUTPUT_DIR"),
@@ -417,7 +459,7 @@ class PoseUnpack:
 
     CATEGORY = "andypack/Pose"
     FUNCTION = "unpack"
-    RETURN_TYPES = ("ANIM_POSE", "IMAGE", "STRING", "STRING", "STRING")
+    RETURN_TYPES = ("ANIM_POSE", "IMAGE", "IMAGE", "STRING", "STRING", "STRING")
     RETURN_NAMES = ("POSE", *(name for _key, name in _POSE_UNPACK))
 
     @classmethod
@@ -466,7 +508,7 @@ def _animated_preview(frames, fps) -> dict:
 class AnimationPlayback:
     """Play a rendered animation at the manifest fps, chaining its dependent clips:
     the start_from dep is prepended and the end_at dep appended (an animation dep
-    plays its frames; a pose/concept dep is held for `fps` frames ~1s). An action
+    plays its frames; a pose dep is held for `fps` frames ~1s). An action
     that returns to its start state loops `loops` times before the exit. Uses the
     same cascading selectors as the Character Animation Selector. Shows an in-node
     animated preview and outputs the assembled frame batch + fps."""
@@ -529,41 +571,6 @@ class AnimationPlayback:
                 f"AnimationPlayback: no rendered frames for {animation}@{direction}"
             )
         return {"ui": _animated_preview(frames, fps), "result": (frames, fps)}
-
-
-class ConceptImageLoader:
-    """Load a character's existing `_concept.png` back as an IMAGE (plus its
-    identity layer), for re-editing or feeding a refinement pass."""
-
-    CATEGORY = "andypack/Concept"
-    FUNCTION = "load"
-    RETURN_TYPES = ("IMAGE", "BOOLEAN", "STRING", "STRING")
-    RETURN_NAMES = ("CONCEPT_IMAGE", "HAS_CONCEPT", "IDENTITY_POSITIVE", "IDENTITY_NEGATIVE")
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {"required": {"character": (_character_choices(),)}}
-
-    @classmethod
-    def IS_CHANGED(cls, character):
-        if character in ("", _NO_CHARACTER):
-            return float("nan")
-        return _mtime(resolve.concept_image_path(_characters_root(), character))
-
-    def load(self, character):
-        if character in ("", _NO_CHARACTER):
-            raise RuntimeError("ConceptImageLoader: select a character first")
-        root = _characters_root()
-        identity = resolve.read_identity(root, character)
-        path = resolve.concept_image_path(root, character)
-        if os.path.exists(path):
-            image, has = images.load_image_tensor(path), True
-        else:
-            image, has = images.empty_image(), False
-        return (
-            image, has,
-            identity.get("positive_prompt", ""), identity.get("negative_prompt", ""),
-        )
 
 
 class ManifestLint:
@@ -774,8 +781,7 @@ class MirrorFrameWriter:
 
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
-    "ConceptImageWriter": ConceptImageWriter,
-    "ConceptImageLoader": ConceptImageLoader,
+    "CharacterCreator": CharacterCreator,
     "CharacterPoseSelector": CharacterPoseSelector,
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
@@ -791,8 +797,7 @@ NODE_CLASS_MAPPINGS = {
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
-    "ConceptImageWriter": "Concept Image Writer",
-    "ConceptImageLoader": "Concept Image Loader",
+    "CharacterCreator": "Character Creator",
     "CharacterPoseSelector": "Character Pose Selector",
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",

@@ -78,37 +78,26 @@ def apply_loop_closure(frames: list, *, drop_first: bool = False, drop_last: boo
     return frames[start:stop]
 
 
-# The keys `build_concept_sidecar` owns: the identity layer it (re)writes plus the
-# provenance it stamps. Everything else in an existing `_concept.json` (e.g.
-# character-authored `poses`/`animations`, which effective_manifest reads) is
-# preserved across a re-render rather than clobbered.
-_CONCEPT_OWNED_KEYS = ("positive_prompt", "negative_prompt", "prompt_hash", "created_utc", "render_id")
+# The keys build_character owns (rewrites from the widgets). Everything else in
+# an existing character.json — e.g. the character-authored poses/animations
+# overlay that effective_manifest reads — is preserved across a rewrite.
+_CHARACTER_OWNED_KEYS = ("positive_prompt", "negative_prompt")
 
 
-def build_concept_sidecar(layer: dict, created_utc: str, existing: Optional[dict] = None) -> dict:
-    """`_concept.json` = the (possibly empty) identity layer + provenance, merged
-    over any `existing` sidecar so character-authored fields (e.g. `poses` /
-    `animations`) survive a concept re-render. A concept has no merged prompt, so
-    its identity layer is hashed as the prompt_hash; the render_id then changes
-    when the concept is re-rendered (created_utc) or its identity edited (layer
-    hash). Descendants record that render_id, so re-rendering the concept — the
-    root of the tree — propagates staleness like any other source.
+def build_character(layer: dict, existing: Optional[dict] = None) -> dict:
+    """character.json = the (possibly empty) character prompt layer, merged over
+    any `existing` file so a character-authored `poses`/`animations` overlay
+    survives. This carries NO provenance (no prompt_hash/created_utc/render_id): the
+    character is no longer a render node (the reference image is not persisted),
+    so the tree's provenance roots at the base pose's own sidecars.
 
-    The identity widgets are the source of truth for the identity layer: keys the
-    new `layer` omits are dropped (so clearing a widget clears the stored value),
-    while all non-owned `existing` keys pass through untouched."""
-    raw = json.dumps(layer, sort_keys=True, ensure_ascii=False)
-    prompt_hash = "sha1:" + hashlib.sha1(raw.encode("utf-8")).hexdigest()
+    The widgets are the source of truth for the prompt layer: keys the new
+    `layer` omits are dropped (clearing a widget clears the stored value), while
+    all non-owned `existing` keys pass through untouched."""
     preserved = {
-        k: v for k, v in (existing or {}).items() if k not in _CONCEPT_OWNED_KEYS
+        k: v for k, v in (existing or {}).items() if k not in _CHARACTER_OWNED_KEYS
     }
-    return {
-        **preserved,
-        **layer,
-        "prompt_hash": prompt_hash,
-        "created_utc": created_utc,
-        "render_id": render_id(prompt_hash, created_utc),
-    }
+    return {**preserved, **layer}
 
 
 def build_pose_sidecar(meta: dict, created_utc: str) -> dict:

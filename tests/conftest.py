@@ -36,12 +36,8 @@ class Tree:
     def _cdir(self):
         return os.path.join(self.root, self.char)
 
-    def concept(self):
-        _touch(os.path.join(self._cdir(), "_concept.png"))
-        return self
-
-    def identity(self, **layer):
-        _write_json(os.path.join(self._cdir(), "_concept.json"), layer)
+    def character(self, **layer):
+        _write_json(os.path.join(self._cdir(), "character.json"), layer)
         return self
 
     def pose(self, pose_id, direction, *, stale=False, sidecar=True):
@@ -53,7 +49,7 @@ class Tree:
             )
             _write_json(os.path.join(base, f"{direction}.json"), {
                 "kind": "pose", "pose": pose_id, "direction": direction,
-                "from": self.m["poses"][pose_id]["from"], "image": f"{direction}.png",
+                "from": self.m["poses"][pose_id].get("from"), "image": f"{direction}.png",
                 "prompt_hash": h, "manifest_version": self.m["version"],
             })
         return self

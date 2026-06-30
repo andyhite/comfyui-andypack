@@ -1,6 +1,6 @@
 """Pure FFLF dependency resolver: cascading prompts, completeness, anchors, staleness.
 
-No ComfyUI / torch imports. Reads the rendered tree and `_concept.json` from disk;
+No ComfyUI / torch imports. Reads the rendered tree and `character.json` from disk;
 the manifest dict is passed in (already validated by andypack.manifest).
 """
 
@@ -22,7 +22,7 @@ _WS = re.compile(r"\s+")
 _SEP = "␟"  # UNIT SEPARATOR
 # The opt-in template tokens, matched in a SINGLE pass so a token that appears
 # inside an injected value is not re-expanded by a later substitution.
-_TEMPLATE_TOKEN = re.compile(r"\{(identity_prompt|direction_prompt|direction_name)\}")
+_TEMPLATE_TOKEN = re.compile(r"\{(character_prompt|direction_prompt|direction_name)\}")
 
 
 # --- cascade: merge, identity, hashing -------------------------------------- #
@@ -72,21 +72,21 @@ def _read_json(path: str) -> Optional[dict]:
 _IDENTITY_CACHE: dict[str, tuple[float, dict]] = {}
 # Validated character-effective manifests, keyed on the identities of the two
 # inputs that produced them (base manifest + cached identity dict) — see
-# effective_manifest. Cleared by invalidate_identity.
+# effective_manifest. Cleared by invalidate_character.
 _EFFECTIVE_CACHE: dict[tuple[int, int], Manifest] = {}
 
 
-def read_identity(root: str, character: str) -> dict:
-    """Per-character identity layer from `_concept.json`, or {} if absent/corrupt.
+def read_character(root: str, character: str) -> dict:
+    """Per-character prompt layer from `character.json`, or {} if absent/corrupt.
 
     Memoized by path + mtime: the resolve/report hot paths re-read a character's
-    `_concept.json` many times per cell (effective_manifest, merged_prompts,
+    `character.json` many times per cell (effective_manifest, merged_prompts,
     outdated, recorded_sources), so caching collapses that to one read per file
-    version. A re-render bumps the mtime, which invalidates the entry; the concept
-    writer also calls `invalidate_identity` explicitly, because a re-render can
-    land within a coarse filesystem's mtime resolution window and leave the mtime
+    version. A rewrite bumps the mtime, which invalidates the entry; the creator
+    node also calls `invalidate_character` explicitly, because a rewrite can land
+    within a coarse filesystem's mtime resolution window and leave the mtime
     unchanged. Callers must not mutate the returned dict."""
-    path = os.path.join(root, character, "_concept.json")
+    path = os.path.join(root, character, "character.json")
     try:
         mtime = os.path.getmtime(path)
     except OSError:
@@ -99,17 +99,16 @@ def read_identity(root: str, character: str) -> dict:
     return data
 
 
-def invalidate_identity(root: str, character: str) -> None:
-    """Forget the cached identity (and every effective manifest derived from any
-    identity) for a character, forcing the next read to hit disk and re-validate.
+def invalidate_character(root: str, character: str) -> None:
+    """Forget the cached character layer (and every effective manifest derived
+    from any character layer), forcing the next read to hit disk and re-validate.
 
-    The concept writer calls this after rewriting `_concept.json`: a re-render
-    bumps `render_id` but, on a coarse-mtime filesystem (FAT/exFAT, many NFS/SMB
-    shares), can land within the mtime resolution window of the prior read — so
-    mtime alone can't be trusted to invalidate. Clearing the entry guarantees
-    descendants resolve against the new identity + render_id rather than a stale
-    cached copy."""
-    _IDENTITY_CACHE.pop(os.path.join(root, character, "_concept.json"), None)
+    The creator node calls this after rewriting `character.json`: a rewrite bumps
+    the mtime but, on a coarse-mtime filesystem (FAT/exFAT, many NFS/SMB shares),
+    can land within the mtime resolution window of the prior read — so mtime alone
+    can't be trusted to invalidate. Clearing the entry guarantees descendants
+    resolve against the new character layer rather than a stale cached copy."""
+    _IDENTITY_CACHE.pop(os.path.join(root, character, "character.json"), None)
     # The effective-manifest cache keys on the identity object's id(); a popped
     # entry frees that object, so just drop the whole (small) cache rather than
     # track which entries derived from this character.
@@ -118,13 +117,13 @@ def invalidate_identity(root: str, character: str) -> None:
 
 def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifest:
     """The manifest a character actually sees: the base manifest extended with
-    the character's own `poses`/`animations` from `_concept.json` (character
+    the character's own `poses`/`animations` from `character.json` (character
     entries override/extend by id). Returns the base manifest unchanged when the
     character defines none. The merged manifest is re-validated, so a bad
     character ref or a cycle raises ManifestError instead of resolving silently
     or looping."""
-    identity = read_identity(root, character)
-    # `_concept.json` is user-authored; tolerate a malformed `poses`/`animations`
+    identity = read_character(root, character)
+    # `character.json` is user-authored; tolerate a malformed `poses`/`animations`
     # (e.g. a list) by ignoring it rather than crashing the `{**...}` merge below.
     char_poses = identity.get("poses")
     char_anims = identity.get("animations")
@@ -133,11 +132,11 @@ def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifes
     if not char_poses and not char_anims:
         return manifest
     # Cache the merged + validated manifest keyed on the identities of its two
-    # inputs: the base manifest object and the cached identity dict (read_identity
+    # inputs: the base manifest object and the cached character dict (read_character
     # returns a stable object until the file changes or is invalidated). This keeps
     # validate_manifest's ref/cycle DFS off the IS_CHANGED hot path, which
     # re-derives the effective manifest on every graph evaluation. The cache is
-    # dropped wholesale by invalidate_identity when a concept is re-rendered.
+    # dropped wholesale by invalidate_character when the character layer changes.
     key = (id(manifest), id(identity))
     cached = _EFFECTIVE_CACHE.get(key)
     if cached is not None:
@@ -158,7 +157,7 @@ def substitute_variables(
     text: Optional[str], *, positive: bool, identity: dict, direction_layer: dict, direction: str
 ) -> Optional[str]:
     """Expand the opt-in template variables in a prompt layer, resolved by field
-    context. `{identity_prompt}` -> identity positive/negative; `{direction_prompt}`
+    context. `{character_prompt}` -> character positive/negative; `{direction_prompt}`
     -> the selected direction's positive/negative; `{direction_name}` -> the bare
     direction name (both contexts). Literal token replacement (not str.format), so
     unknown `{...}` tokens and stray braces survive; absent sources expand to ''.
@@ -173,7 +172,7 @@ def substitute_variables(
         return text
     field = "positive_prompt" if positive else "negative_prompt"
     values = {
-        "identity_prompt": (identity.get(field) or "").strip(),
+        "character_prompt": (identity.get(field) or "").strip(),
         "direction_prompt": (direction_layer.get(field) or "").strip(),
         "direction_name": direction,
     }
@@ -185,10 +184,10 @@ def merged_prompts(
 ) -> tuple[str, str]:
     """Compile a prompt: merge globals[kind] + entity, then substitute the opt-in
     template variables. Identity and the per-direction layer are NOT merged as
-    cascade layers — they surface only via `{identity_prompt}` /
+    cascade layers — they surface only via `{character_prompt}` /
     `{direction_prompt}` / `{direction_name}`, resolved by field (positive vs
     negative). Variables resolve in either the global or the entity prompt."""
-    identity = read_identity(root, character)
+    identity = read_character(root, character)
     glob = manifest.get("globals", {}).get(kind, {}) or {}
     collection = manifest["poses"] if kind == "pose" else manifest["animations"]
     entity = collection[entity_id]
@@ -227,10 +226,6 @@ def compute_prompt_hash(
 
 # --- paths ------------------------------------------------------------------ #
 
-def _concept_png(root: str, character: str) -> str:
-    return os.path.join(root, character, "_concept.png")
-
-
 def _pose_basedir(root: str, character: str, pose_id: str) -> str:
     return os.path.join(root, character, f"_{pose_id}")
 
@@ -253,10 +248,6 @@ def _anim_meta_path(root: str, character: str, anim_id: str, direction: str) -> 
 
 # Public path accessors (nodes build payload paths through these instead of
 # duplicating the on-disk layout).
-def concept_image_path(root: str, character: str) -> str:
-    return _concept_png(root, character)
-
-
 def pose_image_path(root: str, character: str, pose_id: str, direction: str) -> str:
     return _pose_png(root, character, pose_id, direction)
 
@@ -288,10 +279,6 @@ def _count_frames(base: str) -> int:
     return sum(1 for n in names if n.startswith("frame_") and n.endswith(".png"))
 
 
-def concept_complete(root: str, character: str) -> bool:
-    return os.path.exists(_concept_png(root, character))
-
-
 def pose_complete(root: str, character: str, pose_id: str, direction: str) -> bool:
     if not os.path.exists(_pose_png(root, character, pose_id, direction)):
         return False
@@ -311,8 +298,6 @@ def animation_complete(root: str, character: str, anim_id: str, direction: str) 
 
 def node_complete(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> bool:
     kind = node_kind(manifest, ref)
-    if kind == "concept":
-        return concept_complete(root, character)
     if kind == "pose":
         return pose_complete(root, character, ref, direction)
     return animation_complete(root, character, ref, direction)
@@ -321,10 +306,8 @@ def node_complete(manifest: Manifest, root: str, character: str, ref: str, direc
 def read_node_meta(
     manifest: Manifest, root: str, character: str, ref: str, direction: str
 ) -> Optional[dict]:
-    """The rendered sidecar/meta dict for a node, or None (concept / unrendered)."""
+    """The rendered sidecar/meta dict for a node, or None (unrendered)."""
     kind = node_kind(manifest, ref)
-    if kind == "concept":
-        return None
     if kind == "pose":
         return _read_json(_pose_sidecar(root, character, ref, direction))
     return _read_json(_anim_meta_path(root, character, ref, direction))
@@ -341,25 +324,20 @@ def read_render_id(
     manifest: Manifest, root: str, character: str, ref: str, direction: str
 ) -> Optional[str]:
     """The rendered node's `render_id` (provenance token), or None when unrendered
-    or written before provenance existed. A concept carries its render_id in
-    `_concept.json` (it has no per-direction meta), so re-rendering the concept —
-    the root of the tree — propagates staleness to everything that recorded it."""
-    if node_kind(manifest, ref) == "concept":
-        return read_identity(root, character).get("render_id")
+    or written before provenance existed. The base pose roots the tree, so its
+    sidecar render_id is what descendants record and stale against."""
     meta = read_node_meta(manifest, root, character, ref, direction)
     return meta.get("render_id") if meta else None
 
 
 def direct_deps(manifest: Manifest, ref: str, direction: str) -> list[tuple[str, str]]:
     """(dep_ref, resolved_dir) for a node's direct dependencies at `direction`:
-    a pose's `from`; an animation's effective start_from + end_at. Concept refs
-    are included (they have no render_id, recorded as None)."""
+    a pose's `from`; an animation's effective start_from + end_at. A root pose
+    (no `from`) has no direct deps."""
     kind = node_kind(manifest, ref)
-    if kind == "concept":
-        return []
     if kind == "pose":
-        frm = manifest["poses"][ref]["from"]
-        return [(frm["ref"], resolved_dir(frm, direction))]
+        frm = manifest["poses"][ref].get("from")
+        return [(frm["ref"], resolved_dir(frm, direction))] if frm else []
     return [(dep["ref"], resolved_dir(dep, direction)) for _slot, dep in animation_deps(manifest, ref)]
 
 
@@ -378,10 +356,8 @@ def recorded_sources(
 # --- FFLF anchors ----------------------------------------------------------- #
 
 def _single_image(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> Optional[str]:
-    """A concept/pose dep's single image (used for either FFLF slot)."""
+    """A pose dep's single image (used for either FFLF slot)."""
     kind = node_kind(manifest, ref)
-    if kind == "concept":
-        return _concept_png(root, character)
     if kind == "pose":
         return _pose_png(root, character, ref, direction)
     return None  # animations are not single-image
@@ -390,8 +366,11 @@ def _single_image(manifest: Manifest, root: str, character: str, ref: str, direc
 def pose_source_image(
     manifest: Manifest, root: str, character: str, pose_id: str, direction: str
 ) -> Optional[str]:
-    """The image a pose's FLUX edit consumes — its `from` source."""
-    frm = manifest["poses"][pose_id]["from"]
+    """The image a pose's FLUX edit consumes — its `from` source, or None for a
+    root pose (no `from`; the creator node supplies the reference image)."""
+    frm = manifest["poses"][pose_id].get("from")
+    if not frm:
+        return None
     return _single_image(manifest, root, character, frm["ref"], resolved_dir(frm, direction))
 
 
@@ -430,8 +409,7 @@ def _anchor_from_dep(
     if not dep:
         return None
     ddir = resolved_dir(dep, direction)
-    kind = node_kind(manifest, dep["ref"])
-    if kind in ("concept", "pose"):
+    if node_kind(manifest, dep["ref"]) == "pose":
         return _single_image(manifest, root, character, dep["ref"], ddir)
     return _animation_frame(manifest, root, character, dep["ref"], ddir, frame_key)
 
@@ -443,7 +421,7 @@ def start_anchor(manifest: Manifest, root: str, character: str, anim_id: str, di
 
 
 def end_anchor(manifest: Manifest, root: str, character: str, anim_id: str, direction: str) -> Optional[str]:
-    """end_at -> dep's FIRST frame (animation) or its single image (concept/pose)."""
+    """end_at -> dep's FIRST frame (animation) or its single image (pose)."""
     dep = manifest["animations"][anim_id].get("end_at")
     return _anchor_from_dep(manifest, root, character, dep, direction, "start_frame")
 
@@ -489,8 +467,6 @@ def outdated(manifest: Manifest, root: str, character: str, ref: str, direction:
 
 def _outdated(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> bool:
     kind = node_kind(manifest, ref)
-    if kind == "concept":
-        return False
     if not node_complete(manifest, root, character, ref, direction):
         return False
     meta = read_node_meta(manifest, root, character, ref, direction)
@@ -513,7 +489,9 @@ def _outdated(manifest: Manifest, root: str, character: str, ref: str, direction
             if read_render_id(manifest, root, character, dep_ref, ddir) != recorded:
                 return True
     if kind == "pose":
-        frm = manifest["poses"][ref]["from"]
+        frm = manifest["poses"][ref].get("from")
+        if not frm:
+            return False
         return outdated(manifest, root, character, frm["ref"], resolved_dir(frm, direction))
     for _slot, dep in animation_deps(manifest, ref):
         if outdated(manifest, root, character, dep["ref"], resolved_dir(dep, direction)):
@@ -525,16 +503,26 @@ def _outdated(manifest: Manifest, root: str, character: str, ref: str, direction
 
 def resolve_pose(manifest: Manifest, root: str, character: str, pose_id: str, direction: str) -> dict:
     pose = manifest["poses"][pose_id]
-    frm = pose["from"]
-    src_dir = resolved_dir(frm, direction)
-    src_complete = node_complete(manifest, root, character, frm["ref"], src_dir)
+    frm = pose.get("from")
+    if frm:
+        src_dir = resolved_dir(frm, direction)
+        src_complete = node_complete(manifest, root, character, frm["ref"], src_dir)
+        blocked_by = [] if src_complete else [{"from": frm, "dir": src_dir}]
+        stale = src_complete and outdated(manifest, root, character, frm["ref"], src_dir)
+        source_image = (
+            pose_source_image(manifest, root, character, pose_id, direction)
+            if src_complete else None
+        )
+    else:
+        # Root pose (e.g. base): no upstream node. The creator node supplies the
+        # reference image; there is nothing to block on or go stale against here.
+        src_complete, blocked_by, stale, source_image = True, [], False, None
     positive, negative = merged_prompts(manifest, root, character, "pose", pose_id, direction)
     return {
         "selectable": (direction in pose["directions"]) and src_complete,
-        "blocked_by": [] if src_complete else [{"from": frm, "dir": src_dir}],
-        "stale": src_complete and outdated(manifest, root, character, frm["ref"], src_dir),
-        "source_image": pose_source_image(manifest, root, character, pose_id, direction)
-        if src_complete else None,
+        "blocked_by": blocked_by,
+        "stale": stale,
+        "source_image": source_image,
         "positive": positive,
         "negative": negative,
         "output_dir": _pose_basedir(root, character, pose_id),
@@ -610,7 +598,7 @@ def playback_segments(
     An *animation* anchor contributes its own frames (played once) and drops the
     action's adjacent boundary frame — FFLF cross-wiring makes the action's first
     frame a copy of start_from's last and its last a copy of end_at's first. A
-    *pose*/concept anchor is held for `fps` frames (~1s) and nothing is dropped.
+    *pose* anchor is held for `fps` frames (~1s) and nothing is dropped.
     Deps whose frames aren't rendered yet are skipped (and no boundary drop on
     that side). The action repeats `loops` times when it returns to its start
     state (start_from and end_at resolve to the same ref+direction)."""
