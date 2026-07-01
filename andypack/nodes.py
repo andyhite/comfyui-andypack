@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from datetime import datetime, timezone
 
 import torch
@@ -999,45 +998,6 @@ class TurnaroundSheet:
         labels = list(manikins.CANONICAL_DIRECTIONS) if include_labels else None
         sheet = images.contact_sheet(tiles, columns, cell=cell, labels=labels)
         return {"ui": _image_preview(sheet), "result": (sheet,)}
-
-
-_HEX_SPEC_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
-_HSV_PART_RE = re.compile(r"(hue|sat|val)\s*=\s*([0-9]*\.?[0-9]+)")
-
-
-def _parse_variants(text: str) -> "list[tuple[str, dict]]":
-    """Parse a multiline variants spec into a list of ``(name, spec)`` pairs.
-
-    Each non-blank line must be of one of these forms::
-
-        name: hue=DEG, sat=X, val=Y     → {"hue": DEG, "sat": X, "val": Y}
-        name: #RRGGBB                    → {"hex": "#RRGGBB"}
-
-    Missing HSV keys default to ``hue=0``, ``sat=1``, ``val=1``.
-    Lines that don't match either form are skipped silently.
-    """
-    result: list[tuple[str, dict]] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or ":" not in line:
-            continue
-        name_part, _, rest = line.partition(":")
-        name = name_part.strip()
-        rest = rest.strip()
-        if not name or not rest:
-            continue
-        if _HEX_SPEC_RE.match(rest):
-            result.append((name, {"hex": rest}))
-            continue
-        parts = dict(_HSV_PART_RE.findall(rest))
-        if parts:
-            spec = {
-                "hue": float(parts.get("hue", 0)),
-                "sat": float(parts.get("sat", 1)),
-                "val": float(parts.get("val", 1)),
-            }
-            result.append((name, spec))
-    return result
 
 
 class AnimatedSpriteExport:

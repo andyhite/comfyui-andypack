@@ -144,111 +144,6 @@ def save_image_png(
         raise
 
 
-def mirror_png(src: str, dst: str) -> None:
-    """Atomically write `dst` as the horizontal mirror of the PNG at `src`.
-
-    Used to synthesize a mirror-mapped direction (e.g. WEST from EAST) without
-    re-generating it. Transparency is preserved so a mirrored frame still
-    composites correctly downstream.
-    """
-    with Image.open(src) as img:
-        flipped = img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-        flipped.load()
-    directory = os.path.dirname(dst) or "."
-    os.makedirs(directory, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=directory, suffix=".png.tmp")
-    os.close(fd)
-    try:
-        flipped.save(tmp, format="PNG")
-        os.replace(tmp, dst)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-
-def _rgb_to_hsv_arr(rgb: np.ndarray) -> np.ndarray:
-    """Convert a float [..., 3] RGB array (values in [0, 1]) to HSV (also [0, 1])."""
-    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-    maxc = np.maximum(np.maximum(r, g), b)
-    minc = np.minimum(np.minimum(r, g), b)
-    v = maxc
-    delta = maxc - minc
-    with np.errstate(invalid="ignore", divide="ignore"):
-        s = np.where(maxc > 0.0, delta / maxc, 0.0)
-        h_r = np.where(maxc == r, (g - b) / delta % 6.0, 0.0)
-        h_g = np.where(maxc == g, (b - r) / delta + 2.0, 0.0)
-        h_b = np.where(maxc == b, (r - g) / delta + 4.0, 0.0)
-    # For ties (e.g. achromatic), r → g → b priority; masked to 0 when delta == 0.
-    h_raw = np.where(maxc == r, h_r, np.where(maxc == g, h_g, h_b))
-    h = np.where(delta > 0.0, h_raw / 6.0 % 1.0, 0.0)
-    return np.stack([h, s, v], axis=-1)
-
-
-def _hsv_to_rgb_arr(hsv: np.ndarray) -> np.ndarray:
-    """Convert a float [..., 3] HSV array (values in [0, 1]) to RGB (also [0, 1])."""
-    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-    i = (h * 6.0).astype(np.int32)
-    f = h * 6.0 - i.astype(hsv.dtype)
-    p = v * (1.0 - s)
-    q = v * (1.0 - f * s)
-    t = v * (1.0 - (1.0 - f) * s)
-    i6 = i % 6
-    conds = [i6 == k for k in range(6)]
-    r = np.select(conds, [v, q, p, p, t, v])
-    g = np.select(conds, [t, v, v, q, p, p])
-    b = np.select(conds, [p, p, t, v, v, q])
-    return np.stack([r, g, b], axis=-1)
-
-
-def recolor(image: torch.Tensor, spec: dict) -> torch.Tensor:
-    """Apply a deterministic color transform to a [1, H, W, C] IMAGE tensor.
-
-    *spec* is one of:
-
-    - ``{"hue": deg, "sat": x, "val": y}`` — rotate hue by *deg* degrees,
-      multiply saturation by *x*, multiply value (brightness) by *y*.
-      Missing keys default to ``hue=0``, ``sat=1``, ``val=1``.
-    - ``{"hex": "#RRGGBB"}`` — remap every pixel's hue to the hue of the
-      target hex colour, preserving each pixel's individual saturation and
-      value (team-colour / tint remap).
-
-    Alpha (4-ch RGBA) is preserved unchanged.  Returns a new [1, H, W, C]
-    tensor in the same channel layout as the input.
-    """
-    frame = image[0] if image.dim() == 4 else image
-    has_alpha = int(frame.shape[-1]) == 4
-    rgb = frame[..., :3].clamp(0.0, 1.0).cpu().numpy().astype(np.float64)
-    alpha = frame[..., 3:4] if has_alpha else None
-
-    hsv = _rgb_to_hsv_arr(rgb)
-
-    if "hex" in spec:
-        hex_str = str(spec["hex"]).lstrip("#")
-        rh = int(hex_str[0:2], 16) / 255.0
-        gh = int(hex_str[2:4], 16) / 255.0
-        bh = int(hex_str[4:6], 16) / 255.0
-        target = _rgb_to_hsv_arr(np.array([[[rh, gh, bh]]], dtype=np.float64))
-        hsv[..., 0] = float(target[0, 0, 0])
-    else:
-        hue_deg = float(spec.get("hue", 0))
-        sat_mul = float(spec.get("sat", 1))
-        val_mul = float(spec.get("val", 1))
-        hsv[..., 0] = (hsv[..., 0] + hue_deg / 360.0) % 1.0
-        hsv[..., 1] = np.clip(hsv[..., 1] * sat_mul, 0.0, 1.0)
-        hsv[..., 2] = np.clip(hsv[..., 2] * val_mul, 0.0, 1.0)
-
-    rgb_out = _hsv_to_rgb_arr(hsv).clip(0.0, 1.0).astype(np.float32)
-    result = torch.from_numpy(rgb_out).unsqueeze(0)
-
-    if has_alpha and alpha is not None:
-        result = torch.cat([result, alpha.unsqueeze(0)], dim=-1)
-
-    return result
-
-
 def pad_to(tensor: torch.Tensor, height: int, width: int) -> torch.Tensor:
     """Zero-pad a [1, H, W, C] tensor to (height, width), top-left anchored.
 
@@ -277,22 +172,6 @@ def is_empty(image: torch.Tensor) -> bool:
     return image.shape[0] == 0 or (image.shape[1] <= 1 and image.shape[2] <= 1)
 
 
-def _load_frames_dir(directory: str) -> "torch.Tensor | None":
-    """Load `frame_*.png` from a directory as a [N, H, W, C] batch (sorted by
-    name), or None when the directory holds no frames."""
-    try:
-        names = sorted(
-            n for n in os.listdir(directory)
-            if n.startswith("frame_") and n.endswith(".png")
-        )
-    except OSError:
-        return None
-    if not names:
-        return None
-    frames = [load_image_tensor(os.path.join(directory, n)) for n in names]
-    return torch.cat(frames, dim=0)
-
-
 def _resize_batch(batch: torch.Tensor, height: int, width: int) -> torch.Tensor:
     """Bilinear-resize an IMAGE batch [N, H, W, C] to (height, width); a no-op when
     it already matches."""
@@ -303,44 +182,6 @@ def _resize_batch(batch: torch.Tensor, height: int, width: int) -> torch.Tensor:
         nchw, size=(height, width), mode="bilinear", align_corners=False
     )
     return resized.permute(0, 2, 3, 1).contiguous()
-
-
-def assemble_playback(segments: list) -> torch.Tensor:
-    """Concatenate a playback plan (see resolve.playback_segments) into one IMAGE
-    batch. `anim` segments load their frame dir, tile `repeat` times, then drop the
-    seam boundary frame(s); `hold` segments repeat a single image `count` times.
-    Segments with no readable frames are skipped.
-
-    Segments may differ in resolution — a held pose anchor is often
-    authored at a different size than the action frames. Every segment is conformed
-    to a single target (the first `anim` segment's size — the action's own frames —
-    else the first part) so torch.cat doesn't crash on mismatched H/W."""
-    parts: list[torch.Tensor] = []
-    target: tuple[int, int] | None = None  # (H, W) from the first anim segment
-    for seg in segments:
-        if seg["kind"] == "anim":
-            batch = _load_frames_dir(seg["dir"])
-            if batch is None:
-                continue
-            repeat = max(int(seg.get("repeat", 1)), 1)
-            if repeat > 1:
-                batch = batch.repeat(repeat, 1, 1, 1)
-            if seg.get("drop_first") and batch.shape[0] > 1:
-                batch = batch[1:]
-            if seg.get("drop_last") and batch.shape[0] > 1:
-                batch = batch[:-1]
-            if target is None:
-                target = (int(batch.shape[1]), int(batch.shape[2]))
-            parts.append(batch)
-        else:  # hold a single image for `count` frames
-            img = load_image_tensor(seg["image"])
-            parts.append(img.repeat(max(int(seg.get("count", 1)), 1), 1, 1, 1))
-    if not parts:
-        return empty_image()
-    if target is None:
-        target = (int(parts[0].shape[1]), int(parts[0].shape[2]))
-    parts = [_resize_batch(p, target[0], target[1]) for p in parts]
-    return torch.cat(parts, dim=0)
 
 
 def retime_batch(
@@ -386,31 +227,6 @@ def retime_batch(
         pad_count = target - n
         return torch.cat([frames, frames[-1:].repeat(pad_count, 1, 1, 1)])
     raise ValueError(f"retime_batch: unknown mode {mode!r}")
-
-
-def apply_play_mode(
-    frames: torch.Tensor, mode: str, hold_frames: int = 0
-) -> torch.Tensor:
-    """Post-process an assembled IMAGE batch [N, H, W, C] according to playback mode.
-
-    - ``loop``      — return frames unchanged (looping is handled by the player).
-    - ``ping_pong`` — append the reversed interior so the clip plays forward then
-                      backward: [0,1,2,3] → [0,1,2,3,2,1] (6 frames). For <=2
-                      frames the interior is empty; return unchanged.
-    - ``once``      — return frames unchanged (the node passes loops=1 upstream).
-    - ``hold_last`` — repeat the final frame ``hold_frames`` times when
-                      hold_frames > 0; otherwise return unchanged.
-    """
-    if frames.shape[0] <= 1:
-        return frames
-    if mode == "ping_pong":
-        interior = frames[1:-1]
-        if interior.shape[0] == 0:
-            return frames
-        return torch.cat([frames, interior.flip(0)])
-    if mode == "hold_last" and hold_frames > 0:
-        return torch.cat([frames, frames[-1:].repeat(hold_frames, 1, 1, 1)])
-    return frames
 
 
 def save_animated_webp(

@@ -2,7 +2,6 @@ from andypack.resolve import (
     animation_complete,
     node_complete,
     pose_complete,
-    read_rendered_hash,
     resolved_dir,
 )
 
@@ -32,10 +31,3 @@ def test_node_complete_dispatches_by_kind(manifest, tree):
     assert node_complete(manifest, tree.root, tree.char, "base", "EAST") is True
     assert node_complete(manifest, tree.root, tree.char, "fighting_stance", "EAST") is True
     assert node_complete(manifest, tree.root, tree.char, "punch", "EAST") is False
-
-
-def test_read_rendered_hash(manifest, tree):
-    assert read_rendered_hash(manifest, tree.root, tree.char, "base", "EAST") is None
-    tree.pose("base", "EAST")
-    h = read_rendered_hash(manifest, tree.root, tree.char, "base", "EAST")
-    assert h is not None and h.startswith("sha1:")

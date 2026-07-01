@@ -122,32 +122,6 @@ def test_nonpositive_gen_params_rejected():
         validate_manifest(m)
 
 
-def test_playback_not_loopable_when_anchor_frames_differ(tmp_path):
-    root = str(tmp_path)
-    char = "hero"
-    manifest = {"version": 1,
-        "poses": {"base": {"directions": {"EAST": {}}}},
-        "animations": {
-            "src": {"start_from": {"ref": "base"}, "directions": {"EAST": {}},
-                    "length": 4, "fps": 8, "width": 16, "height": 16},
-            "clip": {"start_from": {"ref": "src"}, "end_at": {"ref": "src"},
-                     "directions": {"EAST": {}}, "length": 4, "fps": 8, "width": 16, "height": 16}},
-        "defaults": {}}
-    # render src (4 distinct frames so start_frame != last_frame) and clip
-    for anim, n in (("src", 4), ("clip", 4)):
-        d = os.path.join(root, char, anim, "EAST")
-        os.makedirs(d, exist_ok=True)
-        for i in range(n):
-            open(os.path.join(d, io.frame_name(i)), "wb").close()
-        r = resolve.resolve_animation(manifest, root, char, anim, "EAST")
-        io.atomic_write_json(os.path.join(d, "meta.json"),
-            io.build_animation_meta(r["meta"], count=n, start_frame=io.frame_name(0),
-                last_frame=io.frame_name(n - 1), seed=0, created_utc="2026-01-01T00:00:00Z"))
-    segs = resolve.playback_segments(manifest, root, char, "clip", "EAST", loops=3, fps=8)
-    action = [s for s in segs if s.get("dir", "").endswith(os.path.join("clip", "EAST"))][0]
-    assert action["repeat"] == 1  # start_image (src.last) != end_image (src.first)
-
-
 def test_animation_writer_rejects_empty_sentinel(tmp_path, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
     w = nodes.AnimationFrameWriter()

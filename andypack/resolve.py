@@ -272,10 +272,6 @@ def pose_image_path(root: str, character: str, pose_id: str, direction: str) -> 
     return _pose_png(root, character, pose_id, direction)
 
 
-def pose_sidecar_path(root: str, character: str, pose_id: str, direction: str) -> str:
-    return _pose_sidecar(root, character, pose_id, direction)
-
-
 def animation_frame_dir(root: str, character: str, anim_id: str, direction: str) -> str:
     return _anim_dir(root, character, anim_id, direction)
 
@@ -342,13 +338,6 @@ def read_node_meta(
     if kind == "pose":
         return _read_json(_pose_sidecar(root, character, ref, direction))
     return _read_json(_anim_meta_path(root, character, ref, direction))
-
-
-def read_rendered_hash(
-    manifest: Manifest, root: str, character: str, ref: str, direction: str
-) -> Optional[str]:
-    meta = read_node_meta(manifest, root, character, ref, direction)
-    return meta.get("prompt_hash") if meta else None
 
 
 def read_render_id(
@@ -683,57 +672,6 @@ def animation_fps(manifest: Manifest, anim_id: str) -> int:
     anim = manifest["animations"][anim_id]
     fps = anim.get("fps", manifest.get("defaults", {}).get("fps"))
     return int(fps or 0) or 1
-
-
-def playback_segments(
-    manifest: Manifest, root: str, character: str, anim_id: str, direction: str,
-    *, loops: int, fps: int,
-) -> list[dict]:
-    """An ordered playback plan for an animation, chaining its start_from/end_at
-    deps one level deep. Segments, in play order:
-
-      {"kind": "anim", "dir": <frame_dir>, "repeat": n, "drop_first": b, "drop_last": b}
-      {"kind": "hold", "image": <png path>,  "count": n}
-
-    An *animation* anchor contributes its own frames (played once) and drops the
-    action's adjacent boundary frame — FFLF cross-wiring makes the action's first
-    frame a copy of start_from's last and its last a copy of end_at's first. A
-    *pose* anchor is held for `fps` frames (~1s) and nothing is dropped.
-    Deps whose frames aren't rendered yet are skipped (and no boundary drop on
-    that side). The action repeats `loops` times when it returns to its start
-    state (start_from and end_at resolve to the same ref+direction)."""
-    anim = manifest["animations"][anim_id]
-    start = effective_start_dep(manifest, anim_id)
-    end = anim.get("end_at")
-
-    def dep_segment(dep: Optional[dict]) -> tuple[Optional[dict], bool]:
-        """(segment, whether the action's boundary frame should be dropped)."""
-        if not dep:
-            return None, False
-        ddir = resolved_dir(dep, direction)
-        ref = dep["ref"]
-        if not node_complete(manifest, root, character, ref, ddir):
-            return None, False
-        if node_kind(manifest, ref) == "animation":
-            return {
-                "kind": "anim", "dir": animation_frame_dir(root, character, ref, ddir),
-                "repeat": 1, "drop_first": False, "drop_last": False,
-            }, True
-        return {"kind": "hold", "image": _single_image(manifest, root, character, ref, ddir),
-                "count": max(int(fps), 1)}, False
-
-    pre_seg, drop_first = dep_segment(start)
-    post_seg, drop_last = dep_segment(end)
-
-    start_img = start_anchor(manifest, root, character, anim_id, direction)
-    end_img = end_anchor(manifest, root, character, anim_id, direction)
-    loopable = start_img is not None and start_img == end_img
-    action = {
-        "kind": "anim", "dir": animation_frame_dir(root, character, anim_id, direction),
-        "repeat": max(int(loops), 1) if loopable else 1,
-        "drop_first": drop_first, "drop_last": drop_last,
-    }
-    return [s for s in (pre_seg, action, post_seg) if s]
 
 
 def status_from_resolved(

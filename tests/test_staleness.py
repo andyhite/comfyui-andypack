@@ -1,4 +1,5 @@
 import json
+import os
 
 from andypack import resolve
 from andypack.resolve import outdated
@@ -42,7 +43,9 @@ def test_malformed_sources_key_does_not_raise(manifest, tree):
     # A sources key lacking '@' (older/hand-edited meta) must be skipped, not crash
     # outdated() — the transitive-hash walk still covers that dependency.
     tree.pose("base", "EAST")
-    sidecar_path = resolve.pose_sidecar_path(tree.root, tree.char, "base", "EAST")
+    sidecar_path = os.path.splitext(
+        resolve.pose_image_path(tree.root, tree.char, "base", "EAST")
+    )[0] + ".json"
     side = json.loads(open(sidecar_path).read())
     side["sources"] = {"concept_no_at_sign": "rid:whatever"}  # malformed key
     with open(sidecar_path, "w") as fh:
