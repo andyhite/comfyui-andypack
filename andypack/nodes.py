@@ -1194,7 +1194,15 @@ class PoseEditConditioning:
         sh, sw = int(src.shape[1]), int(src.shape[2])
         out_w = width if width > 0 else (sw - sw % 16 or 16)
         out_h = height if height > 0 else (sh - sh % 16 or 16)
-        latent = {"samples": torch.zeros([1, 16, out_h // 8, out_w // 8])}
+        # Size the empty output latent via the VAE itself, not a hand-built shape:
+        # encode a blank at the target pixel size and zero it. A hardcoded
+        # [1, 16, H//8, W//8] assumed an 8x VAE, but flux2-vae compresses 16x, so the
+        # canvas came out 2x too large — and each derived pose (an edit of an edit)
+        # compounded to 4x+, stretching anatomy. Encoding a blank tracks whatever
+        # spatial compression + channel count the VAE actually has.
+        latent = {"samples": torch.zeros_like(
+            vae.encode(torch.zeros([1, out_h, out_w, 3]))
+        )}
         return (positive, negative, latent)
 
 
