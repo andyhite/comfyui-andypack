@@ -19,7 +19,7 @@ let READY = false;
 //   character (python combo) -> category -> pose|animation -> direction
 const SELECTOR_NODES = {
   PoseSweepSelector: { idWidget: "pose", kind: "pose" },
-  CharacterAnimationSelector: { idWidget: "animation", kind: "animation" },
+  AnimationSweepSelector: { idWidget: "animation", kind: "animation" },
   AnimationPlayback: { idWidget: "animation", kind: "animation" },
 };
 

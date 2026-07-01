@@ -438,7 +438,19 @@ class PoseFrameWriter:
         return (output_dir,)
 
 
-class CharacterAnimationSelector:
+class AnimationSweepSelector:
+    """Sweep or spot-fix animations. mode=sweep emits the next actionable
+    (ready/stale) animation in dependency order — drive it inside a Sweep Loop
+    to fill everything; queue the graph repeatedly and each run generates the
+    next clip until none remain (then it raises, the natural stop). mode=target
+    force-regenerates the named animation@direction (no completeness gate — the
+    point is a spot-fix), leaving all others alone.
+
+    Set `category` to scope the sweep to one manifest category (e.g.
+    "locomotion", "combat"); leave it empty to sweep all animations. Animations
+    have no root/base concept (that's a pose-only distinction), so unlike the
+    pose selector there is no `include_base` widget."""
+
     CATEGORY = "andypack/Animation"
     FUNCTION = "select"
     # One bundled ANIMATION dict (unpack it with Unpack Animation) instead of outputs.
@@ -447,10 +459,15 @@ class CharacterAnimationSelector:
 
     @classmethod
     def INPUT_TYPES(cls):
+        # character is a real combo of character folders; category/animation/direction
+        # are STRING widgets the web extension turns into the cascading combos
+        # (animation/direction only matter in target mode; category scopes the sweep).
         return {
             "required": {
                 "manifest": ("ANIM_MANIFEST",),
                 "character": (_character_choices(),),
+                "mode": (["sweep", "target"],),
+                "skip_mirrored": ("BOOLEAN", {"default": True}),
                 "category": ("STRING", {"default": ""}),
                 "animation": ("STRING", {"default": ""}),
                 "direction": ("STRING", {"default": ""}),
@@ -458,40 +475,60 @@ class CharacterAnimationSelector:
         }
 
     @classmethod
-    def IS_CHANGED(cls, manifest, character, category, animation, direction):
-        # Re-resolve so the cache reflects the rendered tree (anchors generated /
-        # re-rendered, prompt edits going stale), not just the widget values.
-        if character in ("", _NO_CHARACTER) or not animation or not direction:
-            return float("nan")
-        root = _characters_root()
-        try:
-            eff = effective_manifest(manifest, root, character)
-            r = resolve_animation(eff, root, character, animation, direction)
-        except Exception:
-            return float("nan")
-        return _selector_fingerprint(r, "start_image", "end_image")
+    def IS_CHANGED(cls, *a, **k):
+        # Disk-backed; re-read every execution — the sweep loop depends on this
+        # (it must re-run each iteration and always see the current tree state).
+        return float("nan")
 
-    def select(self, manifest, character, category, animation, direction):
+    @staticmethod
+    def _ctx(character, mode, skip_mirrored, category, animation, direction):
+        return {
+            "character": character, "kind": "animation", "mode": mode,
+            "exclude_root": False, "category": category or None,
+            "skip_mirrored": skip_mirrored,
+            "target": (animation, direction) if mode == "target" else None,
+        }
+
+    def select(self, manifest, character, mode, skip_mirrored, category, animation, direction):
         if character in ("", _NO_CHARACTER):
-            raise RuntimeError("CharacterAnimationSelector: select a character first")
-        if not animation or not direction:
-            raise RuntimeError("CharacterAnimationSelector: pick an animation and a direction")
+            raise RuntimeError("AnimationSweepSelector: select a character first")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
-        if animation not in manifest.get("animations", {}):
-            raise RuntimeError(
-                f"CharacterAnimationSelector: unknown animation {animation!r} "
-                "(stale or renamed) — pick an animation"
+        ctx = self._ctx(character, mode, skip_mirrored, category, animation, direction)
+        if mode == "target":
+            if not animation or not direction:
+                raise RuntimeError(
+                    "AnimationSweepSelector: target mode needs an animation and a direction"
+                )
+            if animation not in manifest.get("animations", {}):
+                raise RuntimeError(
+                    f"AnimationSweepSelector: unknown animation {animation!r} "
+                    "(stale or renamed) — pick an animation"
+                )
+            r = resolve_animation(manifest, root, character, animation, direction)
+            if not r["selectable"]:
+                raise RuntimeError(
+                    f"animation {animation}@{direction} not selectable: blocked_by={r['blocked_by']}"
+                )
+        else:
+            job = api.next_actionable(
+                manifest, root, character, "animation",
+                category=category or None, skip_mirrored=skip_mirrored,
             )
-        r = resolve_animation(manifest, root, character, animation, direction)
-        if not r["selectable"]:
-            raise RuntimeError(
-                f"animation {animation}@{direction} not selectable: blocked_by={r['blocked_by']}"
-            )
-        # Bundle the loose outputs into one ANIMATION dict (see ANIMATION_OUTPUT_KEYS).
+            if not job:
+                scope = f" in category {category!r}" if category else ""
+                raise RuntimeError(
+                    f"AnimationSweepSelector: no actionable animations remain{scope} — "
+                    "every animation is generated, blocked on an ungenerated anchor "
+                    "pose, or stale only because an upstream pose/clip changed "
+                    "(regenerate that upstream node to clear its dependents)"
+                )
+            r = resolve_animation(manifest, root, character, job["id"], job["direction"])
+        # Bundle the loose outputs into one ANIMATION dict (see ANIMATION_OUTPUT_KEYS),
+        # stamped with sweep context so a later writer can recompute remaining work.
         # The wireable generation params (length/fps/width/height/shift) drive the
         # WanFirstLastFrameToVideo node + ModelSamplingSD3 directly.
-        return (_build_animation_bundle(r),)
+        return (_build_animation_bundle(r, sweep=ctx),)
 
 
 class AnimationFrameWriter:
@@ -699,83 +736,6 @@ class CoverageReport:
         char = "" if character == _NO_CHARACTER else character
         data = api.coverage_report(manifest, _characters_root(), char)
         return (api.format_coverage_table(data), json.dumps(data, indent=2))
-
-
-class AutoAnimationSelector:
-    """Auto-advancing batch selector: emit the NEXT actionable (ready/stale)
-    animation in dependency order, as an ANIM_ANIMATION. Wire it like the Character
-    Animation Selector (→ Unpack Animation → WanFirstLastFrameToVideo → Animation
-    Frame Writer) and queue the graph repeatedly — each run generates the next clip
-    until none remain (then it raises, the natural stop).
-
-    Set `category` to scope the sweep to one manifest category (e.g. "locomotion",
-    "combat"); leave it empty to sweep all animations."""
-
-    CATEGORY = "andypack/Animation"
-    FUNCTION = "select"
-    RETURN_TYPES = ("ANIM_ANIMATION", "INT")
-    RETURN_NAMES = ("ANIMATION", "REMAINING")
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "manifest": ("ANIM_MANIFEST",),
-                "character": (_character_choices(),),
-                "skip_mirrored": ("BOOLEAN", {"default": True}),
-                "category": ("STRING", {"default": ""}),
-            }
-        }
-
-    @classmethod
-    def IS_CHANGED(cls, manifest, character, skip_mirrored, category):
-        if character in ("", _NO_CHARACTER):
-            return float("nan")
-        root = _characters_root()
-        try:
-            eff = effective_manifest(manifest, root, character)
-            job = api.next_actionable(
-                eff, root, character, "animation",
-                skip_mirrored=skip_mirrored, category=category or None,
-            )
-            if not job:
-                return "none"
-            r = resolve_animation(eff, root, character, job["id"], job["direction"])
-        except Exception:
-            return float("nan")
-        return (
-            f"{job['id']}@{job['direction']}|skip_mirrored={skip_mirrored}|{category}|"
-            + _selector_fingerprint(r, "start_image", "end_image")
-        )
-
-    def select(self, manifest, character, skip_mirrored, category):
-        if character in ("", _NO_CHARACTER):
-            raise RuntimeError("AutoAnimationSelector: select a character first")
-        root = _characters_root()
-        manifest = effective_manifest(manifest, root, character)
-        cat = category or None
-        job = api.next_actionable(
-            manifest, root, character, "animation",
-            skip_mirrored=skip_mirrored, category=cat,
-        )
-        if not job:
-            scope = f" in category {category!r}" if cat else ""
-            raise RuntimeError(
-                f"AutoAnimationSelector: no actionable animations remain{scope} — every "
-                "animation is generated, blocked on an ungenerated anchor pose, or "
-                "stale only because an upstream pose/clip changed (regenerate that "
-                "upstream node to clear its dependents)"
-            )
-        # REMAINING: actionable animations still queued in scope (this one included).
-        queue = api.regen_queue(manifest, root, character)
-        animations = manifest.get("animations", {})
-        remaining = sum(
-            1 for item in queue
-            if item["kind"] == "animation"
-            and (cat is None or animations.get(item["id"], {}).get("category") == cat)
-        )
-        r = resolve_animation(manifest, root, character, job["id"], job["direction"])
-        return (_build_animation_bundle(r), remaining)
 
 
 class SpriteTrimPivot:
@@ -1261,8 +1221,7 @@ NODE_CLASS_MAPPINGS = {
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
     "PoseEditConditioning": PoseEditConditioning,
-    "CharacterAnimationSelector": CharacterAnimationSelector,
-    "AutoAnimationSelector": AutoAnimationSelector,
+    "AnimationSweepSelector": AnimationSweepSelector,
     "AnimationFrameWriter": AnimationFrameWriter,
     "AnimationUnpack": AnimationUnpack,
     "AnimationFrames": AnimationFrames,
@@ -1282,8 +1241,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",
     "PoseEditConditioning": "Pose Edit Conditioning",
-    "CharacterAnimationSelector": "Character Animation Selector",
-    "AutoAnimationSelector": "Auto Animation Selector (next job)",
+    "AnimationSweepSelector": "Animation Sweep Selector",
     "AnimationFrameWriter": "Animation Frame Writer",
     "AnimationUnpack": "Unpack Animation",
     "AnimationFrames": "Animation Frames (load)",

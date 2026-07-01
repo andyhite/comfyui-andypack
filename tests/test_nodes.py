@@ -110,17 +110,24 @@ def test_pose_sweep_selector_is_changed_always_reruns(manifest, tree, monkeypatc
     assert math.isnan(before) and math.isnan(after)
 
 
-def test_animation_selector_is_changed_tracks_anchor_render(manifest, tree, monkeypatch):
+def test_animation_sweep_selector_is_changed_always_reruns(manifest, tree, monkeypatch):
+    # AnimationSweepSelector.IS_CHANGED unconditionally returns NaN — it is
+    # disk-backed and must re-read every execution (the sweep loop depends on
+    # this), so it always re-runs regardless of widget values or rendered-tree
+    # state. This replaces the old CharacterAnimationSelector behavior of
+    # fingerprinting the resolved start/end anchor images to detect drift; the
+    # unified selector instead just always re-executes, a strictly stronger
+    # guarantee.
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.pose("base", "EAST").pose("fighting_stance", "EAST")
-    before = nodes.CharacterAnimationSelector.IS_CHANGED(
-        manifest, tree.char, "", "punch", "EAST"
+    before = nodes.AnimationSweepSelector.IS_CHANGED(
+        manifest, tree.char, "target", True, "", "punch", "EAST"
     )  # idle not rendered -> blocked, no anchor image
     tree.animation("fighting_stance_idle", "EAST", frames=3)
-    after = nodes.CharacterAnimationSelector.IS_CHANGED(
-        manifest, tree.char, "", "punch", "EAST"
+    after = nodes.AnimationSweepSelector.IS_CHANGED(
+        manifest, tree.char, "target", True, "", "punch", "EAST"
     )  # idle rendered -> selectable, anchors resolve
-    assert before != after
+    assert math.isnan(before) and math.isnan(after)
 
 
 def test_selector_is_changed_volatile_without_character(manifest, monkeypatch):
@@ -176,7 +183,9 @@ def test_animation_selector_outputs_length_and_fps(manifest, tree, monkeypatch):
     idle = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
     for i in range(3):  # real PNGs so the anchor frames load
         images.save_image_png(_img(), os.path.join(idle, f"frame_{i:05d}.png"))
-    (anim,) = nodes.CharacterAnimationSelector().select(manifest, tree.char, "", "punch", "EAST")
+    (anim,) = nodes.AnimationSweepSelector().select(
+        manifest, tree.char, "target", True, "", "punch", "EAST"
+    )
     assert anim["length"] == manifest["animations"]["punch"]["length"]  # 21
     assert anim["fps"] == manifest["defaults"]["fps"]                   # 16 (punch inherits default)
     assert anim["_meta"]["animation"] == "punch"
@@ -210,7 +219,9 @@ def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
     idle = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
     for i in range(3):
         images.save_image_png(_img(), os.path.join(idle, f"frame_{i:05d}.png"))
-    (anim,) = nodes.CharacterAnimationSelector().select(manifest, tree.char, "", "punch", "EAST")
+    (anim,) = nodes.AnimationSweepSelector().select(
+        manifest, tree.char, "target", True, "", "punch", "EAST"
+    )
     assert anim["_meta"]["animation"] == "punch"
     assert isinstance(anim["is_fflf"], bool)
     assert isinstance(anim["length"], int) and isinstance(anim["fps"], int)
@@ -317,7 +328,9 @@ def test_animation_selector_rejects_unknown_id(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
     with pytest.raises(RuntimeError, match="unknown animation"):
-        nodes.CharacterAnimationSelector().select(manifest, tree.char, "", "ghost_anim", "EAST")
+        nodes.AnimationSweepSelector().select(
+            manifest, tree.char, "target", True, "", "ghost_anim", "EAST"
+        )
 
 
 def test_animation_selector_tolerates_missing_start_anchor(manifest, tree, monkeypatch):
@@ -339,8 +352,8 @@ def test_animation_selector_tolerates_missing_start_anchor(manifest, tree, monke
     with open(meta_path, "w") as fh:
         json.dump(meta, fh)
     # fighting_stance_exit: start_from -> fighting_stance_idle (anim), end_at -> base.
-    (anim,) = nodes.CharacterAnimationSelector().select(
-        manifest, tree.char, "", "fighting_stance_exit", "EAST"
+    (anim,) = nodes.AnimationSweepSelector().select(
+        manifest, tree.char, "target", True, "", "fighting_stance_exit", "EAST"
     )
     assert images.is_empty(anim["start_image"])  # empty sentinel, no crash
 
@@ -488,7 +501,7 @@ def test_pose_sweep_selector_include_base_emits_root_with_manikin(manifest, tree
     assert not images.is_empty(pose["pose_reference"])  # the direction's manikin
 
 
-def test_auto_animation_selector_emits_next_actionable_animation(manifest, tree, monkeypatch):
+def test_animation_sweep_selector_emits_next_actionable_animation(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.pose("base", "EAST").pose("fighting_stance", "EAST")
     # fighting_stance is the I2V start anchor for fighting_stance_idle — write a
@@ -496,20 +509,23 @@ def test_auto_animation_selector_emits_next_actionable_animation(manifest, tree,
     images.save_image_png(
         _img(), resolve.pose_image_path(tree.root, tree.char, "fighting_stance", "EAST")
     )
-    (anim, remaining) = nodes.AutoAnimationSelector().select(
-        manifest, tree.char, skip_mirrored=True, category=""
+    # NOTE: the old AutoAnimationSelector returned (anim, remaining) — a 2-tuple
+    # with a REMAINING count. The unified selector drops REMAINING (the writer
+    # computes remaining work in a later task), so it returns a 1-tuple now.
+    (anim,) = nodes.AnimationSweepSelector().select(
+        manifest, tree.char, "sweep", True, "", "", ""
     )
     assert anim["_meta"]["animation"] == "fighting_stance_idle"
+    assert anim["_sweep"]["mode"] == "sweep"
     assert sorted(k for k in anim if not k.startswith("_")) == nodes.ANIMATION_OUTPUT_KEYS
-    assert remaining >= 1
 
 
-def test_auto_animation_selector_raises_when_nothing_actionable(manifest, tree, monkeypatch):
+def test_animation_sweep_selector_raises_when_nothing_actionable(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
     with pytest.raises(RuntimeError, match="no actionable animations"):
-        nodes.AutoAnimationSelector().select(
-            manifest, tree.char, skip_mirrored=True, category=""
+        nodes.AnimationSweepSelector().select(
+            manifest, tree.char, "sweep", True, "", "", ""
         )
 
 
@@ -625,10 +641,15 @@ def test_animation_frames_raises_when_unrendered(manifest, tree, monkeypatch):
 
 # --- CharacterIdentityAnchor ------------------------------------------------ #
 
-def test_auto_animation_selector_has_category_scope():
-    # ActionSetSelector was folded into AutoAnimationSelector as a `category` input.
-    req = nodes.AutoAnimationSelector.INPUT_TYPES()["required"]
-    assert "category" in req
+def test_animation_sweep_selector_input_shape():
+    # ActionSetSelector was folded into the animation selector as a `category`
+    # input (first via AutoAnimationSelector, now via the unified
+    # AnimationSweepSelector).
+    req = nodes.AnimationSweepSelector.INPUT_TYPES()["required"]
+    assert list(req.keys()) == [
+        "manifest", "character", "mode", "skip_mirrored",
+        "category", "animation", "direction",
+    ]
     assert not hasattr(nodes, "ActionSetSelector")
 
 
