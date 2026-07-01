@@ -283,13 +283,18 @@ def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
 def test_pose_unpack_forwards_dict_and_fans_out_typed_outputs():
     pose = {"positive": "hello", "negative": "blurry", "source_image": _img(),
             "pose_reference": _img(), "output_dir": "/x", "_meta": {}}
-    passthrough, img, manikin, pos, neg, out_dir = nodes.PoseUnpack().unpack(pose)
+    passthrough, img, manikin, pos, neg, out_dir, has_ref = nodes.PoseUnpack().unpack(pose)
     assert nodes.PoseUnpack.RETURN_NAMES == (
-        "POSE", "SOURCE_IMAGE", "POSE_REFERENCE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT", "OUTPUT_DIR"
+        "POSE", "SOURCE_IMAGE", "POSE_REFERENCE", "POSITIVE_PROMPT", "NEGATIVE_PROMPT",
+        "OUTPUT_DIR", "HAS_POSE_REFERENCE",
     )
     assert passthrough is pose  # whole POSE forwarded on, unchanged
     assert img.shape[0] == 1 and manikin.shape[0] == 1
     assert (pos, neg, out_dir) == ("hello", "blurry", "/x")
+    assert has_ref is True  # pose_reference is a real image (a manikin-driven pose)
+    # a derived pose (empty sentinel reference) reports False
+    pose2 = {**pose, "pose_reference": images.empty_image()}
+    assert nodes.PoseUnpack().unpack(pose2)[-1] is False
 
 
 def test_animation_unpack_forwards_dict_and_fans_out_typed_outputs():
@@ -316,7 +321,8 @@ def test_unpack_outputs_cover_selector_leaf_keys():
     assert {k for k, _n in nodes._ANIMATION_UNPACK} == set(nodes.ANIMATION_OUTPUT_KEYS)
     assert nodes.PoseUnpack.RETURN_TYPES[0] == "ANIM_POSE"
     assert nodes.AnimationUnpack.RETURN_TYPES[0] == "ANIM_ANIMATION"
-    assert len(nodes.PoseUnpack.RETURN_TYPES) == len(nodes._POSE_UNPACK) + 1
+    # PoseUnpack: passthrough POSE + leaf keys + a computed HAS_POSE_REFERENCE.
+    assert len(nodes.PoseUnpack.RETURN_TYPES) == len(nodes._POSE_UNPACK) + 2
     assert len(nodes.AnimationUnpack.RETURN_TYPES) == len(nodes._ANIMATION_UNPACK) + 1
 
 
@@ -509,7 +515,9 @@ def test_auto_pose_selector_emits_next_actionable_non_root_pose(manifest, tree, 
     # base generated -> fighting_stance is the next actionable (non-root) pose.
     tree.pose("base", "EAST")
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
-    (pose,) = nodes.AutoPoseSelector().select(manifest, tree.char, skip_mirrored=True)
+    (pose,) = nodes.AutoPoseSelector().select(
+        manifest, tree.char, skip_mirrored=True, include_base=False
+    )
     assert pose["_meta"]["pose"] == "fighting_stance"
     assert sorted(k for k in pose if k != "_meta") == nodes.POSE_OUTPUT_KEYS
 
@@ -518,7 +526,24 @@ def test_auto_pose_selector_raises_when_nothing_actionable(manifest, tree, monke
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()  # base is a root pose (excluded); nothing else actionable
     with pytest.raises(RuntimeError, match="no actionable poses"):
-        nodes.AutoPoseSelector().select(manifest, tree.char, skip_mirrored=True)
+        nodes.AutoPoseSelector().select(
+            manifest, tree.char, skip_mirrored=True, include_base=False
+        )
+
+
+def test_auto_pose_selector_include_base_emits_root_with_manikin(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    # Character exists with a persisted reference, but no base direction rendered
+    # yet: with include_base, base is the next actionable root pose and it comes
+    # bundled with its manikin (2-reference edit).
+    tree.character()
+    images.save_image_png(_img(), resolve.reference_image_path(tree.root, tree.char))
+    (pose,) = nodes.AutoPoseSelector().select(
+        manifest, tree.char, skip_mirrored=True, include_base=True
+    )
+    assert pose["_meta"]["pose"] == "base"
+    assert not images.is_empty(pose["source_image"])   # the reference art
+    assert not images.is_empty(pose["pose_reference"])  # the direction's manikin
 
 
 def test_auto_animation_selector_emits_next_actionable_animation(manifest, tree, monkeypatch):
@@ -529,16 +554,21 @@ def test_auto_animation_selector_emits_next_actionable_animation(manifest, tree,
     images.save_image_png(
         _img(), resolve.pose_image_path(tree.root, tree.char, "fighting_stance", "EAST")
     )
-    (anim,) = nodes.AutoAnimationSelector().select(manifest, tree.char, skip_mirrored=True)
+    (anim, remaining) = nodes.AutoAnimationSelector().select(
+        manifest, tree.char, skip_mirrored=True, category=""
+    )
     assert anim["_meta"]["animation"] == "fighting_stance_idle"
     assert sorted(k for k in anim if k != "_meta") == nodes.ANIMATION_OUTPUT_KEYS
+    assert remaining >= 1
 
 
 def test_auto_animation_selector_raises_when_nothing_actionable(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
     with pytest.raises(RuntimeError, match="no actionable animations"):
-        nodes.AutoAnimationSelector().select(manifest, tree.char, skip_mirrored=True)
+        nodes.AutoAnimationSelector().select(
+            manifest, tree.char, skip_mirrored=True, category=""
+        )
 
 
 def test_pose_selector_sets_empty_pose_reference(manifest, tree, monkeypatch):
@@ -600,12 +630,14 @@ def test_character_atlas_builder_renders_pose_sheet(manifest, tree, monkeypatch)
         _img(4, 4),
         resolve.pose_image_path(tree.root, tree.char, "base", "EAST"),
     )
-    sheet, atlas, report = nodes.CharacterAtlasBuilder().build(
+    res = nodes.CharacterAtlasBuilder().build(
         manifest, tree.char, "pose", "base", "all", "per_direction_rows", 2, False
     )
+    sheet, atlas, report = res["result"] if isinstance(res, dict) else res
     assert sheet.shape[0] == 1
     assert atlas["directions"] == ["EAST"]
     assert atlas["columns"] == 1
+    assert atlas["sheet_size"]  # merged from pack_sheet — serializable by AtlasMetadataWriter
     assert "Rendered:" in report
     assert "EAST" in report
 
@@ -638,9 +670,10 @@ def test_character_atlas_builder_pads_mismatched_direction_sizes(manifest, tree,
     # EAST: 6×6 RGBA, SOUTH: 8×10 RGBA — mismatched, would crash torch.cat without padding
     images.save_image_png(torch.zeros((1, 6, 6, 4)), east_path)
     images.save_image_png(torch.zeros((1, 8, 10, 4)), south_path)
-    sheet, atlas, report = nodes.CharacterAtlasBuilder().build(
+    res = nodes.CharacterAtlasBuilder().build(
         manifest, tree.char, "pose", "base", "all", "grid", 0, False
     )
+    sheet, atlas, report = res["result"] if isinstance(res, dict) else res
     # Sheet must be a single-image batch (pack_sheet always returns B=1).
     assert sheet.shape[0] == 1
     # Atlas must record exactly the two directions that were complete.
@@ -700,11 +733,58 @@ def test_mirror_writer_batch_all(tmp_path, monkeypatch):
     assert os.path.exists(resolve.pose_image_path(root, char, "p", "WEST"))
 
 
+# --- AnimationSheetBuilder / AnimationFrames -------------------------------- #
+
+def _render_clip(tree, anim, direction, n=3):
+    """Render `n` real RGBA frames for anim@direction (base + stance prereqs)."""
+    tree.pose("base", direction).pose("fighting_stance", direction).animation(
+        anim, direction, frames=n
+    )
+    d = resolve.animation_frame_dir(tree.root, tree.char, anim, direction)
+    for i in range(n):
+        images.save_image_png(_img(4, 4), os.path.join(d, f"frame_{i:05d}.png"))
+
+
+def test_animation_sheet_builder_packs_direction_rows(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    for direction in ("EAST", "SOUTH"):
+        _render_clip(tree, "fighting_stance_idle", direction, n=3)
+    res = nodes.AnimationSheetBuilder().build(
+        manifest, tree.char, "fighting_stance_idle", "all", 2, False
+    )
+    sheet, atlas_d, report = res["result"] if isinstance(res, dict) else res
+    assert sheet.shape[0] == 1 and sheet.shape[-1] == 4       # single RGBA batch
+    assert atlas_d["sheet_size"] and atlas_d["fps"] > 0
+    assert len(atlas_d["frames"]) == 6                        # 2 dirs × 3 frames
+    names = [t["name"] for t in atlas_d["tags"]]
+    assert "EAST" in names and "SOUTH" in names               # one tag per direction
+    assert "fighting_stance_idle" in report
+
+
+def test_animation_frames_loads_clip(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    _render_clip(tree, "fighting_stance_idle", "EAST", n=3)
+    frames, fps = nodes.AnimationFrames().load(
+        manifest, tree.char, "fighting_stance_idle", "EAST"
+    )
+    assert frames.shape[0] == 3 and frames.shape[-1] == 4
+    assert fps > 0
+
+
+def test_animation_frames_raises_when_unrendered(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()
+    with pytest.raises(RuntimeError, match="not rendered"):
+        nodes.AnimationFrames().load(manifest, tree.char, "fighting_stance_idle", "EAST")
+
+
 # --- CharacterIdentityAnchor ------------------------------------------------ #
 
-def test_action_set_selector_input_has_action_set():
-    req = nodes.ActionSetSelector.INPUT_TYPES()["required"]
-    assert "action_set" in req
+def test_auto_animation_selector_has_category_scope():
+    # ActionSetSelector was folded into AutoAnimationSelector as a `category` input.
+    req = nodes.AutoAnimationSelector.INPUT_TYPES()["required"]
+    assert "category" in req
+    assert not hasattr(nodes, "ActionSetSelector")
 
 
 def test_character_identity_anchor(monkeypatch, tmp_path):

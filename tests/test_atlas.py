@@ -143,3 +143,69 @@ def test_duration_none_handled() -> None:
     data = json.loads(text)
     # duration should still be present (defaulting to 0 or 100)
     assert "duration" in list(data["frames"].values())[0]
+
+
+# --- Producer/serializer contract + per-direction tags ---------------------- #
+
+import torch  # noqa: E402
+
+from andypack import sprites  # noqa: E402
+
+
+def _producer_atlases() -> dict:
+    """One atlas from every ANIM_ATLAS producer in the pack."""
+    _s1, a_flat = sprites.pack_sheet(torch.ones((2, 4, 4, 4)), layout="grid", columns=2)
+    _s2, a_rows = sprites.pack_direction_rows(
+        [("EAST", [torch.ones((1, 4, 4, 4))] * 2), ("SOUTH", [torch.ones((1, 4, 4, 4))])],
+        fps=16,
+    )
+    # CharacterAtlasBuilder merges pack_sheet's atlas with direction context.
+    a_char = {**a_flat, "directions": ["EAST", "SOUTH"], "layout": "grid"}
+    return {"pack_sheet": a_flat, "pack_direction_rows": a_rows, "character_atlas": a_char}
+
+
+def test_every_producer_serializes_in_every_format() -> None:
+    # Guards the builder→serializer contract (the CharacterAtlasBuilder KeyError:
+    # 'sheet_size' regression): every producer's atlas must serialize in every format.
+    for producer, a in _producer_atlases().items():
+        for fmt in atlas._FMT_MAP:
+            text, ext = atlas.serialize(a, "clip", fmt)
+            assert text, f"{producer} -> {fmt} produced empty output"
+            assert ext.startswith(".")
+            if ext == ".json":
+                json.loads(text)  # must be valid JSON
+
+
+def test_direction_tags_become_aseprite_frametags() -> None:
+    _s, a = sprites.pack_direction_rows(
+        [("EAST", [torch.ones((1, 4, 4, 4))] * 2), ("SOUTH", [torch.ones((1, 4, 4, 4))] * 3)],
+        fps=16,
+    )
+    ase = json.loads(atlas.serialize(a, "walk", "aseprite")[0])
+    tags = ase["meta"]["frameTags"]
+    assert [t["name"] for t in tags] == ["EAST", "SOUTH"]
+    assert (tags[0]["from"], tags[0]["to"]) == (0, 1)
+    assert (tags[1]["from"], tags[1]["to"]) == (2, 4)
+
+
+def test_direction_tags_become_godot_animations() -> None:
+    _s, a = sprites.pack_direction_rows(
+        [("EAST", [torch.ones((1, 4, 4, 4))]), ("SOUTH", [torch.ones((1, 4, 4, 4))])],
+        fps=16,
+    )
+    tres = atlas.serialize(a, "walk", "godot_spriteframes")[0]
+    assert '"name": &"EAST"' in tres
+    assert '"name": &"SOUTH"' in tres
+
+
+def test_pack_direction_rows_atlas_shape() -> None:
+    sheet, a = sprites.pack_direction_rows(
+        [("EAST", [torch.ones((1, 8, 6, 4))] * 3), ("SOUTH", [torch.ones((1, 8, 6, 4))] * 2)],
+        fps=20, padding=1,
+    )
+    assert sheet.shape[0] == 1 and sheet.shape[-1] == 4  # single RGBA batch
+    assert a["fps"] == 20
+    assert a["columns"] == 3            # widest row
+    assert len(a["frames"]) == 5        # 3 + 2
+    assert a["frames"][0]["duration_ms"] == 50  # 1000/20
+    assert [t["name"] for t in a["tags"]] == ["EAST", "SOUTH"]

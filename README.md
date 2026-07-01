@@ -163,8 +163,8 @@ The `*Unpack` nodes fan a bundle out into individual typed outputs.
 | **Character Creator** | Write a character's `character.json` prompt layer and emit the base-pose job for one direction, pairing the reference image (`SOURCE_IMAGE`) with the bundled manikin (`POSE_REFERENCE`) for a multi-reference FLUX.2 edit. Optionally persists the reference art (`save_reference`, default on). |
 | **Character Reference Loader** | Reload a character's persisted reference art (`_reference.png`) as an IMAGE — feed it back into the Character Creator to re-generate base directions later. |
 | **Character Pose Selector** | Pick `character → category → pose → direction` (dynamic combos; root poses like `base` are excluded — use the Character Creator). Loads the `from`-source image, emits an `ANIM_POSE` bundle. Raises if the selection isn't selectable. |
-| **Auto Pose Selector** | Emit the *next* actionable (ready/stale) non-root pose in dependency order. Wire like the Pose Selector and hold-queue to batch-generate every pose; raises when none remain (the natural stop). |
-| **Unpack Pose** | Fan an `ANIM_POSE` out into `SOURCE_IMAGE`, `POSE_REFERENCE`, `POSITIVE_PROMPT`, `NEGATIVE_PROMPT`, `OUTPUT_DIR` (and forward the bundle). |
+| **Auto Pose Selector** | Emit the *next* actionable (ready/stale) pose in dependency order. Hold-queue to batch-generate every pose; raises when none remain. `include_base=on` also emits root (base) poses paired with their manikin, so one graph (→ Pose Edit Conditioning) drives the whole turnaround. |
+| **Unpack Pose** | Fan an `ANIM_POSE` out into `SOURCE_IMAGE`, `POSE_REFERENCE`, `POSITIVE_PROMPT`, `NEGATIVE_PROMPT`, `OUTPUT_DIR`, `HAS_POSE_REFERENCE` (and forward the bundle). |
 | **Pose Frame Writer** | Write `{dir}.png` then the `{dir}.json` sidecar last (atomic). Returns `OUTPUT_DIR`. |
 | **Character Animation Selector** | Pick an animation + direction. Emits an `ANIM_ANIMATION` bundle: `START_IMAGE`, `END_IMAGE`, `IS_FFLF`, merged prompts, plus `LENGTH`/`FPS`/`WIDTH`/`HEIGHT`/`SHIFT` that wire straight into `WanFirstLastFrameToVideo` + `ModelSamplingSD3`. |
 | **Auto Animation Selector** | Emit the *next* actionable animation in dependency order. Wire like the Animation Selector and hold-queue to batch-generate every clip; raises when none remain. |
@@ -313,22 +313,31 @@ image directly). The writers record `has_alpha` in the sidecar/meta and preserve
 the transparency throughout the pack chain. ComfyUI IMAGE tensors stay 3-channel
 inside the graph; RGBA materializes only at the disk boundary.
 
-From there:
+From there, the one-node path for a finished clip:
 
-1. **Sprite Trim & Pivot** — trims transparent padding from each frame and records
+- **Animation Sheet Builder** — the Stage-3 packer. Loads every frame of every
+  rendered direction of an animation and packs a game sheet (rows = directions,
+  cols = frames) with a per-direction *tagged* atlas (fps included). Feed its
+  `ATLAS` + `SHEET` straight into **Atlas Metadata Writer** (`aseprite` /
+  `godot_spriteframes` get one animation per direction).
+
+Or the manual chain when you want per-frame control:
+
+1. **Animation Frames** — load a rendered clip back as an IMAGE batch (+ fps) to
+   re-process without re-sampling.
+2. **Sprite Trim & Pivot** — trims transparent padding from each frame and records
    the pivot offset so all frames in a sheet stay consistently anchored.
-2. **Spritesheet Packer** — packs a batch of trimmed frames into a single
-   spritesheet image (row-major by default) ready for engine import.
-3. **Atlas Metadata Writer** — serializes frame coordinates, pivots, and animation
-   metadata to JSON or XML in the engine format of your choice.
-4. **Animated Sprite Export** — convenience node that chains trim, pack, and
-   metadata write into one step for a completed animation clip.
+3. **Spritesheet Packer** — packs a batch of frames into a single spritesheet image.
+4. **Atlas Metadata Writer** — serializes frame coordinates, pivots, and per-frame
+   duration to the engine format of your choice.
+5. **Animated Sprite Export** — GIF/APNG/WebP preview of a completed clip.
 
 ### Character Atlas Builder
 
-FFLF-aware, 8-direction atlas builder. Given a fully rendered character (all
-directions + animations), it composites a single atlas sheet organized by direction
-— ready to drop into a 2D engine's character importer.
+A **turnaround** sheet: one representative frame per direction (the first frame for
+animations), composited into a single direction-organized atlas — a quick
+character overview. For a full playable animation sheet (all frames × directions),
+use **Animation Sheet Builder** above.
 
 ### Palette Quantize & Lock
 
@@ -354,9 +363,15 @@ sprite packing.
   reference image from within the graph rather than hard-coding a file path.
 - **Variant Layer Composer** — layer a colour/outfit variant prompt on top of a
   base pose for batch rendering color variants without re-authoring the full manifest.
-- **Action Set Selector (next job)** — picks the next unrendered action group in
-  dependency order, similar to the Auto Animation Selector but scoped to a named
-  action set.
+- **Pose Edit Conditioning** — collapses the whole FLUX.2 pose-edit conditioning
+  into one node: text-encodes the pose prompt, attaches the source image as a
+  reference latent (and the manikin too when the pose carries one — a base pose),
+  and outputs `(positive, negative, latent)`. With `AutoPoseSelector`'s
+  `include_base`, a single turnaround graph handles base (2-ref) + derived (1-ref)
+  poses — no separate workflows.
+- **Auto Animation Selector — `category` scope** — restrict the batch sweep to one
+  manifest category (e.g. `locomotion`, `combat`); leave empty for all. (This
+  replaced the former standalone Action Set Selector.)
 - **Boomerang Loop Writer** — synthesizes a seamless loop from a one-way A→B clip
   by appending the reversed interior (ping-pong). `drop_turnaround=True` (default)
   is stutter-free; `drop_turnaround=False` includes both extremes and a naive player

@@ -42,16 +42,23 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
   palette quantize & lock. No ComfyUI/torch side effects beyond tensor I/O.
 - `atlas.py` — pure-stdlib engine-format serializers (JSON/XML atlas metadata).
   No ComfyUI/torch imports (keep it so).
-- `nodes.py` — the ComfyUI node classes + mappings (33 nodes), grouped into
+- `nodes.py` — the ComfyUI node classes + mappings (35 nodes), grouped into
   `andypack/<Manifest|Character|Pose|Animation|Diagnostics|Sprite|Export>` categories.
-  Original 17 animation-coordinator nodes plus 16 new game-asset nodes:
-  - Sprite: Sprite Trim & Pivot, Spritesheet Packer, Character Atlas Builder,
+  Game-asset / pipeline nodes beyond the original animation-coordinator set:
+  - Sprite: Sprite Trim & Pivot, Spritesheet Packer, Character Atlas Builder
+    (one frame per direction — a turnaround preview), **Animation Sheet Builder**
+    (full clip: rows=directions, cols=frames, tagged atlas — the Stage-3 packer),
     Palette Quantize & Lock.
   - Export: Atlas Metadata Writer, Animated Sprite Export.
-  - Pose: Manikin Pose Control, Variant Layer Composer.
+  - Pose: Manikin Pose Control, Variant Layer Composer, **Pose Edit Conditioning**
+    (one node = FLUX edit conditioning: text encode + reference latents for source
+    and, when present, manikin + zeroed negative + empty latent).
   - Character: Character Identity Anchor.
-  - Animation: Action Set Selector (next job), Boomerang Loop Writer, Tween Clip
-    Provider, Frame Timing Normalizer, Color Variant Batcher.
+  - Animation: Boomerang Loop Writer, Tween Clip Provider, Frame Timing Normalizer,
+    Color Variant Batcher, **Animation Frames** (load a rendered clip back as an
+    IMAGE batch). `AutoAnimationSelector` has a `category` scope (this absorbed the
+    former Action Set Selector, now removed); `AutoPoseSelector` has `include_base`
+    so a single turnaround graph drives base (manikin-paired) + derived poses.
   - Diagnostics: State Machine Report, Turnaround Sheet.
 - `web/anim_coord.js` — frontend extension for dynamic character-scoped combos
   (pure-Python `INPUT_TYPES` can't populate these; it needs the server routes).

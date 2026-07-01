@@ -134,17 +134,28 @@ def to_aseprite(atlas: dict, name: str) -> str:
             "sourceSize": {"w": ssw, "h": ssh},
             "duration": dur,
         }
-    data: dict[str, Any] = {
-        "frames": frames,
-        "meta": {
-            "app": "https://www.aseprite.org/",
-            "version": "1.3",
-            "image": f"{name}.png",
-            "format": "RGBA8888",
-            "size": {"w": sw, "h": sh},
-            "scale": "1",
-        },
+    meta: dict[str, Any] = {
+        "app": "https://www.aseprite.org/",
+        "version": "1.3",
+        "image": f"{name}.png",
+        "format": "RGBA8888",
+        "size": {"w": sw, "h": sh},
+        "scale": "1",
     }
+    # Optional per-region animation tags (e.g. one per facing direction) so the
+    # sheet imports as multiple named animations, not one flat strip.
+    tags = atlas.get("tags")
+    if tags:
+        meta["frameTags"] = [
+            {
+                "name": str(t["name"]),
+                "from": int(t["from"]),
+                "to": int(t["to"]),
+                "direction": "forward",
+            }
+            for t in tags
+        ]
+    data: dict[str, Any] = {"frames": frames, "meta": meta}
     return json.dumps(data, indent=2)
 
 
@@ -179,28 +190,36 @@ def to_godot_spriteframes(atlas: dict, name: str) -> str:
 
     lines.append("[resource]")
 
-    # Build the animation array inline (Godot 4 .tres style).
-    anim_frames_parts: list[str] = []
-    for i, frame in enumerate(frames):
-        dur_ms = _duration(frame)
-        dur_sec = dur_ms / 1000.0
-        anim_frames_parts.append(
-            '{"duration": '
-            + f"{dur_sec:.6f}"
-            + f', "texture": SubResource("AtlasTexture_{i}")'
+    def _anim_entry(anim_name: str, lo: int, hi: int) -> str:
+        parts: list[str] = []
+        for i in range(lo, hi + 1):
+            dur_sec = _duration(frames[i]) / 1000.0
+            parts.append(
+                '{"duration": '
+                + f"{dur_sec:.6f}"
+                + f', "texture": SubResource("AtlasTexture_{i}")'
+                + "}"
+            )
+        speed = 1000.0 / _duration(frames[lo]) if frames else 8.0
+        return (
+            "{"
+            + f'"frames": [{", ".join(parts)}], '
+            + '"loop": true, '
+            + f'"name": &"{anim_name}", '
+            + f'"speed": {speed:.1f}'
             + "}"
         )
 
-    anim_frames_str = ", ".join(anim_frames_parts)
-    fps = 1000.0 / _duration(frames[0]) if frames else 8.0
-    lines.append(
-        "animations = [{"
-        + f'"frames": [{anim_frames_str}], '
-        + '"loop": true, '
-        + f'"name": &"{name}", '
-        + f'"speed": {fps:.1f}'
-        + "}]"
-    )
+    # One Godot animation per tag (e.g. per direction); otherwise a single
+    # animation spanning all frames.
+    tags = atlas.get("tags")
+    if tags:
+        entries = [_anim_entry(str(t["name"]), int(t["from"]), int(t["to"])) for t in tags]
+    elif frames:
+        entries = [_anim_entry(name, 0, len(frames) - 1)]
+    else:
+        entries = []
+    lines.append("animations = [" + ", ".join(entries) + "]")
 
     return "\n".join(lines) + "\n"
 

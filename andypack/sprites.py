@@ -464,6 +464,91 @@ def pack_sheet(
     return sheet, atlas
 
 
+def pack_direction_rows(
+    rows: list[tuple[str, list[Tensor]]],
+    fps: int = 16,
+    padding: int = 2,
+    power_of_two: bool = False,
+) -> tuple[Tensor, dict]:
+    """Pack a multi-direction animation into a sprite sheet: one ROW per direction,
+    one COLUMN per frame. This is the game-ready layout that ``pack_sheet`` (a flat
+    grid) can't guarantee when frame counts differ per direction.
+
+    Parameters
+    ----------
+    rows:
+        Ordered ``[(direction_name, [frame_tensor, ...]), ...]``. Each frame tensor
+        is an IMAGE ``[1, H, W, C]`` (or ``[H, W, C]``); RGB is promoted to opaque
+        RGBA. Rows may have different frame counts — short rows are left-padded with
+        transparent cells so every row spans the full column count and stays aligned.
+    fps:
+        Playback rate; written into every frame's ``duration_ms`` (``1000/fps``).
+    padding, power_of_two:
+        As in :func:`pack_sheet`.
+
+    Returns
+    -------
+    tuple[Tensor, dict]
+        ``(sheet [1, H', W', 4], atlas)``. The atlas is a superset of the
+        ``pack_sheet`` contract — ``sheet_size``/``columns``/``frames`` — plus
+        ``fps`` and ``tags`` (``[{"name": dir, "from": i, "to": j}, ...]``, one per
+        direction) so ``AtlasMetadataWriter`` can emit per-direction animations.
+    """
+    if not rows:
+        raise ValueError("pack_direction_rows: no directions to pack")
+
+    def _norm(t: Tensor) -> Tensor:
+        f = t[0] if t.dim() == 4 else t
+        if f.shape[-1] == 3:
+            alpha = torch.ones((*f.shape[:-1], 1), dtype=f.dtype)
+            f = torch.cat([f, alpha], dim=-1)
+        return f
+
+    norm_rows = [(name, [_norm(t) for t in frames]) for name, frames in rows]
+    cell_h = max((f.shape[0] for _n, fs in norm_rows for f in fs), default=1)
+    cell_w = max((f.shape[1] for _n, fs in norm_rows for f in fs), default=1)
+    cols = max((len(fs) for _n, fs in norm_rows), default=0)
+    n_rows = len(norm_rows)
+
+    canvas_w = cols * cell_w + (cols + 1) * padding
+    canvas_h = n_rows * cell_h + (n_rows + 1) * padding
+    if power_of_two:
+        canvas_w = _next_power_of_two(canvas_w)
+        canvas_h = _next_power_of_two(canvas_h)
+    canvas = torch.zeros((canvas_h, canvas_w, 4), dtype=torch.float32)
+
+    duration_ms = int(round(1000.0 / fps)) if fps > 0 else 100
+    frame_entries: list[dict] = []
+    tags: list[dict] = []
+    idx = 0
+    for r, (name, frames) in enumerate(norm_rows):
+        y = padding + r * (cell_h + padding)
+        first = idx
+        for c, frame in enumerate(frames):
+            x = padding + c * (cell_w + padding)
+            fh, fw = int(frame.shape[0]), int(frame.shape[1])
+            canvas[y: y + fh, x: x + fw, :] = frame.to(torch.float32)
+            frame_entries.append({
+                "rect": [x, y, cell_w, cell_h],
+                "source_size": [cell_w, cell_h],
+                "offset": [0, 0],
+                "pivot": [cell_w // 2, cell_h],
+                "duration_ms": duration_ms,
+            })
+            idx += 1
+        if frames:
+            tags.append({"name": name, "from": first, "to": idx - 1})
+
+    atlas: dict = {
+        "sheet_size": [canvas_w, canvas_h],
+        "columns": cols,
+        "frames": frame_entries,
+        "fps": fps,
+        "tags": tags,
+    }
+    return canvas.unsqueeze(0), atlas
+
+
 # ---------------------------------------------------------------------------
 # Palette extraction and quantization
 # ---------------------------------------------------------------------------

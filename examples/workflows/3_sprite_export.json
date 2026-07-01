@@ -1,0 +1,190 @@
+{
+ "last_node_id": 99,
+ "last_link_id": 3,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "AnimationManifestLoader",
+   "pos": [
+    40,
+    40
+   ],
+   "size": [
+    320,
+    200
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "MANIFEST",
+     "type": "ANIM_MANIFEST",
+     "links": [
+      1
+     ],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "AnimationManifestLoader"
+   },
+   "widgets_values": [
+    "default.json"
+   ]
+  },
+  {
+   "id": 2,
+   "type": "AnimationSheetBuilder",
+   "pos": [
+    420,
+    40
+   ],
+   "size": [
+    320,
+    200
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "manifest",
+     "type": "ANIM_MANIFEST",
+     "link": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "SHEET",
+     "type": "IMAGE",
+     "links": [
+      3
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "ATLAS",
+     "type": "ANIM_ATLAS",
+     "links": [
+      2
+     ],
+     "slot_index": 1
+    },
+    {
+     "name": "REPORT",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 2
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "AnimationSheetBuilder"
+   },
+   "widgets_values": [
+    "ranger",
+    "walk",
+    "all",
+    2,
+    false
+   ]
+  },
+  {
+   "id": 3,
+   "type": "AtlasMetadataWriter",
+   "pos": [
+    800,
+    40
+   ],
+   "size": [
+    320,
+    200
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "atlas",
+     "type": "ANIM_ATLAS",
+     "link": 2
+    },
+    {
+     "name": "sheet",
+     "type": "IMAGE",
+     "link": 3
+    }
+   ],
+   "outputs": [
+    {
+     "name": "OUTPUT_DIR",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "AtlasMetadataWriter"
+   },
+   "widgets_values": [
+    "aseprite",
+    "ranger_walk",
+    "atlas"
+   ]
+  },
+  {
+   "id": 99,
+   "type": "Note",
+   "pos": [
+    40,
+    280
+   ],
+   "size": [
+    320,
+    200
+   ],
+   "flags": {},
+   "order": 99,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "Note"
+   },
+   "widgets_values": [
+    "STEP 4. Animation Sheet Builder packs a full clip (rows=directions, cols=frames) into a game sheet + a tagged atlas; Atlas Metadata Writer emits the sheet PNG + Aseprite JSON (one animation per direction) to output/atlas/. Change `animation` per clip."
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   1,
+   0,
+   2,
+   0,
+   "ANIM_MANIFEST"
+  ],
+  [
+   2,
+   2,
+   1,
+   3,
+   0,
+   "ANIM_ATLAS"
+  ],
+  [
+   3,
+   2,
+   0,
+   3,
+   1,
+   "IMAGE"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {},
+ "version": 0.4
+}

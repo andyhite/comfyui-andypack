@@ -1,105 +1,46 @@
 # Example Workflows
 
-These are **reference-template** JSON files for ComfyUI's standard UI workflow
-format. They contain structurally valid JSON and reference the correct andypack
-node `type` names, but their link indices were hand-authored rather than saved
-by a live ComfyUI instance.
+Complete, UI-format reference workflows for the full character → animation →
+sprite-sheet pipeline. Load one via ComfyUI's **Load** (or drag-and-drop); it
+opens as a graph you can run. Each carries a **Note** node explaining the step.
 
-**Canonicalization step (required before use):** Drop the JSON into ComfyUI
-via `Load` (or drag-and-drop), verify the wiring looks correct in the graph
-editor, then immediately `Save` the workflow. ComfyUI will re-write the link
-indices and slot positions to its canonical form. The hand-authored values here
-are close but may need minor reconnection after the first load.
+Run them in order. State is disk-backed under `<output>/characters/<char>/`, so
+each stage reads what the previous one wrote.
 
----
+| File | Stage | Model | What it does |
+|------|-------|-------|--------------|
+| `1a_character_create.json` | Create | FLUX.2 Klein 9B | txt2img a character reference, persist it (`CharacterCreator`), and render `base@SOUTH` via `PoseEditConditioning`. |
+| `1b_turnaround_batch.json` | Turnaround | FLUX.2 Klein 9B | `AutoPoseSelector(include_base)` → `PoseEditConditioning` → sampler → `PoseFrameWriter`. **Queue repeatedly** to fill every base + derived pose across all directions in ONE graph. |
+| `2_animate_fflf.json` | Animate | WAN 2.2 14B i2v | `AutoAnimationSelector` → dual hi/lo (+ lightx2v 4-step + pixel-animate LoRAs) → `PainterFLF2V` → dual-pass ddim → BiRefNet alpha → `AnimationFrameWriter`. **Queue repeatedly** for every clip. |
+| `3_sprite_export.json` | Export | — | `AnimationSheetBuilder` (rows = directions, cols = frames) → `AtlasMetadataWriter` (Aseprite). One node builds the game sheet + tagged atlas. |
 
-## sprite_export.json
+## Requirements
 
-**Purpose:** Render a single animation direction to a sprite sheet with atlas
-metadata, ready for Godot, Unity, or a JSON-hash texture packer.
+- **Models** (see `pod/models.txt` in the deploy repo, or `docs/prompting-guide.md`):
+  `flux-2-klein-9b` + `qwen_3_8b` encoder + `flux2-vae`; `wan2.2_i2v_high/low_noise_14B`
+  + `umt5_xxl` + `wan_2.1_vae` + `clip_vision_h` + `lightx2v` 4-step LoRAs +
+  `wan2.2_animate_adapter_model` (the pixel-animate LoRA).
+- **Custom nodes**: `Comfyui-PainterFLF2V` (first-last-frame) and `comfyui-rmbg`
+  (BiRefNet) for the animation workflow's alpha path, plus this pack.
 
-### Node graph (left to right)
+> Note: `flux-2-klein-9b` requires the **8B-class** `qwen_3_8b` text encoder
+> (4096-dim). The 4B repo's `qwen_3_4b` mismatches it (KSampler
+> `mat1/mat2 ... 7680 vs 12288`).
 
-| # | Node type | Role |
-|---|-----------|------|
-| 1 | `AnimationManifestLoader` | Load `animations.json`; emits `ANIM_MANIFEST` |
-| 2 | `CharacterAnimationSelector` | Pick character / animation / direction; emits `ANIM_ANIMATION` |
-| 3 | `AnimationUnpack` | Fan the bundle into `START_IMAGE`, `END_IMAGE`, `FPS`, `LENGTH`, prompts, etc. |
-| 4 | *(Note node)* | **User sampler gap** — insert your Wan 2.2 i2v sampler here (see below) |
-| 5 | `AnimationFrameWriter` | Write rendered frames to the character output directory; emits `OUTPUT_DIR` |
-| 6 | `SpriteTrimPivot` | Alpha-trim the frame batch and record pivot metadata; emits `TRIMMED` + `TRIM_DATA` |
-| 7 | `SpritesheetPacker` | Pack trimmed frames into a sprite sheet; emits `SHEET` + `ATLAS` |
-| 8 | `AtlasMetadataWriter` | Write `<name>.png` + `<name>.json` atlas to the output directory |
+## Editing for your character
 
-### Sampler gap wiring
+Set `character` (and `character_positive` in `1a`) to your own values, and
+`animation` in `3_sprite_export.json` to the clip you want to pack. The web
+extension populates character/animation/direction combos from the loaded manifest.
 
-The workflow deliberately omits the Wan sampler because model choice and
-conditioning details are user-specific. The intended wiring is:
+## Key patterns
 
-```
-AnimationUnpack:START_IMAGE  → WanFirstLastFrameToVideo:start_image
-AnimationUnpack:END_IMAGE    → WanFirstLastFrameToVideo:end_image   (FFLF path)
-AnimationUnpack:POSITIVE_PROMPT → clip encoder → conditioning
-AnimationUnpack:NEGATIVE_PROMPT → clip encoder → negative conditioning
-AnimationUnpack:LENGTH / FPS / WIDTH / HEIGHT / SHIFT → sampler params
-WanSampler:IMAGE (frames)    → AnimationFrameWriter:frames
-WanSampler:IMAGE (frames)    → SpriteTrimPivot:image
-```
-
-The `AnimationFrameWriter` node also accepts an optional `MASK` input for
-per-frame transparency (connect the sampler's alpha mask output if available)
-and a `seed` link (forceInput, link-only) for provenance recording.
-
-### Key widget values (node 2 — CharacterAnimationSelector)
-
-- `character`: pick your character from the combo
-- `animation`: the animation id from your manifest (e.g. `walk`)
-- `direction`: a direction string (e.g. `SOUTH`, `EAST`)
-
-The web extension populates these as cascading combos when the manifest is
-loaded.
-
----
-
-## turnaround.json
-
-**Purpose:** Visualize all rendered directions of a base pose as a contact
-sheet, and assemble an identity anchor batch for IPAdapter/Redux conditioning.
-
-### Node graph
-
-| # | Node type | Role |
-|---|-----------|------|
-| 1 | `AnimationManifestLoader` | Load `animations.json`; emits `ANIM_MANIFEST` |
-| 2 | `TurnaroundSheet` | Contact sheet of every CANONICAL_DIRECTION for the chosen pose; grayed-out cells are unrendered |
-| 3 | `CharacterIdentityAnchor` | Assemble reference art + base pose image for one direction into an `ANCHOR_BATCH` for IPAdapter |
-
-### TurnaroundSheet widget values
-
-- `character`: the character whose rendered directions to show
-- `pose`: the pose id (default `base`)
-- `columns`: how many tiles per row in the contact sheet (default 4)
-- `include_labels`: overlay direction name labels on each cell
-- `cell_size`: fixed cell size in pixels (0 = auto from largest rendered image)
-
-### CharacterIdentityAnchor outputs
-
-- `REFERENCE_IMAGE`: the character's persisted `_reference.png`
-- `BASE_DIRECTION_IMAGE`: the already-rendered base pose PNG for the chosen direction
-- `ANCHOR_BATCH`: both concatenated along the batch axis — feed directly to an IPAdapter IMAGE input to fight cross-direction identity drift
-
----
-
-## Node type reference (all types used in these workflows)
-
-All types are keys in `NODE_CLASS_MAPPINGS` in `andypack/nodes.py`:
-
-- `AnimationManifestLoader`
-- `CharacterAnimationSelector`
-- `AnimationUnpack`
-- `AnimationFrameWriter`
-- `SpriteTrimPivot`
-- `SpritesheetPacker`
-- `AtlasMetadataWriter`
-- `TurnaroundSheet`
-- `CharacterIdentityAnchor`
+- **`PoseEditConditioning`** collapses the whole FLUX edit-conditioning chain
+  (text encode + reference latents + zeroed negative + empty latent) into one
+  node, and attaches the manikin reference only for base poses — so `1b` handles
+  base (2-ref) and derived (1-ref) poses in a single graph.
+- **`AnimationSheetBuilder`** packs a whole clip (every frame × every rendered
+  direction) with a per-direction tagged atlas — Aseprite/Godot import one
+  animation per direction.
+- Alpha is baked at the writer boundary: `BiRefNet` (`invert_output=on`) →
+  `JoinImageWithAlpha` → RGBA frames.

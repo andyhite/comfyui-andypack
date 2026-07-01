@@ -199,19 +199,40 @@ class CharacterCreator:
         return (pose,)
 
 
-def _build_pose_bundle(r: dict) -> dict:
-    """An ANIM_POSE bundle from a resolve_pose result. A normal pose has no manikin
-    (pose_reference is the empty sentinel); on a selectable pose the `from`-source
-    is complete, so source_image is a real image."""
-    src = r["source_image"]
-    image = images.load_image_tensor(src) if src else images.empty_image()
+def _build_pose_bundle(r: dict, root: str = "", character: str = "") -> dict:
+    """An ANIM_POSE bundle from a resolve_pose result.
+
+    A **root** pose (``meta["from"]`` is None, e.g. ``base``) is a multi-reference
+    FLUX edit: source_image = the character's persisted reference art, pose_reference
+    = the bundled manikin for its direction — the same pairing Character Creator
+    makes, so Auto Pose Selector can drive the base turnaround too. A **derived**
+    pose re-poses its `from`-source (single reference); pose_reference stays the
+    empty sentinel."""
+    meta = r["meta"]
+    if meta.get("from") is None:
+        ref_path = resolve.reference_image_path(root, character) if character else ""
+        source = (
+            images.load_image_tensor(ref_path)
+            if ref_path and os.path.exists(ref_path)
+            else images.empty_image()
+        )
+        direction = meta.get("direction", "")
+        pose_reference = (
+            images.load_image_tensor(manikins.manikin_path(direction))
+            if direction in manikins.CANONICAL_DIRECTIONS
+            else images.empty_image()
+        )
+    else:
+        src = r["source_image"]
+        source = images.load_image_tensor(src) if src else images.empty_image()
+        pose_reference = images.empty_image()
     return {
-        "source_image": image,
-        "pose_reference": images.empty_image(),
+        "source_image": source,
+        "pose_reference": pose_reference,
         "positive": r["positive"],
         "negative": r["negative"],
         "output_dir": r["output_dir"],
-        "_meta": r["meta"],
+        "_meta": meta,
     }
 
 
@@ -338,7 +359,7 @@ class CharacterPoseSelector:
             )
         # Bundle the loose outputs into one POSE dict (see POSE_OUTPUT_KEYS). On a
         # successful select the `from`-source is complete, so source_image is real.
-        return (_build_pose_bundle(r),)
+        return (_build_pose_bundle(r, root, character),)
 
 
 class PoseFrameWriter:
@@ -539,15 +560,19 @@ class PoseUnpack:
 
     CATEGORY = "andypack/Pose"
     FUNCTION = "unpack"
-    RETURN_TYPES = ("ANIM_POSE", "IMAGE", "IMAGE", "STRING", "STRING", "STRING")
-    RETURN_NAMES = ("POSE", *(name for _key, name in _POSE_UNPACK))
+    RETURN_TYPES = ("ANIM_POSE", "IMAGE", "IMAGE", "STRING", "STRING", "STRING", "BOOLEAN")
+    RETURN_NAMES = ("POSE", *(name for _key, name in _POSE_UNPACK), "HAS_POSE_REFERENCE")
 
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {"pose": ("ANIM_POSE",)}}
 
     def unpack(self, pose):
-        return (pose, *(pose[key] for key, _name in _POSE_UNPACK))
+        # HAS_POSE_REFERENCE: True for a manikin-driven root pose (2-ref FLUX edit),
+        # False for a derived re-pose (the reference is the empty sentinel). Lets a
+        # single turnaround graph feed the manikin only when present.
+        has_ref = not images.is_empty(pose["pose_reference"])
+        return (pose, *(pose[key] for key, _name in _POSE_UNPACK), has_ref)
 
 
 class AnimationUnpack:
@@ -586,6 +611,22 @@ def _animated_preview(frames, fps) -> dict:
     images.save_animated_webp(frames, os.path.join(full_dir, file), fps)
     return {"images": [{"filename": file, "subfolder": subfolder, "type": "temp"}],
             "animated": (True,)}
+
+
+def _image_preview(image) -> dict:
+    """Write a single IMAGE to ComfyUI's temp dir as a PNG and return the UI payload
+    so a sheet/diagnostic node shows its result inline. Returns {} outside ComfyUI."""
+    try:
+        import folder_paths
+    except Exception:
+        return {}
+    full_dir, name, counter, subfolder, _ = folder_paths.get_save_image_path(
+        "andypack_preview", folder_paths.get_temp_directory(),
+        int(image.shape[2]), int(image.shape[1]),
+    )
+    file = f"{name}_{counter:05}_.png"
+    images.save_image_png(image, os.path.join(full_dir, file))
+    return {"images": [{"filename": file, "subfolder": subfolder, "type": "temp"}]}
 
 
 class AnimationPlayback:
@@ -822,8 +863,14 @@ class AutoPoseSelector:
     non-root pose in dependency order, as an ANIM_POSE. Wire it like the Character
     Pose Selector (→ Unpack Pose → FLUX edit → Pose Frame Writer) and queue the
     graph repeatedly — each run generates the next pose until none remain (then it
-    raises, the natural stop). Root poses (base) are skipped — use the Character
-    Creator for those."""
+    raises, the natural stop).
+
+    With `include_base` on, root poses (base) are emitted too — paired with the
+    bundled manikin (a 2-reference edit), so a SINGLE turnaround graph (Auto Pose
+    Selector → Pose Edit Conditioning → sampler → Pose Frame Writer) can generate
+    the whole turnaround, base + derived. The character must exist first (run
+    Character Creator once to persist its reference art). With `include_base` off
+    (default), base is skipped — use the Character Creator for it."""
 
     CATEGORY = "andypack/Pose"
     FUNCTION = "select"
@@ -837,11 +884,12 @@ class AutoPoseSelector:
                 "manifest": ("ANIM_MANIFEST",),
                 "character": (_character_choices(),),
                 "skip_mirrored": ("BOOLEAN", {"default": True}),
+                "include_base": ("BOOLEAN", {"default": False}),
             }
         }
 
     @classmethod
-    def IS_CHANGED(cls, manifest, character, skip_mirrored):
+    def IS_CHANGED(cls, manifest, character, skip_mirrored, include_base):
         # Re-run as the tree fills (the next job changes) or a prompt drifts.
         if character in ("", _NO_CHARACTER):
             return float("nan")
@@ -850,7 +898,7 @@ class AutoPoseSelector:
             eff = effective_manifest(manifest, root, character)
             job = api.next_actionable(
                 eff, root, character, "pose",
-                exclude_root=True, skip_mirrored=skip_mirrored,
+                exclude_root=not include_base, skip_mirrored=skip_mirrored,
             )
             if not job:
                 return "none"
@@ -859,17 +907,18 @@ class AutoPoseSelector:
             return float("nan")
         return (
             f"{job['id']}@{job['direction']}|skip_mirrored={skip_mirrored}|"
+            f"include_base={include_base}|"
             + _selector_fingerprint(r, "source_image")
         )
 
-    def select(self, manifest, character, skip_mirrored):
+    def select(self, manifest, character, skip_mirrored, include_base):
         if character in ("", _NO_CHARACTER):
             raise RuntimeError("AutoPoseSelector: select a character first")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
         job = api.next_actionable(
             manifest, root, character, "pose",
-            exclude_root=True, skip_mirrored=skip_mirrored,
+            exclude_root=not include_base, skip_mirrored=skip_mirrored,
         )
         if not job:
             raise RuntimeError(
@@ -880,7 +929,7 @@ class AutoPoseSelector:
                 "changed) re-run the Character Creator to clear its descendants."
             )
         r = resolve_pose(manifest, root, character, job["id"], job["direction"])
-        return (_build_pose_bundle(r),)
+        return (_build_pose_bundle(r, root, character),)
 
 
 class AutoAnimationSelector:
@@ -888,12 +937,15 @@ class AutoAnimationSelector:
     animation in dependency order, as an ANIM_ANIMATION. Wire it like the Character
     Animation Selector (→ Unpack Animation → WanFirstLastFrameToVideo → Animation
     Frame Writer) and queue the graph repeatedly — each run generates the next clip
-    until none remain (then it raises, the natural stop)."""
+    until none remain (then it raises, the natural stop).
+
+    Set `category` to scope the sweep to one manifest category (e.g. "locomotion",
+    "combat"); leave it empty to sweep all animations."""
 
     CATEGORY = "andypack/Animation"
     FUNCTION = "select"
-    RETURN_TYPES = ("ANIM_ANIMATION",)
-    RETURN_NAMES = ("ANIMATION",)
+    RETURN_TYPES = ("ANIM_ANIMATION", "INT")
+    RETURN_NAMES = ("ANIMATION", "REMAINING")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -902,18 +954,20 @@ class AutoAnimationSelector:
                 "manifest": ("ANIM_MANIFEST",),
                 "character": (_character_choices(),),
                 "skip_mirrored": ("BOOLEAN", {"default": True}),
+                "category": ("STRING", {"default": ""}),
             }
         }
 
     @classmethod
-    def IS_CHANGED(cls, manifest, character, skip_mirrored):
+    def IS_CHANGED(cls, manifest, character, skip_mirrored, category):
         if character in ("", _NO_CHARACTER):
             return float("nan")
         root = _characters_root()
         try:
             eff = effective_manifest(manifest, root, character)
             job = api.next_actionable(
-                eff, root, character, "animation", skip_mirrored=skip_mirrored,
+                eff, root, character, "animation",
+                skip_mirrored=skip_mirrored, category=category or None,
             )
             if not job:
                 return "none"
@@ -921,104 +975,38 @@ class AutoAnimationSelector:
         except Exception:
             return float("nan")
         return (
-            f"{job['id']}@{job['direction']}|skip_mirrored={skip_mirrored}|"
+            f"{job['id']}@{job['direction']}|skip_mirrored={skip_mirrored}|{category}|"
             + _selector_fingerprint(r, "start_image", "end_image")
         )
 
-    def select(self, manifest, character, skip_mirrored):
+    def select(self, manifest, character, skip_mirrored, category):
         if character in ("", _NO_CHARACTER):
             raise RuntimeError("AutoAnimationSelector: select a character first")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
+        cat = category or None
         job = api.next_actionable(
-            manifest, root, character, "animation", skip_mirrored=skip_mirrored,
+            manifest, root, character, "animation",
+            skip_mirrored=skip_mirrored, category=cat,
         )
         if not job:
+            scope = f" in category {category!r}" if cat else ""
             raise RuntimeError(
-                "AutoAnimationSelector: no actionable animations remain — every "
+                f"AutoAnimationSelector: no actionable animations remain{scope} — every "
                 "animation is generated, blocked on an ungenerated anchor pose, or "
                 "stale only because an upstream pose/clip changed (regenerate that "
                 "upstream node to clear its dependents)"
             )
-        r = resolve_animation(manifest, root, character, job["id"], job["direction"])
-        return (_build_animation_bundle(r),)
-
-
-class ActionSetSelector:
-    """Scoped batch selector: emit the NEXT actionable (ready/stale) animation
-    within a manifest category (e.g. "locomotion", "combat") in dependency
-    order, as an ANIM_ANIMATION. Wire it like the Auto Animation Selector and
-    queue repeatedly — each run generates the next clip in the category until
-    the set is fully rendered (then it raises). Leave action_set empty to
-    match all categories and mirror the Auto Animation Selector behaviour."""
-
-    CATEGORY = "andypack/Animation"
-    FUNCTION = "select"
-    RETURN_TYPES = ("ANIM_ANIMATION", "INT", "STRING")
-    RETURN_NAMES = ("ANIMATION", "REMAINING", "REPORT")
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "manifest": ("ANIM_MANIFEST",),
-                "character": (_character_choices(),),
-                "action_set": ("STRING", {"default": ""}),
-            }
-        }
-
-    @classmethod
-    def IS_CHANGED(cls, manifest, character, action_set):
-        if character in ("", _NO_CHARACTER):
-            return float("nan")
-        root = _characters_root()
-        try:
-            eff = effective_manifest(manifest, root, character)
-            cat = action_set or None
-            job = api.next_actionable(eff, root, character, "animation", category=cat)
-            if not job:
-                return "none"
-            r = resolve_animation(eff, root, character, job["id"], job["direction"])
-        except Exception:
-            return float("nan")
-        return (
-            f"{job['id']}@{job['direction']}|{action_set}|"
-            + _selector_fingerprint(r, "start_image", "end_image")
-        )
-
-    def select(self, manifest, character, action_set):
-        if character in ("", _NO_CHARACTER):
-            raise RuntimeError("ActionSetSelector: select a character first")
-        root = _characters_root()
-        eff = effective_manifest(manifest, root, character)
-        cat = action_set or None
-        job = api.next_actionable(eff, root, character, "animation", category=cat)
-        queue = api.regen_queue(eff, root, character)
-        animations = eff.get("animations", {})
-        remaining_items = [
-            item for item in queue
+        # REMAINING: actionable animations still queued in scope (this one included).
+        queue = api.regen_queue(manifest, root, character)
+        animations = manifest.get("animations", {})
+        remaining = sum(
+            1 for item in queue
             if item["kind"] == "animation"
-            and (
-                cat is None
-                or animations.get(item["id"], {}).get("category") == cat
-            )
-        ]
-        remaining = len(remaining_items)
-        set_label = action_set or "(all)"
-        report_lines = [
-            f"{item['id']}@{item['direction']} [{item['status']}]"
-            for item in remaining_items
-        ]
-        report = (
-            f"ActionSetSelector: {remaining} remaining in {set_label!r}\n"
-            + "\n".join(report_lines)
+            and (cat is None or animations.get(item["id"], {}).get("category") == cat)
         )
-        if not job:
-            raise RuntimeError(
-                f"ActionSetSelector: no actionable animations remain in set {action_set!r}"
-            )
-        r = resolve_animation(eff, root, character, job["id"], job["direction"])
-        return (_build_animation_bundle(r), remaining, report)
+        r = resolve_animation(manifest, root, character, job["id"], job["direction"])
+        return (_build_animation_bundle(r), remaining)
 
 
 class MirrorFrameWriter:
@@ -1441,6 +1429,7 @@ class CharacterAtlasBuilder:
     FUNCTION = "build"
     RETURN_TYPES = ("IMAGE", "ANIM_ATLAS", "STRING")
     RETURN_NAMES = ("SHEET", "ATLAS", "REPORT")
+    OUTPUT_NODE = True
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1526,19 +1515,22 @@ class CharacterAtlasBuilder:
             columns = 1
         else:
             columns = math.ceil(math.sqrt(n))
-        sheet, _ = sprites.pack_sheet(
+        sheet, packed = sprites.pack_sheet(
             batch, layout="grid", columns=columns,
             padding=padding, power_of_two=power_of_two,
         )
+        # Merge pack_sheet's atlas payload (sheet_size, columns, frames) so the
+        # ANIM_ATLAS is serializable by AtlasMetadataWriter; overlay the
+        # multi-direction context (which direction each cell is).
         atlas = {
+            **packed,
             "directions": rendered_dirs,
             "layout": layout,
-            "columns": columns,
         }
         rendered_line = "Rendered: " + ", ".join(rendered_dirs)
         skipped_line = "Skipped: " + (", ".join(skipped) if skipped else "none")
         report = f"{rendered_line}\n{skipped_line}"
-        return (sheet, atlas, report)
+        return {"ui": _image_preview(sheet), "result": (sheet, atlas, report)}
 
 
 class CharacterIdentityAnchor:
@@ -1657,7 +1649,7 @@ class TurnaroundSheet:
         cell = (cell_size, cell_size) if cell_size > 0 else None
         labels = list(manikins.CANONICAL_DIRECTIONS) if include_labels else None
         sheet = images.contact_sheet(tiles, columns, cell=cell, labels=labels)
-        return {"ui": {}, "result": (sheet,)}
+        return {"ui": _image_preview(sheet), "result": (sheet,)}
 
 
 class TweenClipProvider:
@@ -2199,6 +2191,227 @@ class AnimatedSpriteExport:
         return {"ui": _animated_preview(frames, fps_safe), "result": (frames, out_dir)}
 
 
+class AnimationSheetBuilder:
+    """Pack a full animation into a game-ready sprite sheet: one ROW per rendered
+    direction, one COLUMN per frame. Unlike Character Atlas Builder (one frame per
+    direction, a turnaround preview), this lays out every frame of every direction
+    and emits a frame-accurate ANIM_ATLAS with per-direction tags + fps — feed it
+    straight into Atlas Metadata Writer (aseprite / godot get one animation per
+    direction). The single-node Stage-3 export."""
+
+    CATEGORY = "andypack/Sprite"
+    FUNCTION = "build"
+    RETURN_TYPES = ("IMAGE", "ANIM_ATLAS", "STRING")
+    RETURN_NAMES = ("SHEET", "ATLAS", "REPORT")
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+                "animation": ("STRING", {"default": ""}),
+                "directions": (["all", "cardinal_4"],),
+                "padding": ("INT", {"default": 2, "min": 0}),
+                "power_of_two": ("BOOLEAN", {"default": False}),
+            }
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character, animation, directions, padding, power_of_two):
+        if character in ("", _NO_CHARACTER) or not animation:
+            return float("nan")
+        root = _characters_root()
+        try:
+            eff = effective_manifest(manifest, root, character)
+            dirs = _atlas_directions(directions)
+            pairs = resolve.rendered_directions(eff, root, character, "animation", animation, dirs)
+        except Exception:
+            return float("nan")
+        parts = [str(padding), str(power_of_two)]
+        for d, path in pairs:
+            meta = resolve.animation_meta_path(root, character, animation, d)
+            parts.append(f"{d}:{path}:{_mtime(meta)}")
+        return "|".join(parts)
+
+    def build(self, manifest, character, animation, directions, padding, power_of_two):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("AnimationSheetBuilder: select a character first")
+        if not animation:
+            raise RuntimeError("AnimationSheetBuilder: pick an animation id")
+        root = _characters_root()
+        manifest = effective_manifest(manifest, root, character)
+        dirs = _atlas_directions(directions)
+        pairs = resolve.rendered_directions(manifest, root, character, "animation", animation, dirs)
+        if not pairs:
+            raise RuntimeError(
+                f"AnimationSheetBuilder: no rendered directions for animation "
+                f"{animation!r} (tried: {dirs})"
+            )
+        rows: list[tuple[str, list]] = []
+        for d, path in pairs:
+            frame_files = sorted(
+                n for n in os.listdir(path)
+                if n.startswith("frame_") and n.endswith(".png")
+            )
+            if not frame_files:
+                raise RuntimeError(
+                    f"AnimationSheetBuilder: {animation!r}@{d} has no frames in {path}"
+                )
+            frames = [
+                images.load_image_tensor(os.path.join(path, fn), keep_alpha=True)
+                for fn in frame_files
+            ]
+            rows.append((d, frames))
+        fps = resolve.animation_fps(manifest, animation)
+        sheet, atlas = sprites.pack_direction_rows(
+            rows, fps=fps, padding=padding, power_of_two=power_of_two
+        )
+        report = (
+            f"{animation}: {len(rows)} directions × up to "
+            f"{max(len(f) for _d, f in rows)} frames @ {fps}fps\n"
+            + "Rows: " + ", ".join(d for d, _f in rows)
+        )
+        return {"ui": _image_preview(sheet), "result": (sheet, atlas, report)}
+
+
+class PoseEditConditioning:
+    """Assemble the FLUX.2 pose-edit conditioning for a POSE in one node: text-encode
+    the pose prompt, then attach the source image as a reference latent — and the
+    manikin too when the pose carries one (a root/base pose). Derived poses have no
+    manikin, so only the source is attached. This collapses the ~8-node reference
+    chain (2× scale + 2× VAE-encode + 2× ReferenceLatent + ConditioningZeroOut +
+    EmptyLatent) into one, and lets a SINGLE turnaround graph handle base + derived
+    poses (no separate 1-ref / 2-ref workflows).
+
+    Output: positive (text + reference latents), negative (zeroed), and an empty
+    latent sized `width`×`height` (0 = derive from the source image)."""
+
+    CATEGORY = "andypack/Pose"
+    FUNCTION = "build"
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "LATENT")
+    RETURN_NAMES = ("positive", "negative", "latent")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "pose": ("ANIM_POSE",),
+                "clip": ("CLIP",),
+                "vae": ("VAE",),
+                "megapixels": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 4.0, "step": 0.1}),
+                "width": ("INT", {"default": 0, "min": 0, "max": 8192, "step": 16}),
+                "height": ("INT", {"default": 0, "min": 0, "max": 8192, "step": 16}),
+            }
+        }
+
+    def build(self, pose, clip, vae, megapixels, width, height):
+        import comfy.utils
+        import node_helpers
+
+        def encode(text):
+            tokens = clip.tokenize(text)
+            return clip.encode_from_tokens_scheduled(tokens)
+
+        def scale_to_mp(image):
+            samples = image.movedim(-1, 1)
+            _b, _c, h, w = samples.shape
+            total = int(megapixels * 1024 * 1024)
+            scale = (total / max(1, w * h)) ** 0.5
+            tw, th = max(1, round(w * scale)), max(1, round(h * scale))
+            s = comfy.utils.common_upscale(samples, tw, th, "lanczos", "disabled")
+            return s.movedim(1, -1)
+
+        def ref_latent(cond, image):
+            pixels = scale_to_mp(image)[:, :, :, :3]
+            latent = vae.encode(pixels)
+            return node_helpers.conditioning_set_values(
+                cond, {"reference_latents": [latent]}, append=True
+            )
+
+        positive = encode(pose["positive"])
+        positive = ref_latent(positive, pose["source_image"])
+        if not images.is_empty(pose["pose_reference"]):
+            positive = ref_latent(positive, pose["pose_reference"])
+
+        # Negative: zero out the positive text conditioning (FLUX has no negative
+        # path; kept so the graph wires a valid negative at any CFG).
+        negative = []
+        for t in encode(pose["negative"] or ""):
+            d = t[1].copy()
+            if "pooled_output" in d and d["pooled_output"] is not None:
+                d["pooled_output"] = torch.zeros_like(d["pooled_output"])
+            negative.append([torch.zeros_like(t[0]), d])
+
+        src = pose["source_image"]
+        sh, sw = int(src.shape[1]), int(src.shape[2])
+        out_w = width if width > 0 else (sw - sw % 16 or 16)
+        out_h = height if height > 0 else (sh - sh % 16 or 16)
+        latent = {"samples": torch.zeros([1, 16, out_h // 8, out_w // 8])}
+        return (positive, negative, latent)
+
+
+class AnimationFrames:
+    """Load a rendered animation clip's frames back as an IMAGE batch (+ its fps),
+    with none of AnimationPlayback's dep-chaining / hold / loop semantics — just the
+    raw frames on disk. Use it to re-process a clip without re-sampling: re-matte,
+    re-time (Frame Timing Normalizer), pack (Spritesheet Packer), or re-export."""
+
+    CATEGORY = "andypack/Animation"
+    FUNCTION = "load"
+    RETURN_TYPES = ("IMAGE", "INT")
+    RETURN_NAMES = ("FRAMES", "FPS")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+                "animation": ("STRING", {"default": ""}),
+                "direction": ("STRING", {"default": ""}),
+            }
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, character, animation, direction):
+        if character in ("", _NO_CHARACTER) or not animation or not direction:
+            return float("nan")
+        return _mtime(resolve.animation_meta_path(_characters_root(), character, animation, direction))
+
+    def load(self, manifest, character, animation, direction):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("AnimationFrames: select a character first")
+        if not animation or not direction:
+            raise RuntimeError("AnimationFrames: pick an animation and a direction")
+        root = _characters_root()
+        manifest = effective_manifest(manifest, root, character)
+        pairs = resolve.rendered_directions(
+            manifest, root, character, "animation", animation, [direction]
+        )
+        if not pairs:
+            raise RuntimeError(
+                f"AnimationFrames: {animation!r}@{direction} is not rendered"
+            )
+        _d, path = pairs[0]
+        frame_files = sorted(
+            n for n in os.listdir(path)
+            if n.startswith("frame_") and n.endswith(".png")
+        )
+        if not frame_files:
+            raise RuntimeError(f"AnimationFrames: no frames in {path}")
+        tensors = [
+            images.load_image_tensor(os.path.join(path, fn), keep_alpha=True)
+            for fn in frame_files
+        ]
+        max_h = max(t.shape[1] for t in tensors)
+        max_w = max(t.shape[2] for t in tensors)
+        tensors = [images.pad_to(t, max_h, max_w) for t in tensors]
+        frames = torch.cat(tensors, dim=0)
+        return (frames, resolve.animation_fps(manifest, animation))
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
@@ -2209,14 +2422,15 @@ NODE_CLASS_MAPPINGS = {
     "ManikinPoseControl": ManikinPoseControl,
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
+    "PoseEditConditioning": PoseEditConditioning,
     "CharacterAnimationSelector": CharacterAnimationSelector,
     "AutoAnimationSelector": AutoAnimationSelector,
-    "ActionSetSelector": ActionSetSelector,
     "AnimationFrameWriter": AnimationFrameWriter,
     "BoomerangLoopWriter": BoomerangLoopWriter,
     "TweenClipProvider": TweenClipProvider,
     "AnimationUnpack": AnimationUnpack,
     "AnimationPlayback": AnimationPlayback,
+    "AnimationFrames": AnimationFrames,
     "MirrorFrameWriter": MirrorFrameWriter,
     "ColorVariantBatcher": ColorVariantBatcher,
     "VariantLayerComposer": VariantLayerComposer,
@@ -2230,6 +2444,7 @@ NODE_CLASS_MAPPINGS = {
     "PaletteQuantizeLock": PaletteQuantizeLock,
     "AtlasMetadataWriter": AtlasMetadataWriter,
     "CharacterAtlasBuilder": CharacterAtlasBuilder,
+    "AnimationSheetBuilder": AnimationSheetBuilder,
     "TurnaroundSheet": TurnaroundSheet,
     "FrameTimingNormalizer": FrameTimingNormalizer,
     "AnimatedSpriteExport": AnimatedSpriteExport,
@@ -2244,14 +2459,15 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ManikinPoseControl": "Manikin Pose Control",
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",
+    "PoseEditConditioning": "Pose Edit Conditioning",
     "CharacterAnimationSelector": "Character Animation Selector",
     "AutoAnimationSelector": "Auto Animation Selector (next job)",
-    "ActionSetSelector": "Action Set Selector (next job)",
     "AnimationFrameWriter": "Animation Frame Writer",
     "BoomerangLoopWriter": "Boomerang Loop Writer",
     "TweenClipProvider": "Tween Clip Provider",
     "AnimationUnpack": "Unpack Animation",
     "AnimationPlayback": "Animation Playback",
+    "AnimationFrames": "Animation Frames (load)",
     "MirrorFrameWriter": "Mirror Frame Writer",
     "ColorVariantBatcher": "Color Variant Batcher",
     "VariantLayerComposer": "Variant Layer Composer",
@@ -2265,6 +2481,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PaletteQuantizeLock": "Palette Quantize & Lock",
     "AtlasMetadataWriter": "Atlas Metadata Writer",
     "CharacterAtlasBuilder": "Character Atlas Builder",
+    "AnimationSheetBuilder": "Animation Sheet Builder",
     "TurnaroundSheet": "Turnaround Sheet",
     "FrameTimingNormalizer": "Frame Timing Normalizer",
     "AnimatedSpriteExport": "Animated Sprite Export",
