@@ -12,6 +12,16 @@ from andypack import api, atlas as _atlas_mod, images, io, manikins, resolve, sp
 from andypack.manifest import load_manifest
 from andypack.resolve import effective_manifest, resolve_animation, resolve_pose
 
+try:
+    # comfy_execution is only importable inside a running ComfyUI process.
+    # Guarded the same way andypack/server.py guards `from server import
+    # PromptServer`, so `python -c "import andypack..."`, ruff, and mypy stay
+    # green in CI (no ComfyUI installed there).
+    from comfy_execution.graph_utils import GraphBuilder, is_link
+except Exception:  # pragma: no cover - import-time guard outside ComfyUI
+    GraphBuilder = None  # type: ignore[assignment,misc]
+    is_link = None  # type: ignore[assignment]
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -344,7 +354,16 @@ class PoseSweepSelector:
                 "category": ("STRING", {"default": ""}),
                 "pose": ("STRING", {"default": ""}),
                 "direction": ("STRING", {"default": ""}),
-            }
+            },
+            "optional": {
+                # Wire Sweep Loop Open's flow token here (optional — the node
+                # works standalone outside a loop). Accepted and passed through
+                # unchanged; its only job is to place this selector (and
+                # everything downstream of it, transitively including the
+                # writer) on the Open->Close dependency path so Sweep Loop
+                # Close's graph walk captures the whole body as the loop.
+                "flow": ("SWEEP_FLOW",),
+            },
         }
 
     @classmethod
@@ -367,7 +386,10 @@ class PoseSweepSelector:
         }
 
     def select(self, manifest, character, mode, skip_mirrored, include_base,
-               category, pose, direction):
+               category, pose, direction, flow=None):
+        # `flow` is accepted only so this selector sits on the Sweep Loop
+        # Open->Close dependency path; its value is unused (ignored on purpose).
+        del flow
         if character in ("", _NO_CHARACTER):
             raise RuntimeError("PoseSweepSelector: select a character first")
         root = _characters_root()
@@ -492,7 +514,16 @@ class AnimationSweepSelector:
                 "category": ("STRING", {"default": ""}),
                 "animation": ("STRING", {"default": ""}),
                 "direction": ("STRING", {"default": ""}),
-            }
+            },
+            "optional": {
+                # Wire Sweep Loop Open's flow token here (optional — the node
+                # works standalone outside a loop). Accepted and passed through
+                # unchanged; its only job is to place this selector (and
+                # everything downstream of it, transitively including the
+                # writer) on the Open->Close dependency path so Sweep Loop
+                # Close's graph walk captures the whole body as the loop.
+                "flow": ("SWEEP_FLOW",),
+            },
         }
 
     @classmethod
@@ -514,7 +545,11 @@ class AnimationSweepSelector:
             "manifest": manifest,
         }
 
-    def select(self, manifest, character, mode, skip_mirrored, category, animation, direction):
+    def select(self, manifest, character, mode, skip_mirrored, category, animation, direction,
+               flow=None):
+        # `flow` is accepted only so this selector sits on the Sweep Loop
+        # Open->Close dependency path; its value is unused (ignored on purpose).
+        del flow
         if character in ("", _NO_CHARACTER):
             raise RuntimeError("AnimationSweepSelector: select a character first")
         root = _characters_root()
@@ -1238,6 +1273,145 @@ class AnimationFrames:
         return (frames, resolve.animation_fps(manifest, animation))
 
 
+class SweepLoopOpen:
+    """Marks the start of a one-press sweep loop and emits the SWEEP_FLOW token
+    that brackets it. Wire `flow` into the sweep body's selector (Pose Sweep
+    Selector / Animation Sweep Selector both take an optional `flow` input —
+    ignored, just passed through) so the whole body sits on the Open->Close
+    dependency path; Sweep Loop Close's graph walk needs that to find and
+    re-clone the body every iteration.
+
+    Unlike the validation spike (`SpikeLoopOpen`), this node carries NO fixed
+    iteration budget — the real loop's continue/stop signal is the writer's
+    live `REMAINING` output (recomputed off disk after every write), not a
+    Python-side counter. Open here is deliberately trivial: just a distinctive
+    flow-control token so nothing else can accidentally wire into that socket.
+    """
+
+    CATEGORY = "andypack/Loop"
+    FUNCTION = "open"
+    RETURN_TYPES = ("SWEEP_FLOW",)
+    RETURN_NAMES = ("flow",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {}}
+
+    def open(self):
+        return ({},)
+
+
+class SweepLoopClose:
+    """Closes a one-press sweep loop: while the writer's `remaining` is > 0,
+    clones the Open->Close subgraph (the loop body) and re-expands it so the
+    engine runs another iteration; at `remaining <= 0` it terminates (returns
+    a plain result with no `expand` key).
+
+    Mechanic ported verbatim (not re-derived) from the validated spike
+    (`andypack/_spike_loop.py`, deleted once this landed) and, before that,
+    from ComfyUI 0.26.2's own reference loop nodes
+    (`tests/execution/testing_nodes/testing-pack/flow_control.py`
+    `TestWhileLoopClose`): `flow` arrives as a raw, unresolved
+    `[node_id, output_index]` link (`rawLink: True`) so `flow[0]` recovers the
+    Open node's id; `dynprompt`/`unique_id` (hidden) let this node walk the
+    CURRENT expanded graph backward from itself to find every dependency
+    (`_explore_dependencies`), then forward from Open through that dependency
+    set to collect just the loop body (`_collect_contained`); every contained
+    node (including this Close, renamed "Recurse") is cloned into a fresh
+    `GraphBuilder`, internal links rewired to the clones, and the whole thing
+    is returned as `{"result": ..., "expand": graph.finalize()}` so the engine
+    splices it in and runs it. See
+    docs/superpowers/notes/2026-07-01-loop-spike-findings.md for the full
+    contract and citations.
+
+    No rewiring of the cloned Open's inputs is needed (unlike the reference
+    `TestForLoopClose`, which injects a decremented counter into the clone):
+    Open here carries no per-iteration state at all (see SweepLoopOpen), and
+    `remaining` is recomputed fresh by the cloned writer, off disk, every
+    iteration — there is nothing to inject.
+    """
+
+    CATEGORY = "andypack/Loop"
+    FUNCTION = "close"
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("DONE",)
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "flow": ("SWEEP_FLOW", {"forceInput": True, "rawLink": True}),
+                "remaining": ("INT", {"forceInput": True}),
+            },
+            "hidden": {"dynprompt": "DYNPROMPT", "unique_id": "UNIQUE_ID"},
+        }
+
+    def _explore_dependencies(self, node_id, dynprompt, upstream) -> None:
+        node_info = dynprompt.get_node(node_id)
+        if "inputs" not in node_info:
+            return
+        for _key, value in node_info["inputs"].items():
+            if is_link(value):
+                parent_id = value[0]
+                if parent_id not in upstream:
+                    upstream[parent_id] = []
+                    self._explore_dependencies(parent_id, dynprompt, upstream)
+                upstream[parent_id].append(node_id)
+
+    def _collect_contained(self, node_id, upstream, contained) -> None:
+        if node_id not in upstream:
+            return
+        for child_id in upstream[node_id]:
+            if child_id not in contained:
+                contained[child_id] = True
+                self._collect_contained(child_id, upstream, contained)
+
+    def close(self, flow, remaining: int, dynprompt=None, unique_id=None):
+        if remaining <= 0:
+            return ("done",)
+
+        assert dynprompt is not None
+        assert unique_id is not None
+
+        # `flow` arrived as a rawLink: [open_node_id, output_index].
+        open_node_id = flow[0]
+
+        upstream: dict[str, list[str]] = {}
+        self._explore_dependencies(unique_id, dynprompt, upstream)
+
+        contained: dict[str, bool] = {}
+        self._collect_contained(open_node_id, upstream, contained)
+        contained[unique_id] = True
+        contained[open_node_id] = True
+
+        graph = GraphBuilder()
+        for node_id in contained:
+            original = dynprompt.get_node(node_id)
+            clone_id = "Recurse" if node_id == unique_id else node_id
+            node = graph.node(original["class_type"], clone_id)
+            node.set_override_display_id(node_id)
+        for node_id in contained:
+            original = dynprompt.get_node(node_id)
+            clone_id = "Recurse" if node_id == unique_id else node_id
+            node = graph.lookup_node(clone_id)
+            assert node is not None
+            for key, value in original["inputs"].items():
+                if is_link(value) and value[0] in contained:
+                    parent = graph.lookup_node(value[0])
+                    assert parent is not None
+                    node.set_input(key, parent.out(value[1]))
+                else:
+                    node.set_input(key, value)
+
+        my_clone = graph.lookup_node("Recurse")
+        assert my_clone is not None
+        return {
+            "result": ("looping",),
+            "expand": graph.finalize(),
+        }
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
@@ -1257,6 +1431,8 @@ NODE_CLASS_MAPPINGS = {
     "AnimationSheetBuilder": AnimationSheetBuilder,
     "TurnaroundSheet": TurnaroundSheet,
     "AnimatedSpriteExport": AnimatedSpriteExport,
+    "SweepLoopOpen": SweepLoopOpen,
+    "SweepLoopClose": SweepLoopClose,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
@@ -1277,4 +1453,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationSheetBuilder": "Animation Sheet Builder",
     "TurnaroundSheet": "Turnaround Sheet",
     "AnimatedSpriteExport": "Animated Sprite Export",
+    "SweepLoopOpen": "Sweep Loop Open",
+    "SweepLoopClose": "Sweep Loop Close",
 }
