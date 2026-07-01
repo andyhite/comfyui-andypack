@@ -338,6 +338,11 @@ def test_manifest_options_maps_ids_to_directions(manifest):
     assert set(opts["animations"]) >= {"fighting_stance_idle", "punch", "fighting_stance_entry"}
 
 
+def test_manifest_options_includes_mirror_map():
+    out = api.manifest_options({"version": 1, "poses": {}, "animations": {}, "mirror_map": {"WEST": "EAST"}})
+    assert out["mirror_map"] == {"WEST": "EAST"}
+
+
 def test_resolve_manifest_path_passthrough_without_comfyui():
     # No ComfyUI base -> relative path falls back to itself (CWD-relative).
     assert api.resolve_manifest_path("default.json") == "default.json"

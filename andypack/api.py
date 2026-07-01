@@ -368,6 +368,7 @@ def manifest_options(manifest: Manifest) -> dict:
     return {
         "poses": {pid: dirs(p) for pid, p in manifest.get("poses", {}).items()},
         "animations": {aid: dirs(a) for aid, a in manifest.get("animations", {}).items()},
+        "mirror_map": manifest.get("mirror_map", {}),
     }
 
 

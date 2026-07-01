@@ -313,11 +313,16 @@ async function fetchThumb(character, kind, id, direction) {
 }
 
 // --- Coverage section (live status dashboard) ------------------------------- //
+// Group key separator: NUL can't appear in kind/category/id field values, so
+// splitting on it is safe even when those fields contain spaces.
+const _SEP = "\x00";
+
 function coverageSection() {
   const root = h("div", { style: { padding: PAD } });
   const charPick = h("select", { style: fieldStyle });
   const manifestPick = h("select", { style: fieldStyle });
   const summary = h("div", { style: { fontSize: "12px", margin: "8px 0", fontWeight: "600" } });
+  const tally = h("div", { style: { fontSize: "11px", opacity: "0.75", margin: "0 0 6px" } });
   const grid = h("div", {});
 
   async function loadPickers() {
@@ -339,24 +344,46 @@ function coverageSection() {
     const character = charPick.value;
     const manifest = manifestPick.value || "default.json";
     grid.innerHTML = "";
+    tally.textContent = "";
     if (!character) { summary.textContent = "select a character"; return; }
-    const opts = await apiGet(
-      `/anim_coord/options?manifest=${enc(manifest)}&character=${enc(character)}`);
+
+    // Fetch options + manifest_options (for mirror_map) in parallel.
+    const [opts, mopts] = await Promise.all([
+      apiGet(`/anim_coord/options?manifest=${enc(manifest)}&character=${enc(character)}`),
+      apiGet(`/anim_coord/manifest_options?manifest=${enc(manifest)}`).catch(() => ({})),
+    ]);
     if (!Array.isArray(opts)) { summary.textContent = "failed to load"; return; }
+
+    const mirrorMap = (mopts && !mopts.__error && mopts.mirror_map) ? mopts.mirror_map : {};
+    const mirrorKeys = new Set(Object.keys(mirrorMap));
+
+    // Status counts for the header summary line.
     const counts = { generated: 0, ready: 0, stale: 0, blocked: 0 };
     for (const o of opts) counts[o.status] = (counts[o.status] || 0) + 1;
     summary.textContent = STATUS_ORDER
       .map((s) => `${GLYPH[s]} ${s} ${counts[s] || 0}`).join("   ");
 
-    // Group by kind -> category -> id, render a row of direction glyphs per id.
-    const byKey = {};
+    // Sampled-vs-mirrored tally: count all cells by mirror membership.
+    let mirroredCount = 0;
+    let sampledCount = 0;
     for (const o of opts) {
-      const k = `${o.kind} ${o.category || "(none)"} ${o.id}`;
+      if (mirrorKeys.has(o.direction)) mirroredCount++;
+      else sampledCount++;
+    }
+    tally.textContent = `sampled=${sampledCount} mirrored=${mirroredCount}`;
+
+    // Group by kind + category + id using a NUL delimiter so spaces in those
+    // fields don't corrupt the sort key or the later destructuring.
+    const byKey = {};
+    const keyMeta = {};
+    for (const o of opts) {
+      const k = `${o.kind}${_SEP}${o.category || "(none)"}${_SEP}${o.id}`;
       (byKey[k] ||= []).push(o);
+      keyMeta[k] ||= { kind: o.kind, category: o.category || "(none)", id: o.id };
     }
     let lastHead = "";
     for (const k of Object.keys(byKey).sort()) {
-      const [kind, category, id] = k.split(" ");
+      const { kind, category, id } = keyMeta[k];
       const head = `${kind} · ${category}`;
       if (head !== lastHead) {
         grid.appendChild(h("div", {
@@ -369,7 +396,9 @@ function coverageSection() {
       const cells = byKey[k].slice().sort((a, b) => a.direction.localeCompare(b.direction));
       for (const o of cells) {
         const blocked = (o.blocked_by || []).join(", ");
-        const title = `${o.id} @ ${o.direction} — ${o.status}${blocked ? ` (needs ${blocked})` : ""}`;
+        const isMirror = mirrorKeys.has(o.direction);
+        const mirrorNote = isMirror ? ` [mirrored from ${mirrorMap[o.direction]}]` : "";
+        const title = `${o.id} @ ${o.direction} — ${o.status}${blocked ? ` (needs ${blocked})` : ""}${mirrorNote}`;
         const glyphEl = h("span", {}, GLYPH[o.status] || "·");
         const imgEl = h("img", {
           loading: "lazy",
@@ -378,10 +407,24 @@ function coverageSection() {
             display: "none", borderRadius: "2px", verticalAlign: "middle",
           },
         });
+        // Mirror badge: a small "M" label in the top-right corner of the cell.
+        const badgeEl = isMirror
+          ? h("span", {
+              style: {
+                position: "absolute", top: "0", right: "0",
+                fontSize: "7px", lineHeight: "1", background: "#6af", color: "#000",
+                borderRadius: "2px", padding: "1px 2px", fontWeight: "700",
+              },
+            }, "M")
+          : null;
         const cellEl = h("span", {
-          style: { fontSize: "12px", cursor: "default", display: "inline-block" },
+          style: {
+            fontSize: "12px", cursor: "default",
+            display: "inline-block", position: "relative",
+            ...(isMirror ? { outline: "1px solid #6af", borderRadius: "3px" } : {}),
+          },
           title,
-        }, [glyphEl, imgEl]);
+        }, [glyphEl, imgEl, badgeEl]);
         if (o.status !== "blocked") {
           fetchThumb(character, o.kind, o.id, o.direction).then((uri) => {
             if (uri) {
@@ -404,7 +447,7 @@ function coverageSection() {
     h("div", { style: labelStyle }, "Manifest"), manifestPick,
     h("div", { style: { textAlign: "right", margin: "6px 0" } },
       button("Refresh", refresh, { fontSize: "11px" })),
-    summary, grid,
+    summary, tally, grid,
   );
   loadPickers().then(refresh);
   // Live refresh: re-pull status after any graph run (a writer just unlocked work).
