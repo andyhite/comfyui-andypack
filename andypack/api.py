@@ -464,7 +464,7 @@ def regen_queue(manifest: Manifest, root: str, character: str) -> list[dict]:
     return out
 
 
-def next_actionable(
+def _actionable_items(
     manifest: Manifest,
     root: str,
     character: str,
@@ -473,10 +473,10 @@ def next_actionable(
     exclude_root: bool = False,
     category: Optional[str] = None,
     skip_mirrored: bool = False,
-) -> Optional[dict]:
-    """The first selectable-now (ready/stale) cell of `kind` in dependency order,
-    or None when nothing of that kind is actionable. Backs the auto-advancing
-    batch selectors: queue the graph repeatedly and each run picks the next job.
+):
+    """Yield selectable-now (ready/stale) cells of `kind` in dependency order —
+    the shared filter that backs both `next_actionable` and
+    `remaining_actionable`.
 
     `exclude_root` drops root poses (no `from`, e.g. `base`) — they need the
     Character Creator's reference image + manikin, not a generic selector.
@@ -511,7 +511,69 @@ def next_actionable(
             eff, root, character, item["id"], item["direction"]
         ):
             continue
+        yield item
+
+
+def next_actionable(
+    manifest: Manifest,
+    root: str,
+    character: str,
+    kind: str,
+    *,
+    exclude_root: bool = False,
+    category: Optional[str] = None,
+    skip_mirrored: bool = False,
+) -> Optional[dict]:
+    """The first selectable-now (ready/stale) cell of `kind` in dependency order,
+    or None when nothing of that kind is actionable. Backs the auto-advancing
+    batch selectors: queue the graph repeatedly and each run picks the next job.
+
+    `exclude_root` drops root poses (no `from`, e.g. `base`) — they need the
+    Character Creator's reference image + manikin, not a generic selector.
+
+    `category` filters to entities whose `category` field matches exactly.
+
+    `skip_mirrored` drops directions that appear as keys in
+    `manifest["mirror_map"]` — those directions are derived from a source
+    direction and should not be independently queued."""
+    for item in _actionable_items(
+        manifest,
+        root,
+        character,
+        kind,
+        exclude_root=exclude_root,
+        category=category,
+        skip_mirrored=skip_mirrored,
+    ):
         return item
+    return None
+
+
+def remaining_actionable(
+    manifest: Manifest,
+    root: str,
+    character: str,
+    kind: str,
+    *,
+    exclude_root: bool = False,
+    category: Optional[str] = None,
+    skip_mirrored: bool = False,
+) -> int:
+    """Count of currently-actionable cells of `kind`, using the same filter as
+    `next_actionable`. Used by the frame writers to drive a one-press sweep
+    loop's continue-signal after each render."""
+    return sum(
+        1
+        for _ in _actionable_items(
+            manifest,
+            root,
+            character,
+            kind,
+            exclude_root=exclude_root,
+            category=category,
+            skip_mirrored=skip_mirrored,
+        )
+    )
     return None
 
 

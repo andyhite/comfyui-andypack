@@ -228,6 +228,36 @@ def test_next_actionable_returns_locally_stale_cell(manifest, tree):
     assert job["id"] == "fighting_stance"
 
 
+def test_remaining_actionable_counts_all_actionable_poses(manifest, tree):
+    # The fixture manifest has exactly one non-root pose (fighting_stance, one
+    # direction: EAST); base is root and excluded. Render base first so
+    # fighting_stance becomes actionable (mirrors
+    # test_next_actionable_pose_skips_root_and_follows_dependency_order).
+    tree.character(concept="x")
+    tree.pose("base", "EAST")
+    first = api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+    n = api.remaining_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+    assert first is not None
+    assert n >= 1
+    # Count must equal the number of distinct actionable cells next_actionable would walk.
+    seen = 0
+    # render each actionable cell in turn; remaining must strictly decrease toward 0
+    prev = n
+    while api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True):
+        job = api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+        tree.pose(job["id"], job["direction"])
+        seen += 1
+        cur = api.remaining_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+        assert cur < prev
+        prev = cur
+    assert prev == 0
+    assert seen == n  # the initial count predicted the total drained (flat dependency case)
+
+
+def test_remaining_actionable_zero_when_nothing_actionable(manifest, tree):
+    assert api.remaining_actionable(manifest, tree.root, tree.char, "animation") == 0
+
+
 def test_read_character_layer_rejects_path_traversal(tmp_path):
     import json
     # A character.json planted OUTSIDE the characters root must not be reachable
