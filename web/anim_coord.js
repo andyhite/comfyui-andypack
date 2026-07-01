@@ -18,7 +18,7 @@ let READY = false;
 // Selector nodes and their leaf widget. The cascade is:
 //   character (python combo) -> category -> pose|animation -> direction
 const SELECTOR_NODES = {
-  CharacterPoseSelector: { idWidget: "pose", kind: "pose" },
+  PoseSweepSelector: { idWidget: "pose", kind: "pose" },
   CharacterAnimationSelector: { idWidget: "animation", kind: "animation" },
   AnimationPlayback: { idWidget: "animation", kind: "animation" },
 };

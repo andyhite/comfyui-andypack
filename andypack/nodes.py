@@ -301,7 +301,20 @@ class CharacterReferenceLoader:
         return (images.load_image_tensor(path),)
 
 
-class CharacterPoseSelector:
+class PoseSweepSelector:
+    """Sweep or spot-fix the pose turnaround. mode=sweep emits the next actionable
+    (ready/stale) non-root pose in dependency order — drive it inside a Sweep Loop
+    to fill everything; queue the graph repeatedly and each run generates the next
+    pose until none remain (then it raises, the natural stop). mode=target force-
+    regenerates the named pose@direction (no completeness gate — the point is a
+    spot-fix), leaving all others alone.
+
+    With `include_base` on (sweep mode), root poses (base) are emitted too —
+    paired with the bundled manikin (a 2-reference edit), so a SINGLE turnaround
+    graph (Pose Sweep Selector → Pose Edit Conditioning → sampler → Pose Frame
+    Writer) can generate the whole turnaround, base + derived. The character must
+    exist first (run Character Creator once to persist its reference art)."""
+
     CATEGORY = "andypack/Pose"
     FUNCTION = "select"
     # One bundled POSE dict (unpack it with Unpack Pose) instead of loose outputs.
@@ -312,11 +325,14 @@ class CharacterPoseSelector:
     def INPUT_TYPES(cls):
         # character is a real combo of character folders; category/pose/direction
         # are STRING widgets the web extension turns into the cascading combos
-        # (category is a UI filter; the node resolves by pose + direction).
+        # (pose/direction only matter in target mode; category scopes the sweep).
         return {
             "required": {
                 "manifest": ("ANIM_MANIFEST",),
                 "character": (_character_choices(),),
+                "mode": (["sweep", "target"],),
+                "skip_mirrored": ("BOOLEAN", {"default": True}),
+                "include_base": ("BOOLEAN", {"default": True}),
                 "category": ("STRING", {"default": ""}),
                 "pose": ("STRING", {"default": ""}),
                 "direction": ("STRING", {"default": ""}),
@@ -324,42 +340,60 @@ class CharacterPoseSelector:
         }
 
     @classmethod
-    def IS_CHANGED(cls, manifest, character, category, pose, direction):
-        # Re-resolve so the cache reflects the rendered tree (deps generated /
-        # re-rendered, prompt edits going stale), not just the widget values.
-        if character in ("", _NO_CHARACTER) or not pose or not direction:
-            return float("nan")
-        root = _characters_root()
-        try:
-            eff = effective_manifest(manifest, root, character)
-            r = resolve_pose(eff, root, character, pose, direction)
-        except Exception:
-            return float("nan")
-        return _selector_fingerprint(r, "source_image")
+    def IS_CHANGED(cls, *a, **k):
+        # Disk-backed; re-read every execution — the sweep loop depends on this
+        # (it must re-run each iteration and always see the current tree state).
+        return float("nan")
 
-    def select(self, manifest, character, category, pose, direction):
+    @staticmethod
+    def _ctx(character, mode, skip_mirrored, include_base, category, pose, direction):
+        return {
+            "character": character, "kind": "pose", "mode": mode,
+            "exclude_root": not include_base, "category": category or None,
+            "skip_mirrored": skip_mirrored,
+            "target": (pose, direction) if mode == "target" else None,
+        }
+
+    def select(self, manifest, character, mode, skip_mirrored, include_base,
+               category, pose, direction):
         if character in ("", _NO_CHARACTER):
-            raise RuntimeError("CharacterPoseSelector: select a character first")
-        if not pose or not direction:
-            raise RuntimeError("CharacterPoseSelector: pick a pose and a direction")
+            raise RuntimeError("PoseSweepSelector: select a character first")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
-        if pose not in manifest.get("poses", {}):
-            raise RuntimeError(
-                f"CharacterPoseSelector: unknown pose {pose!r} (stale or renamed) — pick a pose"
+        ctx = self._ctx(character, mode, skip_mirrored, include_base, category,
+                        pose, direction)
+        if mode == "target":
+            if not pose or not direction:
+                raise RuntimeError(
+                    "PoseSweepSelector: target mode needs a pose and a direction"
+                )
+            if pose not in manifest.get("poses", {}):
+                raise RuntimeError(
+                    f"PoseSweepSelector: unknown pose {pose!r} (stale or renamed) — pick a pose"
+                )
+            r = resolve_pose(manifest, root, character, pose, direction)
+            if not r["selectable"]:
+                raise RuntimeError(
+                    f"pose {pose}@{direction} not selectable: blocked_by={r['blocked_by']}"
+                )
+        else:
+            job = api.next_actionable(
+                manifest, root, character, "pose",
+                exclude_root=not include_base, category=category or None,
+                skip_mirrored=skip_mirrored,
             )
-        if not manifest["poses"][pose].get("from"):
-            raise RuntimeError(
-                f"CharacterPoseSelector: {pose!r} is a root pose — use the Character Creator node"
-            )
-        r = resolve_pose(manifest, root, character, pose, direction)
-        if not r["selectable"]:
-            raise RuntimeError(
-                f"pose {pose}@{direction} not selectable: blocked_by={r['blocked_by']}"
-            )
-        # Bundle the loose outputs into one POSE dict (see POSE_OUTPUT_KEYS). On a
-        # successful select the `from`-source is complete, so source_image is real.
-        return (_build_pose_bundle(r, root, character),)
+            if not job:
+                raise RuntimeError(
+                    "PoseSweepSelector: no actionable poses remain — every non-root pose "
+                    "is generated, blocked on an ungenerated dependency, or stale only "
+                    "because an upstream pose changed. Generate the base directions with "
+                    "the Character Creator first, and if a root pose is stale (its prompt "
+                    "changed) re-run the Character Creator to clear its descendants."
+                )
+            r = resolve_pose(manifest, root, character, job["id"], job["direction"])
+        # Bundle the loose outputs into one POSE dict (see POSE_OUTPUT_KEYS), stamped
+        # with sweep context so a later writer can recompute remaining work.
+        return (_build_pose_bundle(r, root, character, sweep=ctx),)
 
 
 class PoseFrameWriter:
@@ -657,80 +691,6 @@ class CoverageReport:
         char = "" if character == _NO_CHARACTER else character
         data = api.coverage_report(manifest, _characters_root(), char)
         return (api.format_coverage_table(data), json.dumps(data, indent=2))
-
-
-class AutoPoseSelector:
-    """Auto-advancing batch selector: emit the NEXT actionable (ready/stale)
-    non-root pose in dependency order, as an ANIM_POSE. Wire it like the Character
-    Pose Selector (→ Unpack Pose → FLUX edit → Pose Frame Writer) and queue the
-    graph repeatedly — each run generates the next pose until none remain (then it
-    raises, the natural stop).
-
-    With `include_base` on, root poses (base) are emitted too — paired with the
-    bundled manikin (a 2-reference edit), so a SINGLE turnaround graph (Auto Pose
-    Selector → Pose Edit Conditioning → sampler → Pose Frame Writer) can generate
-    the whole turnaround, base + derived. The character must exist first (run
-    Character Creator once to persist its reference art). With `include_base` off
-    (default), base is skipped — use the Character Creator for it."""
-
-    CATEGORY = "andypack/Pose"
-    FUNCTION = "select"
-    RETURN_TYPES = ("ANIM_POSE",)
-    RETURN_NAMES = ("POSE",)
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "manifest": ("ANIM_MANIFEST",),
-                "character": (_character_choices(),),
-                "skip_mirrored": ("BOOLEAN", {"default": True}),
-                "include_base": ("BOOLEAN", {"default": False}),
-            }
-        }
-
-    @classmethod
-    def IS_CHANGED(cls, manifest, character, skip_mirrored, include_base):
-        # Re-run as the tree fills (the next job changes) or a prompt drifts.
-        if character in ("", _NO_CHARACTER):
-            return float("nan")
-        root = _characters_root()
-        try:
-            eff = effective_manifest(manifest, root, character)
-            job = api.next_actionable(
-                eff, root, character, "pose",
-                exclude_root=not include_base, skip_mirrored=skip_mirrored,
-            )
-            if not job:
-                return "none"
-            r = resolve_pose(eff, root, character, job["id"], job["direction"])
-        except Exception:
-            return float("nan")
-        return (
-            f"{job['id']}@{job['direction']}|skip_mirrored={skip_mirrored}|"
-            f"include_base={include_base}|"
-            + _selector_fingerprint(r, "source_image")
-        )
-
-    def select(self, manifest, character, skip_mirrored, include_base):
-        if character in ("", _NO_CHARACTER):
-            raise RuntimeError("AutoPoseSelector: select a character first")
-        root = _characters_root()
-        manifest = effective_manifest(manifest, root, character)
-        job = api.next_actionable(
-            manifest, root, character, "pose",
-            exclude_root=not include_base, skip_mirrored=skip_mirrored,
-        )
-        if not job:
-            raise RuntimeError(
-                "AutoPoseSelector: no actionable poses remain — every non-root pose "
-                "is generated, blocked on an ungenerated dependency, or stale only "
-                "because an upstream pose changed. Generate the base directions with "
-                "the Character Creator first, and if a root pose is stale (its prompt "
-                "changed) re-run the Character Creator to clear its descendants."
-            )
-        r = resolve_pose(manifest, root, character, job["id"], job["direction"])
-        return (_build_pose_bundle(r, root, character),)
 
 
 class AutoAnimationSelector:
@@ -1289,8 +1249,7 @@ NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
     "CharacterReferenceLoader": CharacterReferenceLoader,
-    "CharacterPoseSelector": CharacterPoseSelector,
-    "AutoPoseSelector": AutoPoseSelector,
+    "PoseSweepSelector": PoseSweepSelector,
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
     "PoseEditConditioning": PoseEditConditioning,
@@ -1311,8 +1270,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
     "CharacterCreator": "Character Creator",
     "CharacterReferenceLoader": "Character Reference Loader",
-    "CharacterPoseSelector": "Character Pose Selector",
-    "AutoPoseSelector": "Auto Pose Selector (next job)",
+    "PoseSweepSelector": "Pose Sweep Selector",
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",
     "PoseEditConditioning": "Pose Edit Conditioning",

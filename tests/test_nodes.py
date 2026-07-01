@@ -1,4 +1,5 @@
 import json
+import math
 import os
 
 import pytest
@@ -89,20 +90,24 @@ def test_pose_rewrite_replaces_sidecar(tmp_path):
 
 # --- selector IS_CHANGED fingerprint ---------------------------------------- #
 
-def test_pose_selector_is_changed_tracks_dependency_render(manifest, tree, monkeypatch):
+def test_pose_sweep_selector_is_changed_always_reruns(manifest, tree, monkeypatch):
+    # PoseSweepSelector.IS_CHANGED unconditionally returns NaN — it is disk-backed
+    # and must re-read every execution (the sweep loop depends on this), so it
+    # always re-runs regardless of widget values or rendered-tree state. This
+    # replaces the old CharacterPoseSelector behavior of fingerprinting the
+    # resolved prompt/source-image to detect drift; the unified selector instead
+    # just always re-executes, which is a strictly stronger guarantee.
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    # The character layer is opt-in, so the prompt must reference it to ripple.
     manifest["poses"]["fighting_stance"]["positive_prompt"] += " {character_prompt}"
     tree.pose("base", "EAST")  # base (root) rendered -> fighting_stance selectable
-    before = nodes.CharacterPoseSelector.IS_CHANGED(
-        manifest, tree.char, "", "fighting_stance", "EAST"
+    before = nodes.PoseSweepSelector.IS_CHANGED(
+        manifest, tree.char, "target", True, False, "", "fighting_stance", "EAST"
     )
-    # Editing the character layer must move the fingerprint (prompt_hash folds it in).
     tree.character(positive_prompt="a brand new character line")
-    after = nodes.CharacterPoseSelector.IS_CHANGED(
-        manifest, tree.char, "", "fighting_stance", "EAST"
+    after = nodes.PoseSweepSelector.IS_CHANGED(
+        manifest, tree.char, "target", True, False, "", "fighting_stance", "EAST"
     )
-    assert before != after
+    assert math.isnan(before) and math.isnan(after)
 
 
 def test_animation_selector_is_changed_tracks_anchor_render(manifest, tree, monkeypatch):
@@ -120,7 +125,7 @@ def test_animation_selector_is_changed_tracks_anchor_render(manifest, tree, monk
 
 def test_selector_is_changed_volatile_without_character(manifest, monkeypatch):
     # No character chosen -> always re-run (NaN != NaN), never a stale cache hit.
-    token = nodes.CharacterPoseSelector.IS_CHANGED(manifest, "", "", "base", "EAST")
+    token = nodes.PoseSweepSelector.IS_CHANGED(manifest, "", "target", True, False, "", "base", "EAST")
     assert token != token
 
 
@@ -185,7 +190,9 @@ def test_pose_selector_returns_single_dict(manifest, tree, monkeypatch):
     tree.pose("base", "EAST")  # base rendered so fighting_stance has a source
     # Write a real PNG at base@EAST so the selector can load it as the source image.
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
-    (pose,) = nodes.CharacterPoseSelector().select(manifest, tree.char, "", "fighting_stance", "EAST")
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "target", True, False, "", "fighting_stance", "EAST"
+    )
     # Leaf outputs are selectable; the resolver meta rides bundled under `_meta`
     # (not a leaf output) and the image rides along as a tensor.
     assert isinstance(pose["positive"], str)
@@ -301,7 +308,9 @@ def test_pose_selector_rejects_unknown_id(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
     with pytest.raises(RuntimeError, match="unknown pose"):
-        nodes.CharacterPoseSelector().select(manifest, tree.char, "", "ghost_pose", "EAST")
+        nodes.PoseSweepSelector().select(
+            manifest, tree.char, "target", True, False, "", "ghost_pose", "EAST"
+        )
 
 
 def test_animation_selector_rejects_unknown_id(manifest, tree, monkeypatch):
@@ -367,11 +376,21 @@ def test_character_creator_rejects_unknown_direction(manifest, tmp_path, monkeyp
         nodes.CharacterCreator().create(manifest, _img(), "cortex", "UP")
 
 
-def test_pose_selector_rejects_root_pose(manifest, tree, monkeypatch):
+def test_pose_sweep_selector_target_mode_can_force_a_root_pose(manifest, tree, monkeypatch):
+    # DESIGN CHANGE from the old CharacterPoseSelector, which rejected root poses
+    # (steering the user to the Character Creator instead). The unified selector's
+    # target mode is an explicit spot-fix tool that force-resolves "regardless of
+    # completeness" (per the sweep-loops design doc) with no carve-out for root
+    # poses — and _build_pose_bundle already knows how to pair a root pose with
+    # its manikin. So targeting ("base", "EAST") now succeeds instead of raising.
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.pose("base", "EAST")
-    with pytest.raises(RuntimeError, match="root pose"):
-        nodes.CharacterPoseSelector().select(manifest, tree.char, "", "base", "EAST")
+    images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "target", True, False, "", "base", "EAST"
+    )
+    assert pose["_meta"]["pose"] == "base"
+    assert pose["_sweep"]["target"] == ("base", "EAST")
 
 
 # --- reference persistence + CharacterReferenceLoader ----------------------- #
@@ -413,36 +432,37 @@ def test_reference_loader_requires_a_character(monkeypatch, tmp_path):
 
 # --- auto-advancing batch selectors ----------------------------------------- #
 
-def test_auto_pose_selector_emits_next_actionable_non_root_pose(manifest, tree, monkeypatch):
+def test_pose_sweep_selector_emits_next_actionable_non_root_pose(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     # base generated -> fighting_stance is the next actionable (non-root) pose.
     tree.pose("base", "EAST")
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
-    (pose,) = nodes.AutoPoseSelector().select(
-        manifest, tree.char, skip_mirrored=True, include_base=False
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "sweep", True, False, "", "", ""
     )
     assert pose["_meta"]["pose"] == "fighting_stance"
+    assert pose["_sweep"]["mode"] == "sweep"
     assert sorted(k for k in pose if not k.startswith("_")) == nodes.POSE_OUTPUT_KEYS
 
 
-def test_auto_pose_selector_raises_when_nothing_actionable(manifest, tree, monkeypatch):
+def test_pose_sweep_selector_raises_when_nothing_actionable(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()  # base is a root pose (excluded); nothing else actionable
     with pytest.raises(RuntimeError, match="no actionable poses"):
-        nodes.AutoPoseSelector().select(
-            manifest, tree.char, skip_mirrored=True, include_base=False
+        nodes.PoseSweepSelector().select(
+            manifest, tree.char, "sweep", True, False, "", "", ""
         )
 
 
-def test_auto_pose_selector_include_base_emits_root_with_manikin(manifest, tree, monkeypatch):
+def test_pose_sweep_selector_include_base_emits_root_with_manikin(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     # Character exists with a persisted reference, but no base direction rendered
     # yet: with include_base, base is the next actionable root pose and it comes
     # bundled with its manikin (2-reference edit).
     tree.character()
     images.save_image_png(_img(), resolve.reference_image_path(tree.root, tree.char))
-    (pose,) = nodes.AutoPoseSelector().select(
-        manifest, tree.char, skip_mirrored=True, include_base=True
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "sweep", True, True, "", "", ""
     )
     assert pose["_meta"]["pose"] == "base"
     assert not images.is_empty(pose["source_image"])   # the reference art
@@ -478,7 +498,9 @@ def test_pose_selector_sets_empty_pose_reference(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.pose("base", "EAST")
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
-    (pose,) = nodes.CharacterPoseSelector().select(manifest, tree.char, "", "fighting_stance", "EAST")
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "target", True, False, "", "fighting_stance", "EAST"
+    )
     assert images.is_empty(pose["pose_reference"])
 
 
@@ -526,9 +548,15 @@ def test_atlas_metadata_writer(tmp_path, monkeypatch):
 
 # --- CharacterAtlasBuilder -------------------------------------------------- #
 
-def test_auto_pose_selector_has_skip_mirrored_input():
-    req = nodes.AutoPoseSelector.INPUT_TYPES()["required"]
-    assert "skip_mirrored" in req
+def test_pose_sweep_selector_input_shape():
+    req = nodes.PoseSweepSelector.INPUT_TYPES()["required"]
+    assert list(req.keys()) == [
+        "manifest", "character", "mode", "skip_mirrored", "include_base",
+        "category", "pose", "direction",
+    ]
+    assert req["mode"] == (["sweep", "target"],)
+    assert req["skip_mirrored"] == ("BOOLEAN", {"default": True})
+    assert req["include_base"] == ("BOOLEAN", {"default": True})
 
 
 # --- AnimationSheetBuilder / AnimationFrames -------------------------------- #
