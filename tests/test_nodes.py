@@ -4,7 +4,7 @@ import os
 import pytest
 import torch
 
-from andypack import images, nodes, resolve
+from andypack import api, images, nodes, resolve
 
 
 def _img(h=2, w=2):
@@ -192,7 +192,7 @@ def test_pose_selector_returns_single_dict(manifest, tree, monkeypatch):
     assert pose["source_image"].shape[0] == 1
     assert pose["_meta"]["pose"] == "fighting_stance" and pose["_meta"]["image"] == "EAST.png"
     # Drift guard: the public (non-`_meta`) keys are exactly the leaf-output keys.
-    assert sorted(k for k in pose if k != "_meta") == nodes.POSE_OUTPUT_KEYS
+    assert sorted(k for k in pose if not k.startswith("_")) == nodes.POSE_OUTPUT_KEYS
 
 
 def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
@@ -212,7 +212,7 @@ def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
     assert isinstance(anim["width"], int) and isinstance(anim["height"], int)
     assert isinstance(anim["shift"], float)
     assert anim["start_image"].shape[0] == 1 and anim["end_image"].shape[0] == 1
-    assert sorted(k for k in anim if k != "_meta") == nodes.ANIMATION_OUTPUT_KEYS
+    assert sorted(k for k in anim if not k.startswith("_")) == nodes.ANIMATION_OUTPUT_KEYS
 
 
 def test_pose_unpack_forwards_dict_and_fans_out_typed_outputs():
@@ -264,6 +264,36 @@ def test_unpack_outputs_cover_selector_leaf_keys():
 def test_leaf_output_keys_exclude_private_meta():
     assert "_meta" not in nodes.POSE_OUTPUT_KEYS
     assert "_meta" not in nodes.ANIMATION_OUTPUT_KEYS
+
+
+def test_pose_bundle_carries_sweep_context(manifest, tree):
+    tree.character(concept="x")
+    tree.pose("base", "EAST")
+    images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
+    job = api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+    r = resolve.resolve_pose(manifest, tree.root, tree.char, job["id"], job["direction"])
+    bundle = nodes._build_pose_bundle(
+        r, tree.root, tree.char,
+        sweep={"character": tree.char, "kind": "pose", "mode": "sweep",
+               "exclude_root": True, "category": None, "skip_mirrored": True})
+    assert bundle["_sweep"]["mode"] == "sweep"
+    assert bundle["_sweep"]["kind"] == "pose"
+    # Not a wireable leaf output — like `_meta`.
+    assert "_sweep" not in nodes.POSE_OUTPUT_KEYS
+
+
+def test_animation_bundle_defaults_sweep_to_empty_dict(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST").animation(
+        "fighting_stance_idle", "EAST", frames=3
+    )
+    idle = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
+    for i in range(3):
+        images.save_image_png(_img(), os.path.join(idle, f"frame_{i:05d}.png"))
+    r = resolve.resolve_animation(manifest, tree.root, tree.char, "punch", "EAST")
+    bundle = nodes._build_animation_bundle(r)
+    assert bundle["_sweep"] == {}
+    assert "_sweep" not in nodes.ANIMATION_OUTPUT_KEYS
 
 
 def test_pose_selector_rejects_unknown_id(manifest, tree, monkeypatch):
@@ -392,7 +422,7 @@ def test_auto_pose_selector_emits_next_actionable_non_root_pose(manifest, tree, 
         manifest, tree.char, skip_mirrored=True, include_base=False
     )
     assert pose["_meta"]["pose"] == "fighting_stance"
-    assert sorted(k for k in pose if k != "_meta") == nodes.POSE_OUTPUT_KEYS
+    assert sorted(k for k in pose if not k.startswith("_")) == nodes.POSE_OUTPUT_KEYS
 
 
 def test_auto_pose_selector_raises_when_nothing_actionable(manifest, tree, monkeypatch):
@@ -431,7 +461,7 @@ def test_auto_animation_selector_emits_next_actionable_animation(manifest, tree,
         manifest, tree.char, skip_mirrored=True, category=""
     )
     assert anim["_meta"]["animation"] == "fighting_stance_idle"
-    assert sorted(k for k in anim if k != "_meta") == nodes.ANIMATION_OUTPUT_KEYS
+    assert sorted(k for k in anim if not k.startswith("_")) == nodes.ANIMATION_OUTPUT_KEYS
     assert remaining >= 1
 
 

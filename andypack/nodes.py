@@ -197,7 +197,7 @@ class CharacterCreator:
         return (pose,)
 
 
-def _build_pose_bundle(r: dict, root: str = "", character: str = "") -> dict:
+def _build_pose_bundle(r: dict, root: str = "", character: str = "", sweep=None) -> dict:
     """An ANIM_POSE bundle from a resolve_pose result.
 
     A **root** pose (``meta["from"]`` is None, e.g. ``base``) is a multi-reference
@@ -231,10 +231,11 @@ def _build_pose_bundle(r: dict, root: str = "", character: str = "") -> dict:
         "negative": r["negative"],
         "output_dir": r["output_dir"],
         "_meta": meta,
+        "_sweep": sweep or {},
     }
 
 
-def _build_animation_bundle(r: dict) -> dict:
+def _build_animation_bundle(r: dict, sweep=None) -> dict:
     """An ANIM_ANIMATION bundle from a resolve_animation result — start/end anchor
     images plus the wireable generation params (length/fps/width/height/shift)."""
     start_image = (
@@ -260,6 +261,7 @@ def _build_animation_bundle(r: dict) -> dict:
         "shift": float(meta["shift"]) if meta.get("shift") is not None else 0.0,
         "output_dir": r["output_dir"],
         "_meta": meta,
+        "_sweep": sweep or {},
     }
 
 
