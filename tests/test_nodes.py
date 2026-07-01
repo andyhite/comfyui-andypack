@@ -382,15 +382,34 @@ def test_pose_sweep_selector_target_mode_can_force_a_root_pose(manifest, tree, m
     # target mode is an explicit spot-fix tool that force-resolves "regardless of
     # completeness" (per the sweep-loops design doc) with no carve-out for root
     # poses — and _build_pose_bundle already knows how to pair a root pose with
-    # its manikin. So targeting ("base", "EAST") now succeeds instead of raising.
+    # its manikin. So targeting ("base", "EAST") now succeeds instead of raising —
+    # PROVIDED the character has a persisted reference (seeded here); without one
+    # there is nothing to pair with the manikin, and the bundle builder now raises
+    # rather than silently emitting a blank sentinel (see the test right below).
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.pose("base", "EAST")
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
+    images.save_image_png(_img(), resolve.reference_image_path(tree.root, tree.char))
     (pose,) = nodes.PoseSweepSelector().select(
         manifest, tree.char, "target", True, False, "", "base", "EAST"
     )
     assert pose["_meta"]["pose"] == "base"
     assert pose["_sweep"]["target"] == ("base", "EAST")
+    assert not images.is_empty(pose["source_image"])  # the persisted reference art
+
+
+def test_pose_sweep_selector_target_mode_root_pose_requires_reference(manifest, tree, monkeypatch):
+    # Without a persisted reference, a root-pose target must raise rather than
+    # silently bake a blank 1x1 sentinel into source_image (the old, footgun-prone
+    # behavior) — the character must exist first (Character Creator persists the
+    # reference art).
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST")
+    images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
+    with pytest.raises(RuntimeError, match="reference"):
+        nodes.PoseSweepSelector().select(
+            manifest, tree.char, "target", True, False, "", "base", "EAST"
+        )
 
 
 # --- reference persistence + CharacterReferenceLoader ----------------------- #

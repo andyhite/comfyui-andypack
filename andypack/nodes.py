@@ -205,15 +205,23 @@ def _build_pose_bundle(r: dict, root: str = "", character: str = "", sweep=None)
     = the bundled manikin for its direction — the same pairing Character Creator
     makes, so Auto Pose Selector can drive the base turnaround too. A **derived**
     pose re-poses its `from`-source (single reference); pose_reference stays the
-    empty sentinel."""
+    empty sentinel.
+
+    Raises if a root pose has no persisted reference — silently falling back to a
+    blank sentinel would let PoseEditConditioning bake a near-blank reference latent
+    with no error (the character must exist first; Character Creator persists the
+    reference)."""
     meta = r["meta"]
     if meta.get("from") is None:
         ref_path = resolve.reference_image_path(root, character) if character else ""
-        source = (
-            images.load_image_tensor(ref_path)
-            if ref_path and os.path.exists(ref_path)
-            else images.empty_image()
-        )
+        if not ref_path or not os.path.exists(ref_path):
+            raise RuntimeError(
+                f"_build_pose_bundle: {character!r} has no persisted reference "
+                f"image (expected {ref_path or '<no character>'}); re-run the "
+                "Character Creator with save_reference enabled, or supply the "
+                "reference art directly, before targeting a root pose"
+            )
+        source = images.load_image_tensor(ref_path)
         direction = meta.get("direction", "")
         pose_reference = (
             images.load_image_tensor(manikins.manikin_path(direction))
