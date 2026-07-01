@@ -1,6 +1,6 @@
 {
  "last_node_id": 99,
- "last_link_id": 13,
+ "last_link_id": 16,
  "nodes": [
   {
    "id": 10,
@@ -136,14 +136,14 @@
   },
   {
    "id": 70,
-   "type": "AutoPoseSelector",
+   "type": "PoseSweepSelector",
    "pos": [
     420,
     40
    ],
    "size": [
     320,
-    200
+    260
    ],
    "flags": {},
    "order": 70,
@@ -153,6 +153,11 @@
      "name": "manifest",
      "type": "ANIM_MANIFEST",
      "link": 1
+    },
+    {
+     "name": "flow",
+     "type": "SWEEP_FLOW",
+     "link": 14
     }
    ],
    "outputs": [
@@ -167,13 +172,87 @@
     }
    ],
    "properties": {
-    "Node name for S&R": "AutoPoseSelector"
+    "Node name for S&R": "PoseSweepSelector"
    },
    "widgets_values": [
     "ranger",
+    "sweep",
     true,
-    true
+    true,
+    "",
+    "",
+    ""
    ]
+  },
+  {
+   "id": 60,
+   "type": "SweepLoopOpen",
+   "pos": [
+    40,
+    1240
+   ],
+   "size": [
+    320,
+    60
+   ],
+   "flags": {},
+   "order": 60,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "flow",
+     "type": "SWEEP_FLOW",
+     "links": [
+      14,
+      15
+     ],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SweepLoopOpen"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 61,
+   "type": "SweepLoopClose",
+   "pos": [
+    420,
+    1240
+   ],
+   "size": [
+    320,
+    80
+   ],
+   "flags": {},
+   "order": 61,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "flow",
+     "type": "SWEEP_FLOW",
+     "link": 15
+    },
+    {
+     "name": "remaining",
+     "type": "INT",
+     "link": 16
+    }
+   ],
+   "outputs": [
+    {
+     "name": "DONE",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SweepLoopClose"
+   },
+   "widgets_values": []
   },
   {
    "id": 71,
@@ -401,6 +480,14 @@
      "type": "STRING",
      "links": [],
      "slot_index": 0
+    },
+    {
+     "name": "REMAINING",
+     "type": "INT",
+     "links": [
+      16
+     ],
+     "slot_index": 1
     }
    ],
    "properties": {
@@ -428,7 +515,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "STEP 2. Auto Pose Selector (include_base=on) emits the next unrendered pose \u2014 base (2-ref: reference+manikin) AND derived poses (1-ref). Pose Edit Conditioning attaches the right refs automatically, so ONE graph does the whole turnaround. QUEUE repeatedly until it reports none remain."
+    "STEP 2. One Queue press fills the whole turnaround: Sweep Loop Open/Close wrap Pose Sweep Selector (mode=sweep, include_base=on) \u2192 Pose Edit Conditioning \u2192 sampler \u2192 Pose Frame Writer, re-running the body off the writer's REMAINING count until every base + derived pose across all directions is rendered, then it stops cleanly. Set mode=target + a pose/direction to spot-fix one cell instead (runs exactly once)."
    ]
   }
  ],
@@ -536,6 +623,30 @@
    52,
    1,
    "IMAGE"
+  ],
+  [
+   14,
+   60,
+   0,
+   70,
+   1,
+   "SWEEP_FLOW"
+  ],
+  [
+   15,
+   60,
+   0,
+   61,
+   0,
+   "SWEEP_FLOW"
+  ],
+  [
+   16,
+   52,
+   1,
+   61,
+   1,
+   "INT"
   ]
  ],
  "groups": [],

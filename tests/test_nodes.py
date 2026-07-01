@@ -1,10 +1,11 @@
 import json
+import math
 import os
 
 import pytest
 import torch
 
-from andypack import images, nodes, resolve
+from andypack import api, images, nodes, resolve
 
 
 def _img(h=2, w=2):
@@ -89,38 +90,49 @@ def test_pose_rewrite_replaces_sidecar(tmp_path):
 
 # --- selector IS_CHANGED fingerprint ---------------------------------------- #
 
-def test_pose_selector_is_changed_tracks_dependency_render(manifest, tree, monkeypatch):
+def test_pose_sweep_selector_is_changed_always_reruns(manifest, tree, monkeypatch):
+    # PoseSweepSelector.IS_CHANGED unconditionally returns NaN — it is disk-backed
+    # and must re-read every execution (the sweep loop depends on this), so it
+    # always re-runs regardless of widget values or rendered-tree state. This
+    # replaces the old CharacterPoseSelector behavior of fingerprinting the
+    # resolved prompt/source-image to detect drift; the unified selector instead
+    # just always re-executes, which is a strictly stronger guarantee.
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
-    # The character layer is opt-in, so the prompt must reference it to ripple.
     manifest["poses"]["fighting_stance"]["positive_prompt"] += " {character_prompt}"
     tree.pose("base", "EAST")  # base (root) rendered -> fighting_stance selectable
-    before = nodes.CharacterPoseSelector.IS_CHANGED(
-        manifest, tree.char, "", "fighting_stance", "EAST"
+    before = nodes.PoseSweepSelector.IS_CHANGED(
+        manifest, tree.char, "target", True, False, "", "fighting_stance", "EAST"
     )
-    # Editing the character layer must move the fingerprint (prompt_hash folds it in).
     tree.character(positive_prompt="a brand new character line")
-    after = nodes.CharacterPoseSelector.IS_CHANGED(
-        manifest, tree.char, "", "fighting_stance", "EAST"
+    after = nodes.PoseSweepSelector.IS_CHANGED(
+        manifest, tree.char, "target", True, False, "", "fighting_stance", "EAST"
     )
-    assert before != after
+    assert math.isnan(before) and math.isnan(after)
 
 
-def test_animation_selector_is_changed_tracks_anchor_render(manifest, tree, monkeypatch):
+def test_animation_sweep_selector_is_changed_always_reruns(manifest, tree, monkeypatch):
+    # AnimationSweepSelector.IS_CHANGED unconditionally returns NaN — it is
+    # disk-backed and must re-read every execution (the sweep loop depends on
+    # this), so it always re-runs regardless of widget values or rendered-tree
+    # state. This replaces the old CharacterAnimationSelector behavior of
+    # fingerprinting the resolved start/end anchor images to detect drift; the
+    # unified selector instead just always re-executes, a strictly stronger
+    # guarantee.
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.pose("base", "EAST").pose("fighting_stance", "EAST")
-    before = nodes.CharacterAnimationSelector.IS_CHANGED(
-        manifest, tree.char, "", "punch", "EAST"
+    before = nodes.AnimationSweepSelector.IS_CHANGED(
+        manifest, tree.char, "target", True, "", "punch", "EAST"
     )  # idle not rendered -> blocked, no anchor image
     tree.animation("fighting_stance_idle", "EAST", frames=3)
-    after = nodes.CharacterAnimationSelector.IS_CHANGED(
-        manifest, tree.char, "", "punch", "EAST"
+    after = nodes.AnimationSweepSelector.IS_CHANGED(
+        manifest, tree.char, "target", True, "", "punch", "EAST"
     )  # idle rendered -> selectable, anchors resolve
-    assert before != after
+    assert math.isnan(before) and math.isnan(after)
 
 
 def test_selector_is_changed_volatile_without_character(manifest, monkeypatch):
     # No character chosen -> always re-run (NaN != NaN), never a stale cache hit.
-    token = nodes.CharacterPoseSelector.IS_CHANGED(manifest, "", "", "base", "EAST")
+    token = nodes.PoseSweepSelector.IS_CHANGED(manifest, "", "target", True, False, "", "base", "EAST")
     assert token != token
 
 
@@ -171,7 +183,9 @@ def test_animation_selector_outputs_length_and_fps(manifest, tree, monkeypatch):
     idle = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
     for i in range(3):  # real PNGs so the anchor frames load
         images.save_image_png(_img(), os.path.join(idle, f"frame_{i:05d}.png"))
-    (anim,) = nodes.CharacterAnimationSelector().select(manifest, tree.char, "", "punch", "EAST")
+    (anim,) = nodes.AnimationSweepSelector().select(
+        manifest, tree.char, "target", True, "", "punch", "EAST"
+    )
     assert anim["length"] == manifest["animations"]["punch"]["length"]  # 21
     assert anim["fps"] == manifest["defaults"]["fps"]                   # 16 (punch inherits default)
     assert anim["_meta"]["animation"] == "punch"
@@ -185,14 +199,16 @@ def test_pose_selector_returns_single_dict(manifest, tree, monkeypatch):
     tree.pose("base", "EAST")  # base rendered so fighting_stance has a source
     # Write a real PNG at base@EAST so the selector can load it as the source image.
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
-    (pose,) = nodes.CharacterPoseSelector().select(manifest, tree.char, "", "fighting_stance", "EAST")
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "target", True, False, "", "fighting_stance", "EAST"
+    )
     # Leaf outputs are selectable; the resolver meta rides bundled under `_meta`
     # (not a leaf output) and the image rides along as a tensor.
     assert isinstance(pose["positive"], str)
     assert pose["source_image"].shape[0] == 1
     assert pose["_meta"]["pose"] == "fighting_stance" and pose["_meta"]["image"] == "EAST.png"
     # Drift guard: the public (non-`_meta`) keys are exactly the leaf-output keys.
-    assert sorted(k for k in pose if k != "_meta") == nodes.POSE_OUTPUT_KEYS
+    assert sorted(k for k in pose if not k.startswith("_")) == nodes.POSE_OUTPUT_KEYS
 
 
 def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
@@ -203,7 +219,9 @@ def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
     idle = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
     for i in range(3):
         images.save_image_png(_img(), os.path.join(idle, f"frame_{i:05d}.png"))
-    (anim,) = nodes.CharacterAnimationSelector().select(manifest, tree.char, "", "punch", "EAST")
+    (anim,) = nodes.AnimationSweepSelector().select(
+        manifest, tree.char, "target", True, "", "punch", "EAST"
+    )
     assert anim["_meta"]["animation"] == "punch"
     assert isinstance(anim["is_fflf"], bool)
     assert isinstance(anim["length"], int) and isinstance(anim["fps"], int)
@@ -212,7 +230,7 @@ def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
     assert isinstance(anim["width"], int) and isinstance(anim["height"], int)
     assert isinstance(anim["shift"], float)
     assert anim["start_image"].shape[0] == 1 and anim["end_image"].shape[0] == 1
-    assert sorted(k for k in anim if k != "_meta") == nodes.ANIMATION_OUTPUT_KEYS
+    assert sorted(k for k in anim if not k.startswith("_")) == nodes.ANIMATION_OUTPUT_KEYS
 
 
 def test_pose_unpack_forwards_dict_and_fans_out_typed_outputs():
@@ -266,19 +284,53 @@ def test_leaf_output_keys_exclude_private_meta():
     assert "_meta" not in nodes.ANIMATION_OUTPUT_KEYS
 
 
+def test_pose_bundle_carries_sweep_context(manifest, tree):
+    tree.character(concept="x")
+    tree.pose("base", "EAST")
+    images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
+    job = api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+    r = resolve.resolve_pose(manifest, tree.root, tree.char, job["id"], job["direction"])
+    bundle = nodes._build_pose_bundle(
+        r, tree.root, tree.char,
+        sweep={"character": tree.char, "kind": "pose", "mode": "sweep",
+               "exclude_root": True, "category": None, "skip_mirrored": True})
+    assert bundle["_sweep"]["mode"] == "sweep"
+    assert bundle["_sweep"]["kind"] == "pose"
+    # Not a wireable leaf output — like `_meta`.
+    assert "_sweep" not in nodes.POSE_OUTPUT_KEYS
+
+
+def test_animation_bundle_defaults_sweep_to_empty_dict(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST").animation(
+        "fighting_stance_idle", "EAST", frames=3
+    )
+    idle = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
+    for i in range(3):
+        images.save_image_png(_img(), os.path.join(idle, f"frame_{i:05d}.png"))
+    r = resolve.resolve_animation(manifest, tree.root, tree.char, "punch", "EAST")
+    bundle = nodes._build_animation_bundle(r)
+    assert bundle["_sweep"] == {}
+    assert "_sweep" not in nodes.ANIMATION_OUTPUT_KEYS
+
+
 def test_pose_selector_rejects_unknown_id(manifest, tree, monkeypatch):
     # A stale/renamed serialized id must give a friendly error, not a raw KeyError.
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
     with pytest.raises(RuntimeError, match="unknown pose"):
-        nodes.CharacterPoseSelector().select(manifest, tree.char, "", "ghost_pose", "EAST")
+        nodes.PoseSweepSelector().select(
+            manifest, tree.char, "target", True, False, "", "ghost_pose", "EAST"
+        )
 
 
 def test_animation_selector_rejects_unknown_id(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
     with pytest.raises(RuntimeError, match="unknown animation"):
-        nodes.CharacterAnimationSelector().select(manifest, tree.char, "", "ghost_anim", "EAST")
+        nodes.AnimationSweepSelector().select(
+            manifest, tree.char, "target", True, "", "ghost_anim", "EAST"
+        )
 
 
 def test_animation_selector_tolerates_missing_start_anchor(manifest, tree, monkeypatch):
@@ -300,8 +352,8 @@ def test_animation_selector_tolerates_missing_start_anchor(manifest, tree, monke
     with open(meta_path, "w") as fh:
         json.dump(meta, fh)
     # fighting_stance_exit: start_from -> fighting_stance_idle (anim), end_at -> base.
-    (anim,) = nodes.CharacterAnimationSelector().select(
-        manifest, tree.char, "", "fighting_stance_exit", "EAST"
+    (anim,) = nodes.AnimationSweepSelector().select(
+        manifest, tree.char, "target", True, "", "fighting_stance_exit", "EAST"
     )
     assert images.is_empty(anim["start_image"])  # empty sentinel, no crash
 
@@ -337,11 +389,40 @@ def test_character_creator_rejects_unknown_direction(manifest, tmp_path, monkeyp
         nodes.CharacterCreator().create(manifest, _img(), "cortex", "UP")
 
 
-def test_pose_selector_rejects_root_pose(manifest, tree, monkeypatch):
+def test_pose_sweep_selector_target_mode_can_force_a_root_pose(manifest, tree, monkeypatch):
+    # DESIGN CHANGE from the old CharacterPoseSelector, which rejected root poses
+    # (steering the user to the Character Creator instead). The unified selector's
+    # target mode is an explicit spot-fix tool that force-resolves "regardless of
+    # completeness" (per the sweep-loops design doc) with no carve-out for root
+    # poses — and _build_pose_bundle already knows how to pair a root pose with
+    # its manikin. So targeting ("base", "EAST") now succeeds instead of raising —
+    # PROVIDED the character has a persisted reference (seeded here); without one
+    # there is nothing to pair with the manikin, and the bundle builder now raises
+    # rather than silently emitting a blank sentinel (see the test right below).
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.pose("base", "EAST")
-    with pytest.raises(RuntimeError, match="root pose"):
-        nodes.CharacterPoseSelector().select(manifest, tree.char, "", "base", "EAST")
+    images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
+    images.save_image_png(_img(), resolve.reference_image_path(tree.root, tree.char))
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "target", True, False, "", "base", "EAST"
+    )
+    assert pose["_meta"]["pose"] == "base"
+    assert pose["_sweep"]["target"] == ("base", "EAST")
+    assert not images.is_empty(pose["source_image"])  # the persisted reference art
+
+
+def test_pose_sweep_selector_target_mode_root_pose_requires_reference(manifest, tree, monkeypatch):
+    # Without a persisted reference, a root-pose target must raise rather than
+    # silently bake a blank 1x1 sentinel into source_image (the old, footgun-prone
+    # behavior) — the character must exist first (Character Creator persists the
+    # reference art).
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST")
+    images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
+    with pytest.raises(RuntimeError, match="reference"):
+        nodes.PoseSweepSelector().select(
+            manifest, tree.char, "target", True, False, "", "base", "EAST"
+        )
 
 
 # --- reference persistence + CharacterReferenceLoader ----------------------- #
@@ -383,43 +464,44 @@ def test_reference_loader_requires_a_character(monkeypatch, tmp_path):
 
 # --- auto-advancing batch selectors ----------------------------------------- #
 
-def test_auto_pose_selector_emits_next_actionable_non_root_pose(manifest, tree, monkeypatch):
+def test_pose_sweep_selector_emits_next_actionable_non_root_pose(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     # base generated -> fighting_stance is the next actionable (non-root) pose.
     tree.pose("base", "EAST")
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
-    (pose,) = nodes.AutoPoseSelector().select(
-        manifest, tree.char, skip_mirrored=True, include_base=False
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "sweep", True, False, "", "", ""
     )
     assert pose["_meta"]["pose"] == "fighting_stance"
-    assert sorted(k for k in pose if k != "_meta") == nodes.POSE_OUTPUT_KEYS
+    assert pose["_sweep"]["mode"] == "sweep"
+    assert sorted(k for k in pose if not k.startswith("_")) == nodes.POSE_OUTPUT_KEYS
 
 
-def test_auto_pose_selector_raises_when_nothing_actionable(manifest, tree, monkeypatch):
+def test_pose_sweep_selector_raises_when_nothing_actionable(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()  # base is a root pose (excluded); nothing else actionable
     with pytest.raises(RuntimeError, match="no actionable poses"):
-        nodes.AutoPoseSelector().select(
-            manifest, tree.char, skip_mirrored=True, include_base=False
+        nodes.PoseSweepSelector().select(
+            manifest, tree.char, "sweep", True, False, "", "", ""
         )
 
 
-def test_auto_pose_selector_include_base_emits_root_with_manikin(manifest, tree, monkeypatch):
+def test_pose_sweep_selector_include_base_emits_root_with_manikin(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     # Character exists with a persisted reference, but no base direction rendered
     # yet: with include_base, base is the next actionable root pose and it comes
     # bundled with its manikin (2-reference edit).
     tree.character()
     images.save_image_png(_img(), resolve.reference_image_path(tree.root, tree.char))
-    (pose,) = nodes.AutoPoseSelector().select(
-        manifest, tree.char, skip_mirrored=True, include_base=True
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "sweep", True, True, "", "", ""
     )
     assert pose["_meta"]["pose"] == "base"
     assert not images.is_empty(pose["source_image"])   # the reference art
     assert not images.is_empty(pose["pose_reference"])  # the direction's manikin
 
 
-def test_auto_animation_selector_emits_next_actionable_animation(manifest, tree, monkeypatch):
+def test_animation_sweep_selector_emits_next_actionable_animation(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.pose("base", "EAST").pose("fighting_stance", "EAST")
     # fighting_stance is the I2V start anchor for fighting_stance_idle — write a
@@ -427,20 +509,23 @@ def test_auto_animation_selector_emits_next_actionable_animation(manifest, tree,
     images.save_image_png(
         _img(), resolve.pose_image_path(tree.root, tree.char, "fighting_stance", "EAST")
     )
-    (anim, remaining) = nodes.AutoAnimationSelector().select(
-        manifest, tree.char, skip_mirrored=True, category=""
+    # NOTE: the old AutoAnimationSelector returned (anim, remaining) — a 2-tuple
+    # with a REMAINING count. The unified selector drops REMAINING (the writer
+    # computes remaining work in a later task), so it returns a 1-tuple now.
+    (anim,) = nodes.AnimationSweepSelector().select(
+        manifest, tree.char, "sweep", True, "", "", ""
     )
     assert anim["_meta"]["animation"] == "fighting_stance_idle"
-    assert sorted(k for k in anim if k != "_meta") == nodes.ANIMATION_OUTPUT_KEYS
-    assert remaining >= 1
+    assert anim["_sweep"]["mode"] == "sweep"
+    assert sorted(k for k in anim if not k.startswith("_")) == nodes.ANIMATION_OUTPUT_KEYS
 
 
-def test_auto_animation_selector_raises_when_nothing_actionable(manifest, tree, monkeypatch):
+def test_animation_sweep_selector_raises_when_nothing_actionable(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
     with pytest.raises(RuntimeError, match="no actionable animations"):
-        nodes.AutoAnimationSelector().select(
-            manifest, tree.char, skip_mirrored=True, category=""
+        nodes.AnimationSweepSelector().select(
+            manifest, tree.char, "sweep", True, "", "", ""
         )
 
 
@@ -448,7 +533,9 @@ def test_pose_selector_sets_empty_pose_reference(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.pose("base", "EAST")
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
-    (pose,) = nodes.CharacterPoseSelector().select(manifest, tree.char, "", "fighting_stance", "EAST")
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "target", True, False, "", "fighting_stance", "EAST"
+    )
     assert images.is_empty(pose["pose_reference"])
 
 
@@ -496,9 +583,15 @@ def test_atlas_metadata_writer(tmp_path, monkeypatch):
 
 # --- CharacterAtlasBuilder -------------------------------------------------- #
 
-def test_auto_pose_selector_has_skip_mirrored_input():
-    req = nodes.AutoPoseSelector.INPUT_TYPES()["required"]
-    assert "skip_mirrored" in req
+def test_pose_sweep_selector_input_shape():
+    req = nodes.PoseSweepSelector.INPUT_TYPES()["required"]
+    assert list(req.keys()) == [
+        "manifest", "character", "mode", "skip_mirrored", "include_base",
+        "category", "pose", "direction",
+    ]
+    assert req["mode"] == (["sweep", "target"],)
+    assert req["skip_mirrored"] == ("BOOLEAN", {"default": True})
+    assert req["include_base"] == ("BOOLEAN", {"default": True})
 
 
 # --- AnimationSheetBuilder / AnimationFrames -------------------------------- #
@@ -548,10 +641,15 @@ def test_animation_frames_raises_when_unrendered(manifest, tree, monkeypatch):
 
 # --- CharacterIdentityAnchor ------------------------------------------------ #
 
-def test_auto_animation_selector_has_category_scope():
-    # ActionSetSelector was folded into AutoAnimationSelector as a `category` input.
-    req = nodes.AutoAnimationSelector.INPUT_TYPES()["required"]
-    assert "category" in req
+def test_animation_sweep_selector_input_shape():
+    # ActionSetSelector was folded into the animation selector as a `category`
+    # input (first via AutoAnimationSelector, now via the unified
+    # AnimationSweepSelector).
+    req = nodes.AnimationSweepSelector.INPUT_TYPES()["required"]
+    assert list(req.keys()) == [
+        "manifest", "character", "mode", "skip_mirrored",
+        "category", "animation", "direction",
+    ]
     assert not hasattr(nodes, "ActionSetSelector")
 
 

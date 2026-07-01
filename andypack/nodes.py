@@ -12,6 +12,16 @@ from andypack import api, atlas as _atlas_mod, images, io, manikins, resolve, sp
 from andypack.manifest import load_manifest
 from andypack.resolve import effective_manifest, resolve_animation, resolve_pose
 
+try:
+    # comfy_execution is only importable inside a running ComfyUI process.
+    # Guarded the same way andypack/server.py guards `from server import
+    # PromptServer`, so `python -c "import andypack..."`, ruff, and mypy stay
+    # green in CI (no ComfyUI installed there).
+    from comfy_execution.graph_utils import GraphBuilder, is_link
+except Exception:  # pragma: no cover - import-time guard outside ComfyUI
+    GraphBuilder = None  # type: ignore[assignment,misc]
+    is_link = None  # type: ignore[assignment]
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -39,21 +49,6 @@ def _mtime(path) -> float:
         return os.path.getmtime(path) if path else 0.0
     except OSError:
         return 0.0
-
-
-def _selector_fingerprint(resolved: dict, *image_keys: str) -> str:
-    """A change-token for a selector: its merged prompt_hash, selectability, and
-    the identity+mtime of each anchor image it consumes. A selector reads the
-    rendered tree, so without this ComfyUI would cache its first result and never
-    notice a dependency being (re)rendered or a prompt edit going stale."""
-    parts = [
-        resolved["meta"]["prompt_hash"],
-        str(resolved["selectable"]),
-    ]
-    for key in image_keys:
-        path = resolved.get(key)
-        parts.append(f"{path}:{_mtime(path)}")
-    return "|".join(parts)
 
 
 def _character_choices():
@@ -197,7 +192,7 @@ class CharacterCreator:
         return (pose,)
 
 
-def _build_pose_bundle(r: dict, root: str = "", character: str = "") -> dict:
+def _build_pose_bundle(r: dict, root: str = "", character: str = "", sweep=None) -> dict:
     """An ANIM_POSE bundle from a resolve_pose result.
 
     A **root** pose (``meta["from"]`` is None, e.g. ``base``) is a multi-reference
@@ -205,15 +200,23 @@ def _build_pose_bundle(r: dict, root: str = "", character: str = "") -> dict:
     = the bundled manikin for its direction — the same pairing Character Creator
     makes, so Auto Pose Selector can drive the base turnaround too. A **derived**
     pose re-poses its `from`-source (single reference); pose_reference stays the
-    empty sentinel."""
+    empty sentinel.
+
+    Raises if a root pose has no persisted reference — silently falling back to a
+    blank sentinel would let PoseEditConditioning bake a near-blank reference latent
+    with no error (the character must exist first; Character Creator persists the
+    reference)."""
     meta = r["meta"]
     if meta.get("from") is None:
         ref_path = resolve.reference_image_path(root, character) if character else ""
-        source = (
-            images.load_image_tensor(ref_path)
-            if ref_path and os.path.exists(ref_path)
-            else images.empty_image()
-        )
+        if not ref_path or not os.path.exists(ref_path):
+            raise RuntimeError(
+                f"_build_pose_bundle: {character!r} has no persisted reference "
+                f"image (expected {ref_path or '<no character>'}); re-run the "
+                "Character Creator with save_reference enabled, or supply the "
+                "reference art directly, before targeting a root pose"
+            )
+        source = images.load_image_tensor(ref_path)
         direction = meta.get("direction", "")
         pose_reference = (
             images.load_image_tensor(manikins.manikin_path(direction))
@@ -231,10 +234,11 @@ def _build_pose_bundle(r: dict, root: str = "", character: str = "") -> dict:
         "negative": r["negative"],
         "output_dir": r["output_dir"],
         "_meta": meta,
+        "_sweep": sweep or {},
     }
 
 
-def _build_animation_bundle(r: dict) -> dict:
+def _build_animation_bundle(r: dict, sweep=None) -> dict:
     """An ANIM_ANIMATION bundle from a resolve_animation result — start/end anchor
     images plus the wireable generation params (length/fps/width/height/shift)."""
     start_image = (
@@ -260,6 +264,7 @@ def _build_animation_bundle(r: dict) -> dict:
         "shift": float(meta["shift"]) if meta.get("shift") is not None else 0.0,
         "output_dir": r["output_dir"],
         "_meta": meta,
+        "_sweep": sweep or {},
     }
 
 
@@ -299,7 +304,20 @@ class CharacterReferenceLoader:
         return (images.load_image_tensor(path),)
 
 
-class CharacterPoseSelector:
+class PoseSweepSelector:
+    """Sweep or spot-fix the pose turnaround. mode=sweep emits the next actionable
+    (ready/stale) non-root pose in dependency order — drive it inside a Sweep Loop
+    to fill everything; queue the graph repeatedly and each run generates the next
+    pose until none remain (then it raises, the natural stop). mode=target force-
+    regenerates the named pose@direction (no completeness gate — the point is a
+    spot-fix), leaving all others alone.
+
+    With `include_base` on (sweep mode), root poses (base) are emitted too —
+    paired with the bundled manikin (a 2-reference edit), so a SINGLE turnaround
+    graph (Pose Sweep Selector → Pose Edit Conditioning → sampler → Pose Frame
+    Writer) can generate the whole turnaround, base + derived. The character must
+    exist first (run Character Creator once to persist its reference art)."""
+
     CATEGORY = "andypack/Pose"
     FUNCTION = "select"
     # One bundled POSE dict (unpack it with Unpack Pose) instead of loose outputs.
@@ -310,61 +328,115 @@ class CharacterPoseSelector:
     def INPUT_TYPES(cls):
         # character is a real combo of character folders; category/pose/direction
         # are STRING widgets the web extension turns into the cascading combos
-        # (category is a UI filter; the node resolves by pose + direction).
+        # (pose/direction only matter in target mode; category scopes the sweep).
         return {
             "required": {
                 "manifest": ("ANIM_MANIFEST",),
                 "character": (_character_choices(),),
+                "mode": (["sweep", "target"],),
+                "skip_mirrored": ("BOOLEAN", {"default": True}),
+                "include_base": ("BOOLEAN", {"default": True}),
                 "category": ("STRING", {"default": ""}),
                 "pose": ("STRING", {"default": ""}),
                 "direction": ("STRING", {"default": ""}),
-            }
+            },
+            "optional": {
+                # Wire Sweep Loop Open's flow token here (optional — the node
+                # works standalone outside a loop). Accepted and passed through
+                # unchanged; its only job is to place this selector (and
+                # everything downstream of it, transitively including the
+                # writer) on the Open->Close dependency path so Sweep Loop
+                # Close's graph walk captures the whole body as the loop.
+                "flow": ("SWEEP_FLOW",),
+            },
         }
 
     @classmethod
-    def IS_CHANGED(cls, manifest, character, category, pose, direction):
-        # Re-resolve so the cache reflects the rendered tree (deps generated /
-        # re-rendered, prompt edits going stale), not just the widget values.
-        if character in ("", _NO_CHARACTER) or not pose or not direction:
-            return float("nan")
-        root = _characters_root()
-        try:
-            eff = effective_manifest(manifest, root, character)
-            r = resolve_pose(eff, root, character, pose, direction)
-        except Exception:
-            return float("nan")
-        return _selector_fingerprint(r, "source_image")
+    def IS_CHANGED(cls, *a, **k):
+        # Disk-backed; re-read every execution — the sweep loop depends on this
+        # (it must re-run each iteration and always see the current tree state).
+        return float("nan")
 
-    def select(self, manifest, character, category, pose, direction):
+    @staticmethod
+    def _ctx(manifest, character, mode, skip_mirrored, include_base, category, pose, direction):
+        return {
+            "character": character, "kind": "pose", "mode": mode,
+            "exclude_root": not include_base, "category": category or None,
+            "skip_mirrored": skip_mirrored,
+            "target": (pose, direction) if mode == "target" else None,
+            # The writer takes no manifest input, but recomputing REMAINING
+            # post-write needs one — stash the already-computed effective
+            # manifest here (in-memory only; _sweep is never persisted).
+            "manifest": manifest,
+        }
+
+    def select(self, manifest, character, mode, skip_mirrored, include_base,
+               category, pose, direction, flow=None):
+        # `flow` is accepted only so this selector sits on the Sweep Loop
+        # Open->Close dependency path; its value is unused (ignored on purpose).
+        del flow
         if character in ("", _NO_CHARACTER):
-            raise RuntimeError("CharacterPoseSelector: select a character first")
-        if not pose or not direction:
-            raise RuntimeError("CharacterPoseSelector: pick a pose and a direction")
+            raise RuntimeError("PoseSweepSelector: select a character first")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
-        if pose not in manifest.get("poses", {}):
-            raise RuntimeError(
-                f"CharacterPoseSelector: unknown pose {pose!r} (stale or renamed) — pick a pose"
+        ctx = self._ctx(manifest, character, mode, skip_mirrored, include_base, category,
+                        pose, direction)
+        if mode == "target":
+            if not pose or not direction:
+                raise RuntimeError(
+                    "PoseSweepSelector: target mode needs a pose and a direction"
+                )
+            if pose not in manifest.get("poses", {}):
+                raise RuntimeError(
+                    f"PoseSweepSelector: unknown pose {pose!r} (stale or renamed) — pick a pose"
+                )
+            r = resolve_pose(manifest, root, character, pose, direction)
+            if not r["selectable"]:
+                raise RuntimeError(
+                    f"pose {pose}@{direction} not selectable: blocked_by={r['blocked_by']}"
+                )
+        else:
+            job = api.next_actionable(
+                manifest, root, character, "pose",
+                exclude_root=not include_base, category=category or None,
+                skip_mirrored=skip_mirrored,
             )
-        if not manifest["poses"][pose].get("from"):
-            raise RuntimeError(
-                f"CharacterPoseSelector: {pose!r} is a root pose — use the Character Creator node"
-            )
-        r = resolve_pose(manifest, root, character, pose, direction)
-        if not r["selectable"]:
-            raise RuntimeError(
-                f"pose {pose}@{direction} not selectable: blocked_by={r['blocked_by']}"
-            )
-        # Bundle the loose outputs into one POSE dict (see POSE_OUTPUT_KEYS). On a
-        # successful select the `from`-source is complete, so source_image is real.
-        return (_build_pose_bundle(r, root, character),)
+            if not job:
+                raise RuntimeError(
+                    "PoseSweepSelector: no actionable poses remain — every non-root pose "
+                    "is generated, blocked on an ungenerated dependency, or stale only "
+                    "because an upstream pose changed. Generate the base directions with "
+                    "the Character Creator first, and if a root pose is stale (its prompt "
+                    "changed) re-run the Character Creator to clear its descendants."
+                )
+            r = resolve_pose(manifest, root, character, job["id"], job["direction"])
+        # Bundle the loose outputs into one POSE dict (see POSE_OUTPUT_KEYS), stamped
+        # with sweep context so a later writer can recompute remaining work.
+        return (_build_pose_bundle(r, root, character, sweep=ctx),)
+
+
+def _sweep_remaining(bundle: dict) -> int:
+    """The count of cells still actionable after a write, for the sweep loop's
+    continue-signal. `target` mode (or any bundle with no `_sweep`, e.g. a
+    manually-wired single write) returns 0 so the loop runs exactly once;
+    `sweep` mode returns the live post-write count so the loop drains then
+    stops cleanly at 0. Must be recomputed after each write — dependency depth
+    means a write can unblock new cells the pre-write count didn't see."""
+    s = bundle.get("_sweep") or {}
+    if s.get("mode") != "sweep":
+        return 0
+    return api.remaining_actionable(
+        s["manifest"], _characters_root(), s["character"], s["kind"],
+        exclude_root=s.get("exclude_root", False),
+        category=s.get("category"), skip_mirrored=s.get("skip_mirrored", False),
+    )
 
 
 class PoseFrameWriter:
     CATEGORY = "andypack/Pose"
     FUNCTION = "write"
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("OUTPUT_DIR",)
+    RETURN_TYPES = ("STRING", "INT")
+    RETURN_NAMES = ("OUTPUT_DIR", "REMAINING")
     OUTPUT_NODE = True
 
     @classmethod
@@ -391,10 +463,22 @@ class PoseFrameWriter:
         images.save_image_png(image, png_path, mask=mask)
         sidecar = io.build_pose_sidecar(meta, created_utc=_utc_now(), has_alpha=has_alpha)
         io.atomic_write_json(sidecar_path, sidecar)
-        return (output_dir,)
+        return (output_dir, _sweep_remaining(pose))
 
 
-class CharacterAnimationSelector:
+class AnimationSweepSelector:
+    """Sweep or spot-fix animations. mode=sweep emits the next actionable
+    (ready/stale) animation in dependency order — drive it inside a Sweep Loop
+    to fill everything; queue the graph repeatedly and each run generates the
+    next clip until none remain (then it raises, the natural stop). mode=target
+    force-regenerates the named animation@direction (no completeness gate — the
+    point is a spot-fix), leaving all others alone.
+
+    Set `category` to scope the sweep to one manifest category (e.g.
+    "locomotion", "combat"); leave it empty to sweep all animations. Animations
+    have no root/base concept (that's a pose-only distinction), so unlike the
+    pose selector there is no `include_base` widget."""
+
     CATEGORY = "andypack/Animation"
     FUNCTION = "select"
     # One bundled ANIMATION dict (unpack it with Unpack Animation) instead of outputs.
@@ -403,58 +487,100 @@ class CharacterAnimationSelector:
 
     @classmethod
     def INPUT_TYPES(cls):
+        # character is a real combo of character folders; category/animation/direction
+        # are STRING widgets the web extension turns into the cascading combos
+        # (animation/direction only matter in target mode; category scopes the sweep).
         return {
             "required": {
                 "manifest": ("ANIM_MANIFEST",),
                 "character": (_character_choices(),),
+                "mode": (["sweep", "target"],),
+                "skip_mirrored": ("BOOLEAN", {"default": True}),
                 "category": ("STRING", {"default": ""}),
                 "animation": ("STRING", {"default": ""}),
                 "direction": ("STRING", {"default": ""}),
-            }
+            },
+            "optional": {
+                # Wire Sweep Loop Open's flow token here (optional — the node
+                # works standalone outside a loop). Accepted and passed through
+                # unchanged; its only job is to place this selector (and
+                # everything downstream of it, transitively including the
+                # writer) on the Open->Close dependency path so Sweep Loop
+                # Close's graph walk captures the whole body as the loop.
+                "flow": ("SWEEP_FLOW",),
+            },
         }
 
     @classmethod
-    def IS_CHANGED(cls, manifest, character, category, animation, direction):
-        # Re-resolve so the cache reflects the rendered tree (anchors generated /
-        # re-rendered, prompt edits going stale), not just the widget values.
-        if character in ("", _NO_CHARACTER) or not animation or not direction:
-            return float("nan")
-        root = _characters_root()
-        try:
-            eff = effective_manifest(manifest, root, character)
-            r = resolve_animation(eff, root, character, animation, direction)
-        except Exception:
-            return float("nan")
-        return _selector_fingerprint(r, "start_image", "end_image")
+    def IS_CHANGED(cls, *a, **k):
+        # Disk-backed; re-read every execution — the sweep loop depends on this
+        # (it must re-run each iteration and always see the current tree state).
+        return float("nan")
 
-    def select(self, manifest, character, category, animation, direction):
+    @staticmethod
+    def _ctx(manifest, character, mode, skip_mirrored, category, animation, direction):
+        return {
+            "character": character, "kind": "animation", "mode": mode,
+            "exclude_root": False, "category": category or None,
+            "skip_mirrored": skip_mirrored,
+            "target": (animation, direction) if mode == "target" else None,
+            # The writer takes no manifest input, but recomputing REMAINING
+            # post-write needs one — stash the already-computed effective
+            # manifest here (in-memory only; _sweep is never persisted).
+            "manifest": manifest,
+        }
+
+    def select(self, manifest, character, mode, skip_mirrored, category, animation, direction,
+               flow=None):
+        # `flow` is accepted only so this selector sits on the Sweep Loop
+        # Open->Close dependency path; its value is unused (ignored on purpose).
+        del flow
         if character in ("", _NO_CHARACTER):
-            raise RuntimeError("CharacterAnimationSelector: select a character first")
-        if not animation or not direction:
-            raise RuntimeError("CharacterAnimationSelector: pick an animation and a direction")
+            raise RuntimeError("AnimationSweepSelector: select a character first")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
-        if animation not in manifest.get("animations", {}):
-            raise RuntimeError(
-                f"CharacterAnimationSelector: unknown animation {animation!r} "
-                "(stale or renamed) — pick an animation"
+        ctx = self._ctx(manifest, character, mode, skip_mirrored, category, animation, direction)
+        if mode == "target":
+            if not animation or not direction:
+                raise RuntimeError(
+                    "AnimationSweepSelector: target mode needs an animation and a direction"
+                )
+            if animation not in manifest.get("animations", {}):
+                raise RuntimeError(
+                    f"AnimationSweepSelector: unknown animation {animation!r} "
+                    "(stale or renamed) — pick an animation"
+                )
+            r = resolve_animation(manifest, root, character, animation, direction)
+            if not r["selectable"]:
+                raise RuntimeError(
+                    f"animation {animation}@{direction} not selectable: blocked_by={r['blocked_by']}"
+                )
+        else:
+            job = api.next_actionable(
+                manifest, root, character, "animation",
+                category=category or None, skip_mirrored=skip_mirrored,
             )
-        r = resolve_animation(manifest, root, character, animation, direction)
-        if not r["selectable"]:
-            raise RuntimeError(
-                f"animation {animation}@{direction} not selectable: blocked_by={r['blocked_by']}"
-            )
-        # Bundle the loose outputs into one ANIMATION dict (see ANIMATION_OUTPUT_KEYS).
+            if not job:
+                scope = f" in category {category!r}" if category else ""
+                raise RuntimeError(
+                    f"AnimationSweepSelector: no actionable animations remain{scope} — "
+                    "every animation is generated, blocked on an ungenerated anchor "
+                    "pose, or stale only because an upstream pose/clip changed "
+                    "(regenerate that upstream node to clear its dependents)"
+                )
+            r = resolve_animation(manifest, root, character, job["id"], job["direction"])
+        # Bundle the loose outputs into one ANIMATION dict (see ANIMATION_OUTPUT_KEYS),
+        # stamped with sweep context so a later writer can recompute remaining work.
         # The wireable generation params (length/fps/width/height/shift) drive the
         # WanFirstLastFrameToVideo node + ModelSamplingSD3 directly.
-        return (_build_animation_bundle(r),)
+        return (_build_animation_bundle(r, sweep=ctx),)
 
 
 class AnimationFrameWriter:
     CATEGORY = "andypack/Animation"
     FUNCTION = "write"
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("OUTPUT_DIR",)
+    RETURN_TYPES = ("STRING", "INT")
+    RETURN_NAMES = ("OUTPUT_DIR", "REMAINING")
     OUTPUT_NODE = True
 
     @classmethod
@@ -524,7 +650,7 @@ class AnimationFrameWriter:
             has_alpha=has_alpha,
         )
         io.atomic_write_json(meta_path, full_meta)
-        return (output_dir,)
+        return (output_dir, _sweep_remaining(animation))
 
 
 # (key, output name) for each Unpack output, in slot order. The keys must cover
@@ -655,157 +781,6 @@ class CoverageReport:
         char = "" if character == _NO_CHARACTER else character
         data = api.coverage_report(manifest, _characters_root(), char)
         return (api.format_coverage_table(data), json.dumps(data, indent=2))
-
-
-class AutoPoseSelector:
-    """Auto-advancing batch selector: emit the NEXT actionable (ready/stale)
-    non-root pose in dependency order, as an ANIM_POSE. Wire it like the Character
-    Pose Selector (→ Unpack Pose → FLUX edit → Pose Frame Writer) and queue the
-    graph repeatedly — each run generates the next pose until none remain (then it
-    raises, the natural stop).
-
-    With `include_base` on, root poses (base) are emitted too — paired with the
-    bundled manikin (a 2-reference edit), so a SINGLE turnaround graph (Auto Pose
-    Selector → Pose Edit Conditioning → sampler → Pose Frame Writer) can generate
-    the whole turnaround, base + derived. The character must exist first (run
-    Character Creator once to persist its reference art). With `include_base` off
-    (default), base is skipped — use the Character Creator for it."""
-
-    CATEGORY = "andypack/Pose"
-    FUNCTION = "select"
-    RETURN_TYPES = ("ANIM_POSE",)
-    RETURN_NAMES = ("POSE",)
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "manifest": ("ANIM_MANIFEST",),
-                "character": (_character_choices(),),
-                "skip_mirrored": ("BOOLEAN", {"default": True}),
-                "include_base": ("BOOLEAN", {"default": False}),
-            }
-        }
-
-    @classmethod
-    def IS_CHANGED(cls, manifest, character, skip_mirrored, include_base):
-        # Re-run as the tree fills (the next job changes) or a prompt drifts.
-        if character in ("", _NO_CHARACTER):
-            return float("nan")
-        root = _characters_root()
-        try:
-            eff = effective_manifest(manifest, root, character)
-            job = api.next_actionable(
-                eff, root, character, "pose",
-                exclude_root=not include_base, skip_mirrored=skip_mirrored,
-            )
-            if not job:
-                return "none"
-            r = resolve_pose(eff, root, character, job["id"], job["direction"])
-        except Exception:
-            return float("nan")
-        return (
-            f"{job['id']}@{job['direction']}|skip_mirrored={skip_mirrored}|"
-            f"include_base={include_base}|"
-            + _selector_fingerprint(r, "source_image")
-        )
-
-    def select(self, manifest, character, skip_mirrored, include_base):
-        if character in ("", _NO_CHARACTER):
-            raise RuntimeError("AutoPoseSelector: select a character first")
-        root = _characters_root()
-        manifest = effective_manifest(manifest, root, character)
-        job = api.next_actionable(
-            manifest, root, character, "pose",
-            exclude_root=not include_base, skip_mirrored=skip_mirrored,
-        )
-        if not job:
-            raise RuntimeError(
-                "AutoPoseSelector: no actionable poses remain — every non-root pose "
-                "is generated, blocked on an ungenerated dependency, or stale only "
-                "because an upstream pose changed. Generate the base directions with "
-                "the Character Creator first, and if a root pose is stale (its prompt "
-                "changed) re-run the Character Creator to clear its descendants."
-            )
-        r = resolve_pose(manifest, root, character, job["id"], job["direction"])
-        return (_build_pose_bundle(r, root, character),)
-
-
-class AutoAnimationSelector:
-    """Auto-advancing batch selector: emit the NEXT actionable (ready/stale)
-    animation in dependency order, as an ANIM_ANIMATION. Wire it like the Character
-    Animation Selector (→ Unpack Animation → WanFirstLastFrameToVideo → Animation
-    Frame Writer) and queue the graph repeatedly — each run generates the next clip
-    until none remain (then it raises, the natural stop).
-
-    Set `category` to scope the sweep to one manifest category (e.g. "locomotion",
-    "combat"); leave it empty to sweep all animations."""
-
-    CATEGORY = "andypack/Animation"
-    FUNCTION = "select"
-    RETURN_TYPES = ("ANIM_ANIMATION", "INT")
-    RETURN_NAMES = ("ANIMATION", "REMAINING")
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "manifest": ("ANIM_MANIFEST",),
-                "character": (_character_choices(),),
-                "skip_mirrored": ("BOOLEAN", {"default": True}),
-                "category": ("STRING", {"default": ""}),
-            }
-        }
-
-    @classmethod
-    def IS_CHANGED(cls, manifest, character, skip_mirrored, category):
-        if character in ("", _NO_CHARACTER):
-            return float("nan")
-        root = _characters_root()
-        try:
-            eff = effective_manifest(manifest, root, character)
-            job = api.next_actionable(
-                eff, root, character, "animation",
-                skip_mirrored=skip_mirrored, category=category or None,
-            )
-            if not job:
-                return "none"
-            r = resolve_animation(eff, root, character, job["id"], job["direction"])
-        except Exception:
-            return float("nan")
-        return (
-            f"{job['id']}@{job['direction']}|skip_mirrored={skip_mirrored}|{category}|"
-            + _selector_fingerprint(r, "start_image", "end_image")
-        )
-
-    def select(self, manifest, character, skip_mirrored, category):
-        if character in ("", _NO_CHARACTER):
-            raise RuntimeError("AutoAnimationSelector: select a character first")
-        root = _characters_root()
-        manifest = effective_manifest(manifest, root, character)
-        cat = category or None
-        job = api.next_actionable(
-            manifest, root, character, "animation",
-            skip_mirrored=skip_mirrored, category=cat,
-        )
-        if not job:
-            scope = f" in category {category!r}" if cat else ""
-            raise RuntimeError(
-                f"AutoAnimationSelector: no actionable animations remain{scope} — every "
-                "animation is generated, blocked on an ungenerated anchor pose, or "
-                "stale only because an upstream pose/clip changed (regenerate that "
-                "upstream node to clear its dependents)"
-            )
-        # REMAINING: actionable animations still queued in scope (this one included).
-        queue = api.regen_queue(manifest, root, character)
-        animations = manifest.get("animations", {})
-        remaining = sum(
-            1 for item in queue
-            if item["kind"] == "animation"
-            and (cat is None or animations.get(item["id"], {}).get("category") == cat)
-        )
-        r = resolve_animation(manifest, root, character, job["id"], job["direction"])
-        return (_build_animation_bundle(r), remaining)
 
 
 class SpriteTrimPivot:
@@ -1283,17 +1258,153 @@ class AnimationFrames:
         return (frames, resolve.animation_fps(manifest, animation))
 
 
+class SweepLoopOpen:
+    """Marks the start of a one-press sweep loop and emits the SWEEP_FLOW token
+    that brackets it. Wire `flow` into the sweep body's selector (Pose Sweep
+    Selector / Animation Sweep Selector both take an optional `flow` input —
+    ignored, just passed through) so the whole body sits on the Open->Close
+    dependency path; Sweep Loop Close's graph walk needs that to find and
+    re-clone the body every iteration.
+
+    Unlike the validation spike (`SpikeLoopOpen`), this node carries NO fixed
+    iteration budget — the real loop's continue/stop signal is the writer's
+    live `REMAINING` output (recomputed off disk after every write), not a
+    Python-side counter. Open here is deliberately trivial: just a distinctive
+    flow-control token so nothing else can accidentally wire into that socket.
+    """
+
+    CATEGORY = "andypack/Loop"
+    FUNCTION = "open"
+    RETURN_TYPES = ("SWEEP_FLOW",)
+    RETURN_NAMES = ("flow",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {}}
+
+    def open(self):
+        return ({},)
+
+
+class SweepLoopClose:
+    """Closes a one-press sweep loop: while the writer's `remaining` is > 0,
+    clones the Open->Close subgraph (the loop body) and re-expands it so the
+    engine runs another iteration; at `remaining <= 0` it terminates (returns
+    a plain result with no `expand` key).
+
+    Mechanic ported verbatim (not re-derived) from the validated spike, before
+    it was deleted, and, before that, from ComfyUI 0.26.2's own reference loop
+    nodes (`tests/execution/testing_nodes/testing-pack/flow_control.py`
+    `TestWhileLoopClose`): `flow` arrives as a raw, unresolved
+    `[node_id, output_index]` link (`rawLink: True`) so `flow[0]` recovers the
+    Open node's id; `dynprompt`/`unique_id` (hidden) let this node walk the
+    CURRENT expanded graph backward from itself to find every dependency
+    (`_explore_dependencies`), then forward from Open through that dependency
+    set to collect just the loop body (`_collect_contained`); every contained
+    node (including this Close, renamed "Recurse") is cloned into a fresh
+    `GraphBuilder`, internal links rewired to the clones, and the whole thing
+    is returned as `{"result": ..., "expand": graph.finalize()}` so the engine
+    splices it in and runs it. See
+    docs/superpowers/notes/2026-07-01-loop-spike-findings.md for the full
+    contract, citations, and the spike file's original contents.
+
+    No rewiring of the cloned Open's inputs is needed (unlike the reference
+    `TestForLoopClose`, which injects a decremented counter into the clone):
+    Open here carries no per-iteration state at all (see SweepLoopOpen), and
+    `remaining` is recomputed fresh by the cloned writer, off disk, every
+    iteration — there is nothing to inject.
+    """
+
+    CATEGORY = "andypack/Loop"
+    FUNCTION = "close"
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("DONE",)
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "flow": ("SWEEP_FLOW", {"forceInput": True, "rawLink": True}),
+                "remaining": ("INT", {"forceInput": True}),
+            },
+            "hidden": {"dynprompt": "DYNPROMPT", "unique_id": "UNIQUE_ID"},
+        }
+
+    def _explore_dependencies(self, node_id, dynprompt, upstream) -> None:
+        node_info = dynprompt.get_node(node_id)
+        if "inputs" not in node_info:
+            return
+        for _key, value in node_info["inputs"].items():
+            if is_link(value):
+                parent_id = value[0]
+                if parent_id not in upstream:
+                    upstream[parent_id] = []
+                    self._explore_dependencies(parent_id, dynprompt, upstream)
+                upstream[parent_id].append(node_id)
+
+    def _collect_contained(self, node_id, upstream, contained) -> None:
+        if node_id not in upstream:
+            return
+        for child_id in upstream[node_id]:
+            if child_id not in contained:
+                contained[child_id] = True
+                self._collect_contained(child_id, upstream, contained)
+
+    def close(self, flow, remaining: int, dynprompt=None, unique_id=None):
+        if remaining <= 0:
+            return ("done",)
+
+        assert dynprompt is not None
+        assert unique_id is not None
+
+        # `flow` arrived as a rawLink: [open_node_id, output_index].
+        open_node_id = flow[0]
+
+        upstream: dict[str, list[str]] = {}
+        self._explore_dependencies(unique_id, dynprompt, upstream)
+
+        contained: dict[str, bool] = {}
+        self._collect_contained(open_node_id, upstream, contained)
+        contained[unique_id] = True
+        contained[open_node_id] = True
+
+        graph = GraphBuilder()
+        for node_id in contained:
+            original = dynprompt.get_node(node_id)
+            clone_id = "Recurse" if node_id == unique_id else node_id
+            node = graph.node(original["class_type"], clone_id)
+            node.set_override_display_id(node_id)
+        for node_id in contained:
+            original = dynprompt.get_node(node_id)
+            clone_id = "Recurse" if node_id == unique_id else node_id
+            node = graph.lookup_node(clone_id)
+            assert node is not None
+            for key, value in original["inputs"].items():
+                if is_link(value) and value[0] in contained:
+                    parent = graph.lookup_node(value[0])
+                    assert parent is not None
+                    node.set_input(key, parent.out(value[1]))
+                else:
+                    node.set_input(key, value)
+
+        my_clone = graph.lookup_node("Recurse")
+        assert my_clone is not None
+        return {
+            "result": ("looping",),
+            "expand": graph.finalize(),
+        }
+
+
 NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
     "CharacterReferenceLoader": CharacterReferenceLoader,
-    "CharacterPoseSelector": CharacterPoseSelector,
-    "AutoPoseSelector": AutoPoseSelector,
+    "PoseSweepSelector": PoseSweepSelector,
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
     "PoseEditConditioning": PoseEditConditioning,
-    "CharacterAnimationSelector": CharacterAnimationSelector,
-    "AutoAnimationSelector": AutoAnimationSelector,
+    "AnimationSweepSelector": AnimationSweepSelector,
     "AnimationFrameWriter": AnimationFrameWriter,
     "AnimationUnpack": AnimationUnpack,
     "AnimationFrames": AnimationFrames,
@@ -1304,18 +1415,18 @@ NODE_CLASS_MAPPINGS = {
     "AnimationSheetBuilder": AnimationSheetBuilder,
     "TurnaroundSheet": TurnaroundSheet,
     "AnimatedSpriteExport": AnimatedSpriteExport,
+    "SweepLoopOpen": SweepLoopOpen,
+    "SweepLoopClose": SweepLoopClose,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
     "CharacterCreator": "Character Creator",
     "CharacterReferenceLoader": "Character Reference Loader",
-    "CharacterPoseSelector": "Character Pose Selector",
-    "AutoPoseSelector": "Auto Pose Selector (next job)",
+    "PoseSweepSelector": "Pose Sweep Selector",
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",
     "PoseEditConditioning": "Pose Edit Conditioning",
-    "CharacterAnimationSelector": "Character Animation Selector",
-    "AutoAnimationSelector": "Auto Animation Selector (next job)",
+    "AnimationSweepSelector": "Animation Sweep Selector",
     "AnimationFrameWriter": "Animation Frame Writer",
     "AnimationUnpack": "Unpack Animation",
     "AnimationFrames": "Animation Frames (load)",
@@ -1326,4 +1437,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationSheetBuilder": "Animation Sheet Builder",
     "TurnaroundSheet": "Turnaround Sheet",
     "AnimatedSpriteExport": "Animated Sprite Export",
+    "SweepLoopOpen": "Sweep Loop Open",
+    "SweepLoopClose": "Sweep Loop Close",
 }

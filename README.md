@@ -162,17 +162,17 @@ The `*Unpack` nodes fan a bundle out into individual typed outputs.
 | **Animation Manifest Loader** | Load + validate `animations.json` (ref typing, cycle detection, `4n+1` length + `view_phrases` lint). Cached by file mtime. |
 | **Character Creator** | Write a character's `character.json` prompt layer and emit the base-pose job for one direction, pairing the reference image (`SOURCE_IMAGE`) with the bundled manikin (`POSE_REFERENCE`) for a multi-reference FLUX.2 edit. Optionally persists the reference art (`save_reference`, default on). |
 | **Character Reference Loader** | Reload a character's persisted reference art (`_reference.png`) as an IMAGE — feed it back into the Character Creator to re-generate base directions later. |
-| **Character Pose Selector** | Pick `character → category → pose → direction` (dynamic combos; root poses like `base` are excluded — use the Character Creator). Loads the `from`-source image, emits an `ANIM_POSE` bundle. Raises if the selection isn't selectable. |
-| **Auto Pose Selector** | Emit the *next* actionable (ready/stale) pose in dependency order. Hold-queue to batch-generate every pose; raises when none remain. `include_base=on` also emits root (base) poses paired with their manikin, so one graph (→ Pose Edit Conditioning) drives the whole turnaround. |
+| **Pose Sweep Selector** | `mode=sweep` emits the *next* actionable (ready/stale) pose in dependency order — drive it inside a Sweep Loop to batch-generate every pose in one Queue press; raises when none remain. `include_base=on` also emits root (base) poses paired with their manikin, so one graph (→ Pose Edit Conditioning) drives the whole turnaround. `mode=target` force-regenerates one named `pose@direction` as a spot-fix, ignoring the completeness gate. Takes an optional `flow` (`SWEEP_FLOW`) input to sit inside a Sweep Loop. |
 | **Unpack Pose** | Fan an `ANIM_POSE` out into `SOURCE_IMAGE`, `POSE_REFERENCE`, `POSITIVE_PROMPT`, `NEGATIVE_PROMPT`, `OUTPUT_DIR`, `HAS_POSE_REFERENCE` (and forward the bundle). |
-| **Pose Frame Writer** | Write `{dir}.png` then the `{dir}.json` sidecar last (atomic). Returns `OUTPUT_DIR`. |
-| **Character Animation Selector** | Pick an animation + direction. Emits an `ANIM_ANIMATION` bundle: `START_IMAGE`, `END_IMAGE`, `IS_FFLF`, merged prompts, plus `LENGTH`/`FPS`/`WIDTH`/`HEIGHT`/`SHIFT` that wire straight into `WanFirstLastFrameToVideo` + `ModelSamplingSD3`. |
-| **Auto Animation Selector** | Emit the *next* actionable animation in dependency order. Wire like the Animation Selector and hold-queue to batch-generate every clip; raises when none remain. |
+| **Pose Frame Writer** | Write `{dir}.png` then the `{dir}.json` sidecar last (atomic). Returns `(OUTPUT_DIR, REMAINING)` — `REMAINING` is the live post-write actionable count (sweep mode) or `0` (target mode), feeding a Sweep Loop's continue/stop signal. |
+| **Animation Sweep Selector** | `mode=sweep` emits the *next* actionable animation in dependency order — drive it inside a Sweep Loop to batch-generate every clip in one Queue press; raises when none remain. `category` scopes the sweep to one manifest category. `mode=target` force-regenerates one named `animation@direction` as a spot-fix. Emits an `ANIM_ANIMATION` bundle: `START_IMAGE`, `END_IMAGE`, `IS_FFLF`, merged prompts, plus `LENGTH`/`FPS`/`WIDTH`/`HEIGHT`/`SHIFT` that wire straight into `WanFirstLastFrameToVideo` + `ModelSamplingSD3`. Takes an optional `flow` (`SWEEP_FLOW`) input to sit inside a Sweep Loop. |
 | **Unpack Animation** | Fan an `ANIM_ANIMATION` out into its typed outputs (start/end image, prompts, is_fflf, length, fps, width, height, shift, output_dir). |
-| **Animation Frame Writer** | Write `frame_{:05d}.png`, trim the duplicate closing frame of a seamless loop, then write `meta.json` last (atomic). Records the sampler `seed`. Returns `OUTPUT_DIR`. |
+| **Animation Frame Writer** | Write `frame_{:05d}.png`, trim the duplicate closing frame of a seamless loop, then write `meta.json` last (atomic). Records the sampler `seed`. Returns `(OUTPUT_DIR, REMAINING)` — same sweep-loop continue/stop signal as Pose Frame Writer. |
 | **Animation Frames** | Load a rendered clip back as an IMAGE batch (+ fps) to reprocess (re-matte, re-pack, re-export) without re-sampling. |
 | **Pose Edit Conditioning** | One-node FLUX.2 pose-edit conditioning: text-encode + source (and manikin-when-present) reference latents + zeroed negative + empty latent → `(positive, negative, latent)`. |
 | **Coverage Report** | A status table over every `(entity, direction)` for a character: generated / ready / stale / blocked, plus a JSON blob. |
+| **Sweep Loop Open** | Marks the start of a one-press sweep loop; emits a `SWEEP_FLOW` token wired into the sweep body's selector (`flow`) and into Sweep Loop Close (`flow`). |
+| **Sweep Loop Close** | Closes the loop: while the writer's `REMAINING` (wired to `remaining`) is `> 0`, clones and re-expands the Open→Close body so the engine runs another iteration; terminates cleanly at `remaining <= 0`. |
 
 Most of this is also driveable from the **Andypack sidebar panel** (see below).
 
@@ -183,21 +183,27 @@ Most of this is also driveable from the **Andypack sidebar panel** (see below).
    pose) → **Unpack Pose** → FLUX.2 multi-reference edit (`SOURCE_IMAGE` first,
    `POSE_REFERENCE` second) → **Pose Frame Writer**. The reference art is
    persisted, so **Character Reference Loader** can re-supply it later.
-3. **Character Pose Selector** → **Unpack Pose** → FLUX.2 edit → **Pose Frame
-   Writer**. Walk poses in dependency order (poses that build on `base`).
-4. **Character Animation Selector** → **Unpack Animation** →
-   **WanFirstLastFrameToVideo** (`START_IMAGE`→`start_image`,
+3. **Pose Sweep Selector** (`mode=target`, one pose/direction) → **Unpack Pose**
+   → FLUX.2 edit → **Pose Frame Writer**. Walk poses in dependency order (poses
+   that build on `base`).
+4. **Animation Sweep Selector** (`mode=target`, one animation/direction) →
+   **Unpack Animation** → **WanFirstLastFrameToVideo** (`START_IMAGE`→`start_image`,
    `END_IMAGE`→`end_image`) → KSampler → VAE Decode → **Animation Frame Writer**.
 
 See [Graph wiring](#graph-wiring) for the exact FLUX.2 and Wan node connections.
 
-**Batch generation.** To work through a whole character without hand-picking every
-`(entity, direction)`, swap the Character Pose/Animation Selector for the **Auto
-Pose Selector** / **Auto Animation Selector**: each picks the next actionable job
-in dependency order, so you can hold the queue (Ctrl+Enter repeatedly, or a queue
-count) and burn through all poses, then all animations. They raise when nothing is
-left — that error is the "all done" signal. Generate the 8 `base` directions with
-the Character Creator first (those need the reference + manikin).
+**Batch generation (one-press sweep loop).** To work through a whole character
+without hand-picking every `(entity, direction)` or re-queueing per cell, set the
+**Pose Sweep Selector** / **Animation Sweep Selector**'s `mode` to `sweep` and wrap
+the body (selector → … → writer) in **Sweep Loop Open** / **Sweep Loop Close**:
+wire `Sweep Loop Open.flow` into the selector's optional `flow` input AND into
+`Sweep Loop Close.flow`, and the writer's `REMAINING` output into
+`Sweep Loop Close.remaining`. Each pick still picks the next actionable job in
+dependency order, but now a single Queue press re-runs the body until nothing
+remains, instead of requiring a manual re-queue per cell (see
+`examples/workflows/1b_turnaround_batch.json` / `2_animate_fflf.json`). Generate
+the 8 `base` directions with the Character Creator first (those need the
+reference + manikin).
 
 The web extension repopulates the combos with live status glyphs after each
 writer run, so newly-unlocked nodes appear without a manual refresh:
@@ -338,11 +344,15 @@ Or the manual chain when you want per-frame control:
 - **Pose Edit Conditioning** — collapses the whole FLUX.2 pose-edit conditioning
   into one node: text-encodes the pose prompt, attaches the source image as a
   reference latent (and the manikin too when the pose carries one — a base pose),
-  and outputs `(positive, negative, latent)`. With `AutoPoseSelector`'s
+  and outputs `(positive, negative, latent)`. With `PoseSweepSelector`'s
   `include_base`, a single turnaround graph handles base (2-ref) + derived (1-ref)
   poses — no separate workflows.
-- **Auto Animation Selector — `category` scope** — restrict the batch sweep to one
-  manifest category (e.g. `locomotion`, `combat`); leave empty for all.
+- **Pose Sweep Selector / Animation Sweep Selector — `mode` + `category`** —
+  `mode=sweep` emits the next actionable pose/animation in dependency order
+  (drive it inside a Sweep Loop for one-press batch fill); `mode=target` force-
+  regenerates one named pose@direction or animation@direction as a spot-fix.
+  `category` scopes the sweep to one manifest category (e.g. `locomotion`,
+  `combat`); leave empty for all.
 
 > The node set was culled (2026-06-30) to the pipeline-essential **20 nodes** for
 > clarity; niche/unused nodes (manikin control, variant/color batchers, boomerang,

@@ -648,6 +648,12 @@
      "type": "STRING",
      "links": [],
      "slot_index": 0
+    },
+    {
+     "name": "REMAINING",
+     "type": "INT",
+     "links": [],
+     "slot_index": 1
     }
    ],
    "properties": {

@@ -48,19 +48,31 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
   removed nodes may still linger in `sprites.py`/`api.py` (not exposed).
   - Manifest: Animation Manifest Loader.
   - Character: Character Creator, Character Reference Loader.
-  - Pose: Character Pose Selector, Auto Pose Selector (`include_base` drives the
-    whole turnaround — base is manikin-paired), Pose Frame Writer, Unpack Pose
-    (has `HAS_POSE_REFERENCE`), **Pose Edit Conditioning** (one node = FLUX edit
-    conditioning: text encode + source reference latent + manikin latent when
-    present + zeroed negative + empty latent).
-  - Animation: Character Animation Selector, Auto Animation Selector (`category`
-    scope), Animation Frame Writer, Unpack Animation, **Animation Frames** (load a
-    rendered clip back as an IMAGE batch).
+  - Pose: **Pose Sweep Selector** (unifies the old Character/Auto Pose Selectors;
+    `mode: sweep|target` — sweep emits the next actionable pose in dependency
+    order, `include_base` drives the whole turnaround with base manikin-paired;
+    target force-regenerates one named pose@direction as a spot-fix), Pose Frame
+    Writer (returns `(OUTPUT_DIR, REMAINING)` — `REMAINING` is the sweep loop's
+    continue/stop signal), Unpack Pose (has `HAS_POSE_REFERENCE`), **Pose Edit
+    Conditioning** (one node = FLUX edit conditioning: text encode + source
+    reference latent + manikin latent when present + zeroed negative + empty
+    latent).
+  - Animation: **Animation Sweep Selector** (unifies the old Character/Auto
+    Animation Selectors; `mode: sweep|target`, `category` scope), Animation Frame
+    Writer (returns `(OUTPUT_DIR, REMAINING)`, same sweep-loop signal), Unpack
+    Animation, **Animation Frames** (load a rendered clip back as an IMAGE batch).
   - Diagnostics: Coverage Report, Turnaround Sheet.
   - Sprite: Sprite Trim & Pivot, Spritesheet Packer, **Animation Sheet Builder**
     (full clip → rows=directions × cols=frames + per-direction tagged atlas: the
     Stage-3 packer).
   - Export: Atlas Metadata Writer, Animated Sprite Export.
+  - **Loop**: Sweep Loop Open, Sweep Loop Close — the one-press sweep bracket.
+    Open emits a `SWEEP_FLOW` token wired into the sweep selector's optional
+    `flow` input and into Close's `flow`; the body's writer's `REMAINING` output
+    wires into Close's `remaining`. While `remaining > 0`, Close clones and
+    re-expands the Open→Close body so the engine runs another iteration;
+    terminates cleanly (no `expand` key) at `remaining <= 0`. Keyed on the
+    writer's post-write `REMAINING`, not a fixed iteration count.
 - `web/anim_coord.js` — frontend extension for dynamic character-scoped combos
   (pure-Python `INPUT_TYPES` can't populate these; it needs the server routes).
   The character combo is repopulated from `/anim_coord/characters` on node add /
