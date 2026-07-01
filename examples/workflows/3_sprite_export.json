@@ -153,7 +153,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "STEP 4. Animation Sheet Builder packs a full clip (rows=directions, cols=frames) into a game sheet + a tagged atlas; Atlas Metadata Writer emits the sheet PNG + Aseprite JSON (one animation per direction) to output/atlas/. Change `animation` per clip."
+    "STEP 4. Animation Sheet Builder packs a full clip (rows=directions, cols=frames) into a game sheet + a tagged atlas; Atlas Metadata Writer emits the sheet PNG + Aseprite JSON (one animation per direction) to output/atlas/. Change `animation` per clip. This graph is per-clip by design (one animation at a time); a Sweep Loop Open/Close variant that iterates every animation and packs all clips in one press is possible (same bracket pattern as 1b/2) but not built here — left as a future workflow if batch export is needed."
    ]
   }
  ],

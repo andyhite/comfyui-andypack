@@ -1,6 +1,6 @@
 {
  "last_node_id": 99,
- "last_link_id": 42,
+ "last_link_id": 45,
  "nodes": [
   {
    "id": 1,
@@ -36,14 +36,14 @@
   },
   {
    "id": 30,
-   "type": "AutoAnimationSelector",
+   "type": "AnimationSweepSelector",
    "pos": [
     420,
     40
    ],
    "size": [
     320,
-    200
+    260
    ],
    "flags": {},
    "order": 30,
@@ -53,6 +53,11 @@
      "name": "manifest",
      "type": "ANIM_MANIFEST",
      "link": 1
+    },
+    {
+     "name": "flow",
+     "type": "SWEEP_FLOW",
+     "link": 43
     }
    ],
    "outputs": [
@@ -63,22 +68,89 @@
       2
      ],
      "slot_index": 0
-    },
-    {
-     "name": "REMAINING",
-     "type": "INT",
-     "links": [],
-     "slot_index": 1
     }
    ],
    "properties": {
-    "Node name for S&R": "AutoAnimationSelector"
+    "Node name for S&R": "AnimationSweepSelector"
    },
    "widgets_values": [
     "ranger",
+    "sweep",
     true,
+    "",
+    "",
     ""
    ]
+  },
+  {
+   "id": 80,
+   "type": "SweepLoopOpen",
+   "pos": [
+    40,
+    1760
+   ],
+   "size": [
+    320,
+    60
+   ],
+   "flags": {},
+   "order": 80,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "flow",
+     "type": "SWEEP_FLOW",
+     "links": [
+      43,
+      44
+     ],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SweepLoopOpen"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 81,
+   "type": "SweepLoopClose",
+   "pos": [
+    420,
+    1760
+   ],
+   "size": [
+    320,
+    80
+   ],
+   "flags": {},
+   "order": 81,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "flow",
+     "type": "SWEEP_FLOW",
+     "link": 44
+    },
+    {
+     "name": "remaining",
+     "type": "INT",
+     "link": 45
+    }
+   ],
+   "outputs": [
+    {
+     "name": "DONE",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SweepLoopClose"
+   },
+   "widgets_values": []
   },
   {
    "id": 31,
@@ -1156,6 +1228,14 @@
      "type": "STRING",
      "links": [],
      "slot_index": 0
+    },
+    {
+     "name": "REMAINING",
+     "type": "INT",
+     "links": [
+      45
+     ],
+     "slot_index": 1
     }
    ],
    "properties": {
@@ -1183,7 +1263,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "STEP 3. WAN 2.2 FFLF (dual hi/lo + lightx2v 4-step + pixel-animate LoRAs) via PainterFLF2V, dual-pass ddim. BiRefNet (invert_output=on) + Join Image with Alpha bake a transparent cutout, written as RGBA. QUEUE repeatedly. Requires Comfyui-PainterFLF2V + comfyui-rmbg."
+    "STEP 3. One Queue press fills every clip: Sweep Loop Open/Close wrap Animation Sweep Selector (mode=sweep) → dual hi/lo WAN 2.2 (+ lightx2v 4-step + pixel-animate LoRAs) via PainterFLF2V, dual-pass ddim → BiRefNet (invert_output=on) + Join Image with Alpha (transparent cutout, written as RGBA) → Animation Frame Writer, re-running the body off the writer's REMAINING count until every animation is rendered, then it stops cleanly. Set mode=target + an animation/direction to spot-fix one clip instead (runs exactly once). Requires Comfyui-PainterFLF2V + comfyui-rmbg."
    ]
   }
  ],
@@ -1523,6 +1603,30 @@
    72,
    1,
    "IMAGE"
+  ],
+  [
+   43,
+   80,
+   0,
+   30,
+   1,
+   "SWEEP_FLOW"
+  ],
+  [
+   44,
+   80,
+   0,
+   81,
+   0,
+   "SWEEP_FLOW"
+  ],
+  [
+   45,
+   72,
+   1,
+   81,
+   1,
+   "INT"
   ]
  ],
  "groups": [],

@@ -51,21 +51,6 @@ def _mtime(path) -> float:
         return 0.0
 
 
-def _selector_fingerprint(resolved: dict, *image_keys: str) -> str:
-    """A change-token for a selector: its merged prompt_hash, selectability, and
-    the identity+mtime of each anchor image it consumes. A selector reads the
-    rendered tree, so without this ComfyUI would cache its first result and never
-    notice a dependency being (re)rendered or a prompt edit going stale."""
-    parts = [
-        resolved["meta"]["prompt_hash"],
-        str(resolved["selectable"]),
-    ]
-    for key in image_keys:
-        path = resolved.get(key)
-        parts.append(f"{path}:{_mtime(path)}")
-    return "|".join(parts)
-
-
 def _character_choices():
     """Combo choices for a character dropdown: a placeholder + the character folders
     in the characters dir. Uses the same character detection as the `/characters`
@@ -1307,10 +1292,9 @@ class SweepLoopClose:
     engine runs another iteration; at `remaining <= 0` it terminates (returns
     a plain result with no `expand` key).
 
-    Mechanic ported verbatim (not re-derived) from the validated spike
-    (`andypack/_spike_loop.py`, deleted once this landed) and, before that,
-    from ComfyUI 0.26.2's own reference loop nodes
-    (`tests/execution/testing_nodes/testing-pack/flow_control.py`
+    Mechanic ported verbatim (not re-derived) from the validated spike, before
+    it was deleted, and, before that, from ComfyUI 0.26.2's own reference loop
+    nodes (`tests/execution/testing_nodes/testing-pack/flow_control.py`
     `TestWhileLoopClose`): `flow` arrives as a raw, unresolved
     `[node_id, output_index]` link (`rawLink: True`) so `flow[0]` recovers the
     Open node's id; `dynprompt`/`unique_id` (hidden) let this node walk the
@@ -1322,7 +1306,7 @@ class SweepLoopClose:
     is returned as `{"result": ..., "expand": graph.finalize()}` so the engine
     splices it in and runs it. See
     docs/superpowers/notes/2026-07-01-loop-spike-findings.md for the full
-    contract and citations.
+    contract, citations, and the spike file's original contents.
 
     No rewiring of the cloned Open's inputs is needed (unlike the reference
     `TestForLoopClose`, which injects a decremented counter into the clone):
