@@ -170,12 +170,9 @@ The `*Unpack` nodes fan a bundle out into individual typed outputs.
 | **Auto Animation Selector** | Emit the *next* actionable animation in dependency order. Wire like the Animation Selector and hold-queue to batch-generate every clip; raises when none remain. |
 | **Unpack Animation** | Fan an `ANIM_ANIMATION` out into its typed outputs (start/end image, prompts, is_fflf, length, fps, width, height, shift, output_dir). |
 | **Animation Frame Writer** | Write `frame_{:05d}.png`, trim the duplicate closing frame of a seamless loop, then write `meta.json` last (atomic). Records the sampler `seed`. Returns `OUTPUT_DIR`. |
-| **Mirror Frame Writer** | Synthesize a `mirror_map` direction (e.g. WEST from EAST) by horizontally flipping the already-rendered payload — no sampling. Symmetric designs only. |
-| **Animation Playback** | Play a rendered clip at the manifest fps, chaining its `start_from`/`end_at` deps one level; shows an in-node animated preview and outputs the assembled frames + fps. |
+| **Animation Frames** | Load a rendered clip back as an IMAGE batch (+ fps) to reprocess (re-matte, re-pack, re-export) without re-sampling. |
+| **Pose Edit Conditioning** | One-node FLUX.2 pose-edit conditioning: text-encode + source (and manikin-when-present) reference latents + zeroed negative + empty latent → `(positive, negative, latent)`. |
 | **Coverage Report** | A status table over every `(entity, direction)` for a character: generated / ready / stale / blocked, plus a JSON blob. |
-| **Prompt Report** | Every `(entity, direction)`'s fully merged positive/negative — the exact cascade a sampler would receive. |
-| **Regen Queue** | The selectable-now (ready/stale) cells in dependency order — a work list for batch regeneration. |
-| **Manifest Lint** | Surface non-fatal manifest findings (Wan-unfriendly lengths, directions outside the canonical list, missing `view_phrases`). |
 
 Most of this is also driveable from the **Andypack sidebar panel** (see below).
 
@@ -332,37 +329,12 @@ Or the manual chain when you want per-frame control:
    duration to the engine format of your choice.
 5. **Animated Sprite Export** — GIF/APNG/WebP preview of a completed clip.
 
-### Character Atlas Builder
-
-A **turnaround** sheet: one representative frame per direction (the first frame for
-animations), composited into a single direction-organized atlas — a quick
-character overview. For a full playable animation sheet (all frames × directions),
-use **Animation Sheet Builder** above.
-
-### Palette Quantize & Lock
-
-For pixel-art workflows: **Palette Quantize & Lock** reduces each frame to a
-fixed color palette and locks it across all 8 directions so AI color drift doesn't
-produce per-direction inconsistencies. Apply after background removal and before
-sprite packing.
-
-### Diagnostics: turnaround, identity, state machine
+### Diagnostics & conditioning helpers
 
 - **Turnaround Sheet** — composites all rendered directions for a pose side-by-side
-  as an unlabeled contact sheet. Use it to catch drift between directions before
-  packing.
-- **Character Identity Anchor** — re-asserts the character's reference image at a
-  point in the graph, useful for multi-stage pipelines where the reference might
-  otherwise go stale.
-- **State Machine Report** — summarizes the animation dependency graph as a state
-  machine table (states, transitions, loop flags) for engine import planning.
-
-### Render-economy nodes
-
-- **Manikin Pose Control** — select and configure the bundled per-direction manikin
-  reference image from within the graph rather than hard-coding a file path.
-- **Variant Layer Composer** — layer a colour/outfit variant prompt on top of a
-  base pose for batch rendering color variants without re-authoring the full manifest.
+  as a contact sheet. Use it to catch drift between directions before packing.
+- **Coverage Report** — a status table over every (entity, direction): generated /
+  ready / stale / blocked. The at-a-glance "what's left to render."
 - **Pose Edit Conditioning** — collapses the whole FLUX.2 pose-edit conditioning
   into one node: text-encodes the pose prompt, attaches the source image as a
   reference latent (and the manikin too when the pose carries one — a base pose),
@@ -370,22 +342,12 @@ sprite packing.
   `include_base`, a single turnaround graph handles base (2-ref) + derived (1-ref)
   poses — no separate workflows.
 - **Auto Animation Selector — `category` scope** — restrict the batch sweep to one
-  manifest category (e.g. `locomotion`, `combat`); leave empty for all. (This
-  replaced the former standalone Action Set Selector.)
-- **Boomerang Loop Writer** — synthesizes a seamless loop from a one-way A→B clip
-  by appending the reversed interior (ping-pong). `drop_turnaround=True` (default)
-  is stutter-free; `drop_turnaround=False` includes both extremes and a naive player
-  should drop the duplicate final frame.
-- **Tween Clip Provider** — supplies a short interpolated bridge clip between two
-  key poses, useful for generating transition animations without a full Wan run.
-- **Frame Timing Normalizer** — resamples a clip to a target frame count or fps,
-  normalizing timing before packing.
-- **Color Variant Batcher** — repeats a clip render with per-variant palette
-  overrides to produce color/outfit variants in a single queue run.
-- **Mirror Frame Writer** (existing) — synthesizes a `mirror_map` direction (e.g.
-  WEST from EAST) by flipping rendered frames. The `skip_mirrored` flag on
-  Auto Pose/Animation Selector skips directions that are already covered by a mirror
-  so the batch generator never double-renders them.
+  manifest category (e.g. `locomotion`, `combat`); leave empty for all.
+
+> The node set was culled (2026-06-30) to the pipeline-essential **20 nodes** for
+> clarity; niche/unused nodes (manikin control, variant/color batchers, boomerang,
+> tween, mirror, extra reports, palette lock, the one-frame Character Atlas Builder)
+> were removed in favor of the core create → turnaround → animate → sheet path.
 
 ---
 

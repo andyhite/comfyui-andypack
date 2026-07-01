@@ -42,24 +42,25 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
   palette quantize & lock. No ComfyUI/torch side effects beyond tensor I/O.
 - `atlas.py` — pure-stdlib engine-format serializers (JSON/XML atlas metadata).
   No ComfyUI/torch imports (keep it so).
-- `nodes.py` — the ComfyUI node classes + mappings (35 nodes), grouped into
-  `andypack/<Manifest|Character|Pose|Animation|Diagnostics|Sprite|Export>` categories.
-  Game-asset / pipeline nodes beyond the original animation-coordinator set:
-  - Sprite: Sprite Trim & Pivot, Spritesheet Packer, Character Atlas Builder
-    (one frame per direction — a turnaround preview), **Animation Sheet Builder**
-    (full clip: rows=directions, cols=frames, tagged atlas — the Stage-3 packer),
-    Palette Quantize & Lock.
+- `nodes.py` — the ComfyUI node classes + mappings (**20 focused nodes**), grouped
+  into `andypack/<Manifest|Character|Pose|Animation|Diagnostics|Sprite|Export>`.
+  The pack was culled to the pipeline-essential set (2026-06-30); pure helpers for
+  removed nodes may still linger in `sprites.py`/`api.py` (not exposed).
+  - Manifest: Animation Manifest Loader.
+  - Character: Character Creator, Character Reference Loader.
+  - Pose: Character Pose Selector, Auto Pose Selector (`include_base` drives the
+    whole turnaround — base is manikin-paired), Pose Frame Writer, Unpack Pose
+    (has `HAS_POSE_REFERENCE`), **Pose Edit Conditioning** (one node = FLUX edit
+    conditioning: text encode + source reference latent + manikin latent when
+    present + zeroed negative + empty latent).
+  - Animation: Character Animation Selector, Auto Animation Selector (`category`
+    scope), Animation Frame Writer, Unpack Animation, **Animation Frames** (load a
+    rendered clip back as an IMAGE batch).
+  - Diagnostics: Coverage Report, Turnaround Sheet.
+  - Sprite: Sprite Trim & Pivot, Spritesheet Packer, **Animation Sheet Builder**
+    (full clip → rows=directions × cols=frames + per-direction tagged atlas: the
+    Stage-3 packer).
   - Export: Atlas Metadata Writer, Animated Sprite Export.
-  - Pose: Manikin Pose Control, Variant Layer Composer, **Pose Edit Conditioning**
-    (one node = FLUX edit conditioning: text encode + reference latents for source
-    and, when present, manikin + zeroed negative + empty latent).
-  - Character: Character Identity Anchor.
-  - Animation: Boomerang Loop Writer, Tween Clip Provider, Frame Timing Normalizer,
-    Color Variant Batcher, **Animation Frames** (load a rendered clip back as an
-    IMAGE batch). `AutoAnimationSelector` has a `category` scope (this absorbed the
-    former Action Set Selector, now removed); `AutoPoseSelector` has `include_base`
-    so a single turnaround graph drives base (manikin-paired) + derived poses.
-  - Diagnostics: State Machine Report, Turnaround Sheet.
 - `web/anim_coord.js` — frontend extension for dynamic character-scoped combos
   (pure-Python `INPUT_TYPES` can't populate these; it needs the server routes).
   The character combo is repopulated from `/anim_coord/characters` on node add /

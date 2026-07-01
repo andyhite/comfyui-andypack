@@ -159,14 +159,12 @@ def _producer_atlases() -> dict:
         [("EAST", [torch.ones((1, 4, 4, 4))] * 2), ("SOUTH", [torch.ones((1, 4, 4, 4))])],
         fps=16,
     )
-    # CharacterAtlasBuilder merges pack_sheet's atlas with direction context.
-    a_char = {**a_flat, "directions": ["EAST", "SOUTH"], "layout": "grid"}
-    return {"pack_sheet": a_flat, "pack_direction_rows": a_rows, "character_atlas": a_char}
+    return {"pack_sheet": a_flat, "pack_direction_rows": a_rows}
 
 
 def test_every_producer_serializes_in_every_format() -> None:
-    # Guards the builder→serializer contract (the CharacterAtlasBuilder KeyError:
-    # 'sheet_size' regression): every producer's atlas must serialize in every format.
+    # Guards the producer→serializer contract: every atlas a producer emits must
+    # serialize in every format (every producer carries sheet_size + frames).
     for producer, a in _producer_atlases().items():
         for fmt in atlas._FMT_MAP:
             text, ext = atlas.serialize(a, "clip", fmt)
