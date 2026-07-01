@@ -15,10 +15,10 @@ def test_animation_anchors_chain_and_drop_action_boundaries(manifest, tree):
     prepend, action, append = segs
     assert prepend["dir"] == idle_dir and prepend["repeat"] == 1
     assert append["dir"] == idle_dir
-    # punch returns to its start state (idle->idle) -> loops N; its boundary frames
-    # duplicate the neighbour animation frames, so they're dropped.
+    # punch's anchor frames differ (idle.last != idle.first) -> not loopable;
+    # its boundary frames duplicate the neighbour animation frames, so they're dropped.
     assert action["dir"] == animation_frame_dir(root, char, "punch", "EAST")
-    assert action["repeat"] == 3
+    assert action["repeat"] == 1
     assert action["drop_first"] is True and action["drop_last"] is True
 
 
@@ -47,5 +47,5 @@ def test_unrendered_anchors_are_skipped_but_loops_still_apply(manifest, tree):
 
     assert [s["kind"] for s in segs] == ["anim"]  # no prepend/append
     (action,) = segs
-    assert action["repeat"] == 3  # loopability is structural, not dep-gated
+    assert action["repeat"] == 1  # unrendered anchors -> start_anchor=None -> not loopable
     assert action["drop_first"] is False and action["drop_last"] is False

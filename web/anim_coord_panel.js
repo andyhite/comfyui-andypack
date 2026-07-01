@@ -162,8 +162,21 @@ function charactersSection() {
   const newName = h("input", { style: fieldStyle, placeholder: "new character name" });
   const editorWrap = h("div", { style: { marginTop: "10px", display: "none" } });
   const editTitle = h("div", { style: { fontWeight: "600", fontSize: "12px", margin: "4px 0" } });
+  const thumbImg = h("img", {
+    style: {
+      maxWidth: "100%", maxHeight: "120px", objectFit: "contain",
+      display: "none", margin: "6px 0", borderRadius: "4px",
+    },
+  });
   const pos = h("textarea", { style: { ...fieldStyle, height: "90px", resize: "vertical" } });
   const neg = h("textarea", { style: { ...fieldStyle, height: "60px", resize: "vertical" } });
+  const overlayEditor = h("textarea", {
+    style: { ...fieldStyle, height: "120px", resize: "vertical" },
+    spellcheck: "false",
+  });
+  const overlayStatus = h("div", {
+    style: { fontSize: "11px", color: "#e66", minHeight: "14px", marginTop: "2px" },
+  });
   let current = null;
 
   async function refresh() {
@@ -184,7 +197,26 @@ function charactersSection() {
     editTitle.textContent = `Editing: ${name}`;
     pos.value = layer.positive_prompt || "";
     neg.value = layer.negative_prompt || "";
+    // Populate overlay editor with poses/animations subset of the layer.
+    const overlayData = {};
+    if (layer.poses) overlayData.poses = layer.poses;
+    if (layer.animations) overlayData.animations = layer.animations;
+    overlayEditor.value = Object.keys(overlayData).length
+      ? JSON.stringify(overlayData, null, 2)
+      : "";
+    overlayStatus.textContent = "";
     editorWrap.style.display = "block";
+    // Fetch reference thumbnail; show on success, hide on 404/error.
+    thumbImg.style.display = "none";
+    const thumbUrl = `/anim_coord/thumb?character=${enc(name)}&kind=reference&id=&direction=`;
+    api.fetchApi(thumbUrl).then(async (res) => {
+      if (!res.ok) return;
+      const tdata = await res.json().catch(() => ({}));
+      if (tdata.data_uri) {
+        thumbImg.src = tdata.data_uri;
+        thumbImg.style.display = "block";
+      }
+    }).catch((e) => console.warn(TAG, "reference thumb fetch failed", e));
   }
 
   async function create() {
@@ -203,19 +235,41 @@ function charactersSection() {
 
   async function save() {
     if (!current) return;
-    const res = await apiPost("/anim_coord/character/save", {
-      character: current, positive_prompt: pos.value, negative_prompt: neg.value,
-    });
+    const body = { character: current, positive_prompt: pos.value, negative_prompt: neg.value };
+    const rawOverlay = overlayEditor.value.trim();
+    if (rawOverlay) {
+      let parsed;
+      try {
+        parsed = JSON.parse(rawOverlay);
+      } catch (e) {
+        overlayStatus.textContent = `JSON parse error: ${e.message}`;
+        return;
+      }
+      overlayStatus.textContent = "";
+      if (parsed && typeof parsed.poses === "object" && parsed.poses !== null) {
+        body.poses = parsed.poses;
+      }
+      if (parsed && typeof parsed.animations === "object" && parsed.animations !== null) {
+        body.animations = parsed.animations;
+      }
+    } else {
+      overlayStatus.textContent = "";
+    }
+    const res = await apiPost("/anim_coord/character/save", body);
     if (res.ok) toast("success", `Saved ${res.name}`, "character.json written");
     else toast("error", "Save failed", res.error || "");
   }
 
   editorWrap.append(
     editTitle,
+    thumbImg,
     h("div", { style: labelStyle }, "Character positive ({character_prompt} in a positive field)"),
     pos,
     h("div", { style: labelStyle }, "Character negative ({character_prompt} in a negative field)"),
     neg,
+    h("div", { style: labelStyle }, "Poses / animations overlay (JSON — optional)"),
+    overlayEditor,
+    overlayStatus,
     h("div", { style: { marginTop: "6px" } }, button("Save character", save, { fontWeight: "600" })),
     h("div", { style: { fontSize: "10px", opacity: "0.6", marginTop: "4px" } },
       "The identity layer. FLUX.2 Klein ignores negatives — the negative is for the Wan path."),
@@ -234,12 +288,41 @@ function charactersSection() {
   return root;
 }
 
+// --- Thumbnail cache (coverage grid) --------------------------------------- //
+// Keyed by "character|kind|id|direction". Value is a data-uri string on hit,
+// null when the route returned 404/error. Cleared on execution events so
+// newly-rendered cells pick up fresh images on the next grid refresh.
+const _thumbCache = new Map();
+
+async function fetchThumb(character, kind, id, direction) {
+  const key = `${character}|${kind}|${id}|${direction}`;
+  if (_thumbCache.has(key)) return _thumbCache.get(key);
+  const url = `/anim_coord/thumb?character=${enc(character)}&kind=${enc(kind)}&id=${enc(id)}&direction=${enc(direction)}`;
+  try {
+    const res = await api.fetchApi(url);
+    if (!res.ok) { _thumbCache.set(key, null); return null; }
+    const data = await res.json();
+    const uri = data.data_uri || null;
+    _thumbCache.set(key, uri);
+    return uri;
+  } catch (e) {
+    console.warn(TAG, "thumb fetch failed", url, e);
+    _thumbCache.set(key, null);
+    return null;
+  }
+}
+
 // --- Coverage section (live status dashboard) ------------------------------- //
+// Group key separator: NUL can't appear in kind/category/id field values, so
+// splitting on it is safe even when those fields contain spaces.
+const _SEP = "\x00";
+
 function coverageSection() {
   const root = h("div", { style: { padding: PAD } });
   const charPick = h("select", { style: fieldStyle });
   const manifestPick = h("select", { style: fieldStyle });
   const summary = h("div", { style: { fontSize: "12px", margin: "8px 0", fontWeight: "600" } });
+  const tally = h("div", { style: { fontSize: "11px", opacity: "0.75", margin: "0 0 6px" } });
   const grid = h("div", {});
 
   async function loadPickers() {
@@ -261,24 +344,46 @@ function coverageSection() {
     const character = charPick.value;
     const manifest = manifestPick.value || "default.json";
     grid.innerHTML = "";
+    tally.textContent = "";
     if (!character) { summary.textContent = "select a character"; return; }
-    const opts = await apiGet(
-      `/anim_coord/options?manifest=${enc(manifest)}&character=${enc(character)}`);
+
+    // Fetch options + manifest_options (for mirror_map) in parallel.
+    const [opts, mopts] = await Promise.all([
+      apiGet(`/anim_coord/options?manifest=${enc(manifest)}&character=${enc(character)}`),
+      apiGet(`/anim_coord/manifest_options?manifest=${enc(manifest)}`).catch(() => ({})),
+    ]);
     if (!Array.isArray(opts)) { summary.textContent = "failed to load"; return; }
+
+    const mirrorMap = (mopts && !mopts.__error && mopts.mirror_map) ? mopts.mirror_map : {};
+    const mirrorKeys = new Set(Object.keys(mirrorMap));
+
+    // Status counts for the header summary line.
     const counts = { generated: 0, ready: 0, stale: 0, blocked: 0 };
     for (const o of opts) counts[o.status] = (counts[o.status] || 0) + 1;
     summary.textContent = STATUS_ORDER
       .map((s) => `${GLYPH[s]} ${s} ${counts[s] || 0}`).join("   ");
 
-    // Group by kind -> category -> id, render a row of direction glyphs per id.
-    const byKey = {};
+    // Sampled-vs-mirrored tally: count all cells by mirror membership.
+    let mirroredCount = 0;
+    let sampledCount = 0;
     for (const o of opts) {
-      const k = `${o.kind} ${o.category || "(none)"} ${o.id}`;
+      if (mirrorKeys.has(o.direction)) mirroredCount++;
+      else sampledCount++;
+    }
+    tally.textContent = `sampled=${sampledCount} mirrored=${mirroredCount}`;
+
+    // Group by kind + category + id using a NUL delimiter so spaces in those
+    // fields don't corrupt the sort key or the later destructuring.
+    const byKey = {};
+    const keyMeta = {};
+    for (const o of opts) {
+      const k = `${o.kind}${_SEP}${o.category || "(none)"}${_SEP}${o.id}`;
       (byKey[k] ||= []).push(o);
+      keyMeta[k] ||= { kind: o.kind, category: o.category || "(none)", id: o.id };
     }
     let lastHead = "";
     for (const k of Object.keys(byKey).sort()) {
-      const [kind, category, id] = k.split(" ");
+      const { kind, category, id } = keyMeta[k];
       const head = `${kind} · ${category}`;
       if (head !== lastHead) {
         grid.appendChild(h("div", {
@@ -291,10 +396,45 @@ function coverageSection() {
       const cells = byKey[k].slice().sort((a, b) => a.direction.localeCompare(b.direction));
       for (const o of cells) {
         const blocked = (o.blocked_by || []).join(", ");
-        row.appendChild(h("span", {
-          style: { fontSize: "12px", cursor: "default" },
-          title: `${o.id} @ ${o.direction} — ${o.status}${blocked ? ` (needs ${blocked})` : ""}`,
-        }, GLYPH[o.status] || "·"));
+        const isMirror = mirrorKeys.has(o.direction);
+        const mirrorNote = isMirror ? ` [mirrored from ${mirrorMap[o.direction]}]` : "";
+        const title = `${o.id} @ ${o.direction} — ${o.status}${blocked ? ` (needs ${blocked})` : ""}${mirrorNote}`;
+        const glyphEl = h("span", {}, GLYPH[o.status] || "·");
+        const imgEl = h("img", {
+          loading: "lazy",
+          style: {
+            width: "24px", height: "24px", objectFit: "cover",
+            display: "none", borderRadius: "2px", verticalAlign: "middle",
+          },
+        });
+        // Mirror badge: a small "M" label in the top-right corner of the cell.
+        const badgeEl = isMirror
+          ? h("span", {
+              style: {
+                position: "absolute", top: "0", right: "0",
+                fontSize: "7px", lineHeight: "1", background: "#6af", color: "#000",
+                borderRadius: "2px", padding: "1px 2px", fontWeight: "700",
+              },
+            }, "M")
+          : null;
+        const cellEl = h("span", {
+          style: {
+            fontSize: "12px", cursor: "default",
+            display: "inline-block", position: "relative",
+            ...(isMirror ? { outline: "1px solid #6af", borderRadius: "3px" } : {}),
+          },
+          title,
+        }, [glyphEl, imgEl, badgeEl]);
+        if (o.status !== "blocked") {
+          fetchThumb(character, o.kind, o.id, o.direction).then((uri) => {
+            if (uri) {
+              imgEl.src = uri;
+              imgEl.style.display = "inline-block";
+              glyphEl.style.display = "none";
+            }
+          }).catch(() => {});
+        }
+        row.appendChild(cellEl);
       }
       grid.appendChild(row);
     }
@@ -307,11 +447,11 @@ function coverageSection() {
     h("div", { style: labelStyle }, "Manifest"), manifestPick,
     h("div", { style: { textAlign: "right", margin: "6px 0" } },
       button("Refresh", refresh, { fontSize: "11px" })),
-    summary, grid,
+    summary, tally, grid,
   );
   loadPickers().then(refresh);
   // Live refresh: re-pull status after any graph run (a writer just unlocked work).
-  const onExec = () => { if (charPick.value) refresh(); };
+  const onExec = () => { _thumbCache.clear(); if (charPick.value) refresh(); };
   api.addEventListener("execution_success", onExec);
   api.addEventListener("executed", onExec);
   root.__cleanup = () => {

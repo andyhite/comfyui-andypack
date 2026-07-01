@@ -1,6 +1,10 @@
+import json
 import os
 
-from andypack import io
+import torch
+from PIL import Image
+
+from andypack import io, nodes
 from andypack.resolve import status
 
 
@@ -25,3 +29,17 @@ def test_writing_base_sidecar_unlocks_fighting_stance(manifest, tree):
 
     assert status(manifest, root, char, "base", "EAST") == "generated"
     assert status(manifest, root, char, "fighting_stance", "EAST") == "ready"
+
+
+def test_pose_writer_writes_rgba_with_mask(tmp_path):
+    pose = {
+        "output_dir": str(tmp_path),
+        "_meta": {"image": "EAST.png", "direction": "EAST", "prompt_hash": "sha1:x"},
+    }
+    mask = torch.zeros((1, 4, 4))
+    mask[:, :2, :2] = 1.0
+    nodes.PoseFrameWriter().write(pose, torch.ones((1, 4, 4, 3)), mask=mask)
+    with Image.open(os.path.join(str(tmp_path), "EAST.png")) as im:
+        assert im.mode == "RGBA"
+    sc = json.load(open(os.path.join(str(tmp_path), "EAST.json")))
+    assert sc["has_alpha"] is True

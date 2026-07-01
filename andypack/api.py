@@ -17,9 +17,13 @@ from andypack.manifest import (
     validate_manifest,
 )
 from andypack.resolve import (
+    animation_frame_dir,
     effective_manifest,
+    effective_start_dep,
     invalidate_character,
     merged_prompts,
+    pose_image_path,
+    reference_image_path,
     resolve_animation,
     resolve_pose,
     resolution_pass,
@@ -97,6 +101,16 @@ def seed_default_manifest() -> bool:
 def resolve_manifest_path(manifest_path: str) -> str:
     """Resolve a manifest path: absolute as-is; a bare name under the manifests dir."""
     return io.resolve_under(manifests_dir(), manifest_path)
+
+
+def safe_manifest_path(name: str) -> Optional[str]:
+    """Resolve a manifest by BARE NAME under the manifests dir, rejecting any
+    name that is unsafe or traverses (the HTTP attack surface — unlike
+    resolve_manifest_path, which allows absolute paths for trusted node inputs)."""
+    if not manifest_name_is_safe(name):
+        return None
+    base = manifests_dir()
+    return None if base is None else os.path.join(base, name)
 
 
 # --- CRUD helpers for the sidebar GUI (write-capable, path-safe) ------------- #
@@ -212,12 +226,23 @@ def create_character(root: str, name: str) -> dict:
     return {"ok": True, "name": snake, "created": True}
 
 
-def save_character_layer(root: str, name: str, positive: str, negative: str) -> dict:
+def save_character_layer(
+    root: str,
+    name: str,
+    positive: str,
+    negative: str,
+    overlay: Optional[dict] = None,
+) -> dict:
     """Write a character's prompt layer, preserving any poses/animations overlay.
 
     The widgets/fields are the source of truth: an empty positive/negative drops
     that key (matching the Character Creator node). Snake-cases the name to a path
-    segment and invalidates the resolve cache so descendants re-resolve."""
+    segment and invalidates the resolve cache so descendants re-resolve.
+
+    When `overlay` is a dict its `poses`/`animations` keys (when each is a dict)
+    are folded into the layer before `build_character`, so they are written to
+    character.json. Existing callers pass 4 args (overlay defaults None) —
+    unchanged behavior."""
     try:
         snake = io.to_snake_case(name)
     except ValueError as exc:
@@ -227,6 +252,11 @@ def save_character_layer(root: str, name: str, positive: str, negative: str) -> 
         layer["positive_prompt"] = positive.strip()
     if negative and negative.strip():
         layer["negative_prompt"] = negative.strip()
+    if isinstance(overlay, dict):
+        if isinstance(overlay.get("poses"), dict):
+            layer["poses"] = overlay["poses"]
+        if isinstance(overlay.get("animations"), dict):
+            layer["animations"] = overlay["animations"]
     existing = read_character_layer(root, snake)
     payload = io.build_character(layer, existing=existing)
     io.atomic_write_json(os.path.join(root, snake, "character.json"), payload)
@@ -282,6 +312,49 @@ def character_root_and_name(character_dir: str, character_name: str) -> tuple[st
     return ("", "")
 
 
+def thumb_path(
+    root: str,
+    character: str,
+    kind: str,
+    entity_id: str,
+    direction: str,
+) -> Optional[str]:
+    """Return the on-disk path to the thumbnail source for a rendered cell.
+
+    Validates ``character``, and (for non-reference kinds) ``entity_id`` and
+    ``direction``, each via ``_is_safe_segment``. Returns ``None`` when any
+    segment is unsafe, the kind is unrecognised, or the file/dir is absent.
+
+    - ``kind="reference"`` → ``<char>/_reference.png``
+    - ``kind="pose"``      → ``<char>/_<entity_id>/<direction>.png``
+    - ``kind="animation"`` → first ``frame_*.png`` (sorted) in the frame dir
+    """
+    if not _is_safe_segment(character):
+        return None
+    if kind != "reference":
+        if not _is_safe_segment(entity_id) or not _is_safe_segment(direction):
+            return None
+    if kind == "reference":
+        path = reference_image_path(root, character)
+    elif kind == "pose":
+        path = pose_image_path(root, character, entity_id, direction)
+    elif kind == "animation":
+        frame_dir = animation_frame_dir(root, character, entity_id, direction)
+        try:
+            frames = sorted(
+                n for n in os.listdir(frame_dir)
+                if n.startswith("frame_") and n.endswith(".png")
+            )
+        except OSError:
+            return None
+        if not frames:
+            return None
+        path = os.path.join(frame_dir, frames[0])
+    else:
+        return None
+    return path if os.path.exists(path) else None
+
+
 def manifest_options(manifest: Manifest) -> dict:
     """The selectable structure of a manifest, for frontend combos.
 
@@ -295,6 +368,7 @@ def manifest_options(manifest: Manifest) -> dict:
     return {
         "poses": {pid: dirs(p) for pid, p in manifest.get("poses", {}).items()},
         "animations": {aid: dirs(a) for aid, a in manifest.get("animations", {}).items()},
+        "mirror_map": manifest.get("mirror_map", {}),
     }
 
 
@@ -423,15 +497,29 @@ def regen_queue(manifest: Manifest, root: str, character: str) -> list[dict]:
 
 
 def next_actionable(
-    manifest: Manifest, root: str, character: str, kind: str, *, exclude_root: bool = False
+    manifest: Manifest,
+    root: str,
+    character: str,
+    kind: str,
+    *,
+    exclude_root: bool = False,
+    category: Optional[str] = None,
+    skip_mirrored: bool = False,
 ) -> Optional[dict]:
     """The first selectable-now (ready/stale) cell of `kind` in dependency order,
     or None when nothing of that kind is actionable. Backs the auto-advancing
     batch selectors: queue the graph repeatedly and each run picks the next job.
 
     `exclude_root` drops root poses (no `from`, e.g. `base`) — they need the
-    Character Creator's reference image + manikin, not a generic selector."""
+    Character Creator's reference image + manikin, not a generic selector.
+
+    `category` filters to entities whose `category` field matches exactly.
+
+    `skip_mirrored` drops directions that appear as keys in
+    `manifest["mirror_map"]` — those directions are derived from a source
+    direction and should not be independently queued."""
     eff = _safe_effective(manifest, root, character)
+    mirror_keys = set(eff.get("mirror_map", {}).keys()) if skip_mirrored else set()
     for item in regen_queue(eff, root, character):
         if item["kind"] != kind:
             continue
@@ -439,6 +527,13 @@ def next_actionable(
             pose = eff.get("poses", {}).get(item["id"], {})
             if pose.get("from") is None:
                 continue
+        if category is not None:
+            collection = eff.get("poses", {}) if kind == "pose" else eff.get("animations", {})
+            entity = collection.get(item["id"], {})
+            if entity.get("category") != category:
+                continue
+        if item["direction"] in mirror_keys:
+            continue
         # Skip a cell that is stale ONLY because of an ancestor it can't fix by
         # re-rendering itself — re-running it wouldn't clear the staleness, so the
         # batch loop would wedge on it forever (e.g. every descendant of a stale
@@ -486,6 +581,71 @@ def format_merged_prompts(rows: list[dict]) -> str:
         lines.append(f"[{r['kind']}] {r['id']} @ {r['direction']}{cat}")
         lines.append(f"  + {r['positive'] or '(empty)'}")
         lines.append(f"  - {r['negative'] or '(empty)'}")
+    return "\n".join(lines)
+
+
+def state_machine(manifest: Manifest, root: str, character: str) -> dict:
+    """The implicit state machine encoded in the FFLF animation graph.
+
+    For each animation, reads its start_from (the 'from' state) and end_at (the
+    'to' state). A clip with no end_at is treated as returning to / staying at its
+    start state, so 'to' equals the start ref — a pure I2V clip with one anchor
+    implicitly stays at its origin. A clip is a self-loop ('loop'=True) iff end_at
+    is present AND start ref equals end ref (i.e. it begins and ends on the same
+    state, e.g. an idle cycle). Runs inside a resolution_pass(); all reads are
+    manifest-only (no disk I/O).
+    """
+    eff = _safe_effective(manifest, root, character)
+    transitions: list[dict] = []
+    states: set[str] = set()
+
+    with resolution_pass():
+        for aid, anim in eff.get("animations", {}).items():
+            start_dep = effective_start_dep(eff, aid)
+            from_ref: Optional[str] = start_dep.get("ref") if start_dep else None
+            end_at = anim.get("end_at")
+            to_ref: Optional[str] = end_at.get("ref") if end_at else from_ref
+            loop = bool(end_at is not None and from_ref is not None and from_ref == to_ref)
+            if from_ref:
+                states.add(from_ref)
+            if to_ref:
+                states.add(to_ref)
+            transitions.append({
+                "from": from_ref,
+                "clip": aid,
+                "to": to_ref,
+                "loop": loop,
+                "category": anim.get("category"),
+                "directions": list((anim.get("directions") or {}).keys()),
+            })
+
+    return {
+        "character": character,
+        "states": sorted(s for s in states if s is not None),
+        "transitions": transitions,
+    }
+
+
+def format_state_machine(sm: dict) -> str:
+    """Render a state_machine dict as a human-readable transition table."""
+    char = sm.get("character") or "(none)"
+    states = sm.get("states", [])
+    transitions = sm.get("transitions", [])
+    lines = [
+        f"state machine for {char} — {len(states)} states, {len(transitions)} transitions",
+        "",
+        "States: " + (", ".join(states) if states else "(none)"),
+        "",
+        "Transitions:",
+    ]
+    for t in transitions:
+        loop_tag = " [loop]" if t.get("loop") else ""
+        cat = f" ({t['category']})" if t.get("category") else ""
+        dirs = ", ".join(t.get("directions") or [])
+        dir_tag = f" [{dirs}]" if dirs else ""
+        lines.append(
+            f"  {t['from']} -> {t['clip']} -> {t['to']}{loop_tag}{cat}{dir_tag}"
+        )
     return "\n".join(lines)
 
 

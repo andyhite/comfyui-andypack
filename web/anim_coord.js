@@ -278,6 +278,20 @@ function buildDirectionCombo(node, cfg) {
 
 // --- selector wiring -------------------------------------------------------- //
 
+// Repopulate the character combo from /anim_coord/characters so characters
+// created mid-session appear without a full page reload. Only touches widgets
+// whose options.values is already an array (real combo); leaves free-STRING
+// character widgets (e.g. Character Creator) untouched.
+async function refreshCharacterCombos(node) {
+  const res = await fetchJSON("/anim_coord/characters");
+  const names = (res || []).map((c) => c.name);
+  const w = widget(node, "character");
+  if (!w || !Array.isArray(w.options?.values)) return;
+  const prev = w.value;
+  w.options.values = [NO_CHARACTER, ...names];
+  if (!w.options.values.includes(prev)) w.value = w.options.values[0];
+}
+
 function wire(node) {
   const cfg = SELECTOR_NODES[node.comfyClass];
   if (!cfg) return;
@@ -301,6 +315,7 @@ function wire(node) {
     lockAll(node, cfg, "(loading…)");
     return;
   }
+  refreshCharacterCombos(node).catch((e) => console.warn(`${TAG} characters`, e));
   refreshCascade(node, cfg).catch((e) => console.warn(`${TAG} cascade`, e));
 }
 

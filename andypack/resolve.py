@@ -72,10 +72,22 @@ def _read_json(path: str) -> Optional[dict]:
 
 
 _IDENTITY_CACHE: dict[str, tuple[float, dict]] = {}
-# Validated character-effective manifests, keyed on the identities of the two
-# inputs that produced them (base manifest + cached identity dict) — see
-# effective_manifest. Cleared by invalidate_character.
-_EFFECTIVE_CACHE: dict[tuple[int, int], Manifest] = {}
+# Validated character-effective manifests, keyed on a content-derived tuple
+# (see _effective_cache_key). Cleared by invalidate_character.
+_EFFECTIVE_CACHE: dict[tuple, Manifest] = {}
+
+
+def _effective_cache_key(manifest: Manifest, identity: dict) -> tuple:
+    """A cache key tied to CONTENT, not id(). A base-manifest edit changes the
+    serialized poses/animations/globals/defaults/view_phrases, so the key
+    changes and a stale merge can't be served. identity is keyed by its id()
+    (stable per file version via read_character's mtime cache) plus its size."""
+    payload = json.dumps(
+        {k: manifest.get(k) for k in
+         ("version", "poses", "animations", "globals", "defaults", "view_phrases")},
+        sort_keys=True, default=str,
+    )
+    return (hashlib.sha1(payload.encode("utf-8")).hexdigest(), id(identity), len(identity))
 
 
 def read_character(root: str, character: str) -> dict:
@@ -139,7 +151,7 @@ def effective_manifest(manifest: Manifest, root: str, character: str) -> Manifes
     # validate_manifest's ref/cycle DFS off the IS_CHANGED hot path, which
     # re-derives the effective manifest on every graph evaluation. The cache is
     # dropped wholesale by invalidate_character when the character layer changes.
-    key = (id(manifest), id(identity))
+    key = _effective_cache_key(manifest, identity)
     cached = _EFFECTIVE_CACHE.get(key)
     if cached is not None:
         return cached
@@ -484,6 +496,33 @@ def outdated(manifest: Manifest, root: str, character: str, ref: str, direction:
     return memo[key]
 
 
+def _sources_drifted(
+    manifest: Manifest, root: str, character: str, ref: str, direction: str, meta: Optional[dict]
+) -> bool:
+    """True if the recorded `sources` key-set differs from the current dep set
+    (an anchor ref was swapped / added / removed), OR a recorded source's
+    render_id drifted (re-rendered). Catches anchor identity changes the
+    prompt_hash can't see.
+
+    Malformed keys (no '@', from hand-edited or older metas) are excluded from
+    the key-set comparison and the render_id check — the transitive walk covers
+    those deps."""
+    recorded = (meta or {}).get("sources")
+    if not isinstance(recorded, dict):
+        return False  # pre-provenance meta: transitive walk still covers deps
+    # Only consider well-formed "@"-bearing keys; skip malformed ones as the
+    # old per-key loop did (transitive walk below covers those deps).
+    recorded_valid = {k: v for k, v in recorded.items() if "@" in k}
+    current = recorded_sources(manifest, root, character, ref, direction)
+    if set(recorded_valid.keys()) != set(current.keys()):
+        return True
+    for key, rid in recorded_valid.items():
+        dep_ref, ddir = key.rsplit("@", 1)
+        if read_render_id(manifest, root, character, dep_ref, ddir) != rid:
+            return True
+    return False
+
+
 def stale_locally(manifest: Manifest, root: str, character: str, ref: str, direction: str) -> bool:
     """True if a COMPLETE node is stale for its OWN reasons — its merged prompt hash
     drifted, or a recorded source's `render_id` changed — so re-rendering THIS node
@@ -499,14 +538,8 @@ def stale_locally(manifest: Manifest, root: str, character: str, ref: str, direc
         manifest, root, character, kind, ref, direction
     ):
         return True
-    sources = (meta or {}).get("sources")
-    if isinstance(sources, dict):
-        for key, recorded in sources.items():
-            if "@" not in key:
-                continue
-            dep_ref, ddir = key.rsplit("@", 1)
-            if read_render_id(manifest, root, character, dep_ref, ddir) != recorded:
-                return True
+    if _sources_drifted(manifest, root, character, ref, direction, meta):
+        return True
     return False
 
 
@@ -519,20 +552,11 @@ def _outdated(manifest: Manifest, root: str, character: str, ref: str, direction
     if (meta or {}).get("prompt_hash") != current:
         return True
     # Provenance: if this node recorded the render_id of each source it consumed,
-    # a source whose current render_id differs (re-rendered, even with an
-    # unchanged prompt) makes this node stale. Absent on pre-provenance metas, in
-    # which case we fall back to the transitive-hash walk below.
-    sources = (meta or {}).get("sources")
-    if isinstance(sources, dict):
-        for key, recorded in sources.items():
-            # Keys are written as "dep_ref@dir"; tolerate a malformed key (no '@',
-            # from a hand-edited or older meta) by skipping it rather than raising
-            # — the transitive-hash walk below still covers that dependency.
-            if "@" not in key:
-                continue
-            dep_ref, ddir = key.rsplit("@", 1)
-            if read_render_id(manifest, root, character, dep_ref, ddir) != recorded:
-                return True
+    # or if the dep key-set changed (anchor ref swapped / end_at added/removed),
+    # this node is stale. Absent on pre-provenance metas, in which case we fall
+    # back to the transitive-hash walk below.
+    if _sources_drifted(manifest, root, character, ref, direction, meta):
+        return True
     if kind == "pose":
         frm = manifest["poses"][ref].get("from")
         if not frm:
@@ -542,6 +566,34 @@ def _outdated(manifest: Manifest, root: str, character: str, ref: str, direction
         if outdated(manifest, root, character, dep["ref"], resolved_dir(dep, direction)):
             return True
     return False
+
+
+# --- rendered direction enumeration ----------------------------------------- #
+
+def rendered_directions(
+    manifest: Manifest,
+    root: str,
+    character: str,
+    kind: str,
+    entity_id: str,
+    directions: list[str],
+) -> list[tuple[str, str]]:
+    """Return (direction, path) for each direction in `directions` that is complete.
+
+    For a pose, path is the PNG; for an animation, it is the frame directory.
+    Incomplete directions are skipped, preserving the input order.
+    No torch imports — pure path helpers + node_complete only.
+    """
+    result: list[tuple[str, str]] = []
+    for direction in directions:
+        if not node_complete(manifest, root, character, entity_id, direction):
+            continue
+        if kind == "pose":
+            path = pose_image_path(root, character, entity_id, direction)
+        else:
+            path = animation_frame_dir(root, character, entity_id, direction)
+        result.append((direction, path))
+    return result
 
 
 # --- resolve + status ------------------------------------------------------- #
@@ -673,11 +725,9 @@ def playback_segments(
     pre_seg, drop_first = dep_segment(start)
     post_seg, drop_last = dep_segment(end)
 
-    loopable = bool(
-        start and end
-        and start["ref"] == end["ref"]
-        and resolved_dir(start, direction) == resolved_dir(end, direction)
-    )
+    start_img = start_anchor(manifest, root, character, anim_id, direction)
+    end_img = end_anchor(manifest, root, character, anim_id, direction)
+    loopable = start_img is not None and start_img == end_img
     action = {
         "kind": "anim", "dir": animation_frame_dir(root, character, anim_id, direction),
         "repeat": max(int(loops), 1) if loopable else 1,

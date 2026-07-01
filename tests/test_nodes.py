@@ -135,7 +135,7 @@ def test_animation_writer_rejects_empty_batch(tmp_path):
         "fps": 16, "length": 0, "loop": False, "manifest_version": 1,
         "prompt_hash": "sha1:abc",
     }
-    with pytest.raises(RuntimeError, match="empty frame batch"):
+    with pytest.raises(RuntimeError, match="empty or 1x1 sentinel frame batch"):
         nodes.AnimationFrameWriter().write(_anim_dict(meta, out), _batch(0))
     assert not os.path.exists(os.path.join(out, "meta.json"))
 
@@ -182,6 +182,17 @@ def test_merged_prompt_report_node(manifest, tree, monkeypatch):
     assert any(r["id"] == "punch" and r["negative"] for r in data)
 
 
+def test_state_machine_report_node(manifest, monkeypatch, tmp_path):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    report, blob = nodes.StateMachineReport().report(manifest, nodes._NO_CHARACTER)
+    assert "state machine" in report.lower()
+    data = json.loads(blob)
+    assert "states" in data and "transitions" in data
+    # The fixture manifest has animations (punch, fighting_stance_idle, etc.)
+    # so the state machine must contain transitions.
+    assert len(data["transitions"]) > 0
+
+
 def test_regen_queue_node(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
@@ -194,7 +205,7 @@ def test_mirror_writer_pose(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
-    (out_dir,) = nodes.MirrorFrameWriter().write(manifest, tree.char, "pose", "base", "WEST")
+    out_dir, _ = nodes.MirrorFrameWriter().write(manifest, tree.char, "pose", "base", "WEST")
     assert os.path.exists(resolve.pose_image_path(tree.root, tree.char, "base", "WEST"))
     side = json.loads(open(resolve.pose_sidecar_path(tree.root, tree.char, "base", "WEST")).read())
     assert side["mirrored_from"]["direction"] == "EAST"
@@ -208,7 +219,7 @@ def test_mirror_writer_animation(manifest, tree, monkeypatch):
     src_dir = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
     for i in range(3):
         images.save_image_png(_img(), os.path.join(src_dir, f"frame_{i:05d}.png"))
-    (out_dir,) = nodes.MirrorFrameWriter().write(
+    out_dir, _ = nodes.MirrorFrameWriter().write(
         manifest, tree.char, "animation", "fighting_stance_idle", "WEST"
     )
     meta = json.loads(open(resolve.animation_meta_path(
@@ -321,11 +332,14 @@ def test_animation_playback_chains_and_loops(manifest, tree, monkeypatch):
         for i in range(3):
             images.save_image_png(_img(), os.path.join(d, f"frame_{i:05d}.png"))
 
-    out = nodes.AnimationPlayback().play(manifest, tree.char, "", "punch", "EAST", 3)
+    out = nodes.AnimationPlayback().play(
+        manifest, tree.char, "", "punch", "EAST", 3, mode="loop", hold_frames=0
+    )
     frames, fps = out["result"]
     assert fps == manifest["defaults"]["fps"]  # punch inherits the default fps (16)
-    # idle(3) + punch(3*3, minus dropped first & last seam = 7) + idle(3) = 13
-    assert frames.shape[0] == 3 + 7 + 3
+    # idle(3) + punch(1x, drop_first+drop_last = 1) + idle(3) = 7
+    # punch is not loopable: idle.last_frame != idle.start_frame (3 distinct frames)
+    assert frames.shape[0] == 3 + 1 + 3
 
 
 def test_animation_playback_raises_when_unrendered(manifest, tree, monkeypatch):
@@ -334,7 +348,9 @@ def test_animation_playback_raises_when_unrendered(manifest, tree, monkeypatch):
     # not emit a bogus 1x1 black frame (the old `shape[0] == 0` guard never fired).
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     with pytest.raises(RuntimeError, match="no rendered frames"):
-        nodes.AnimationPlayback().play(manifest, tree.char, "", "punch", "EAST", 1)
+        nodes.AnimationPlayback().play(
+            manifest, tree.char, "", "punch", "EAST", 1, mode="loop", hold_frames=0
+        )
 
 
 def test_leaf_output_keys_exclude_private_meta():
@@ -493,7 +509,7 @@ def test_auto_pose_selector_emits_next_actionable_non_root_pose(manifest, tree, 
     # base generated -> fighting_stance is the next actionable (non-root) pose.
     tree.pose("base", "EAST")
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
-    (pose,) = nodes.AutoPoseSelector().select(manifest, tree.char)
+    (pose,) = nodes.AutoPoseSelector().select(manifest, tree.char, skip_mirrored=True)
     assert pose["_meta"]["pose"] == "fighting_stance"
     assert sorted(k for k in pose if k != "_meta") == nodes.POSE_OUTPUT_KEYS
 
@@ -502,7 +518,7 @@ def test_auto_pose_selector_raises_when_nothing_actionable(manifest, tree, monke
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()  # base is a root pose (excluded); nothing else actionable
     with pytest.raises(RuntimeError, match="no actionable poses"):
-        nodes.AutoPoseSelector().select(manifest, tree.char)
+        nodes.AutoPoseSelector().select(manifest, tree.char, skip_mirrored=True)
 
 
 def test_auto_animation_selector_emits_next_actionable_animation(manifest, tree, monkeypatch):
@@ -513,7 +529,7 @@ def test_auto_animation_selector_emits_next_actionable_animation(manifest, tree,
     images.save_image_png(
         _img(), resolve.pose_image_path(tree.root, tree.char, "fighting_stance", "EAST")
     )
-    (anim,) = nodes.AutoAnimationSelector().select(manifest, tree.char)
+    (anim,) = nodes.AutoAnimationSelector().select(manifest, tree.char, skip_mirrored=True)
     assert anim["_meta"]["animation"] == "fighting_stance_idle"
     assert sorted(k for k in anim if k != "_meta") == nodes.ANIMATION_OUTPUT_KEYS
 
@@ -522,7 +538,7 @@ def test_auto_animation_selector_raises_when_nothing_actionable(manifest, tree, 
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
     with pytest.raises(RuntimeError, match="no actionable animations"):
-        nodes.AutoAnimationSelector().select(manifest, tree.char)
+        nodes.AutoAnimationSelector().select(manifest, tree.char, skip_mirrored=True)
 
 
 def test_pose_selector_sets_empty_pose_reference(manifest, tree, monkeypatch):
@@ -531,3 +547,481 @@ def test_pose_selector_sets_empty_pose_reference(manifest, tree, monkeypatch):
     images.save_image_png(_img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST"))
     (pose,) = nodes.CharacterPoseSelector().select(manifest, tree.char, "", "fighting_stance", "EAST")
     assert images.is_empty(pose["pose_reference"])
+
+
+# --- SpriteTrimPivot node ---------------------------------------------------- #
+
+def test_sprite_trim_pivot_node():
+    img = torch.zeros((1, 8, 8, 4))
+    img[0, 2:6, 2:6, :] = 1.0
+    out, trim = nodes.SpriteTrimPivot().trim(
+        img,
+        alpha_threshold=0.03,
+        trim_mode="union",
+        pivot="bottom_center",
+        pivot_x=0.5,
+        pivot_y=1.0,
+        pad=0,
+    )
+    assert out.shape[-1] == 4
+    assert trim["frames"][0]["pivot"]
+
+
+# --- SpritesheetPacker node -------------------------------------------------- #
+
+def test_spritesheet_packer_node():
+    batch = torch.ones((4, 6, 6, 4))
+    sheet, atlas = nodes.SpritesheetPacker().pack(batch, layout="grid", columns=2,
+        padding=1, extrude=0, power_of_two=False, fps=8)
+    assert sheet.shape[0] == 1 and atlas["frames"][0]["duration_ms"] == 125
+
+
+# --- AtlasMetadataWriter node ----------------------------------------------- #
+
+def test_atlas_metadata_writer(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes.api, "output_dir", lambda: str(tmp_path))
+    atlas_d = {"sheet_size": [12, 6], "columns": 2, "frames": [
+        {"rect": [0, 0, 6, 6], "source_size": [6, 6], "offset": [0, 0],
+         "pivot": [3, 6], "duration_ms": 125}]}
+    out = nodes.AtlasMetadataWriter().export(
+        atlas_d, torch.ones((1, 6, 12, 4)),
+        "aseprite", "walk", output_subdir="atlas")
+    d = out["result"][0] if isinstance(out, dict) else out[0]
+    assert os.path.exists(os.path.join(d, "walk.png"))
+    assert os.path.exists(os.path.join(d, "walk.json"))
+
+
+# --- CharacterAtlasBuilder -------------------------------------------------- #
+
+def test_character_atlas_builder_renders_pose_sheet(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST")
+    images.save_image_png(
+        _img(4, 4),
+        resolve.pose_image_path(tree.root, tree.char, "base", "EAST"),
+    )
+    sheet, atlas, report = nodes.CharacterAtlasBuilder().build(
+        manifest, tree.char, "pose", "base", "all", "per_direction_rows", 2, False
+    )
+    assert sheet.shape[0] == 1
+    assert atlas["directions"] == ["EAST"]
+    assert atlas["columns"] == 1
+    assert "Rendered:" in report
+    assert "EAST" in report
+
+
+def test_character_atlas_builder_raises_when_nothing_rendered(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()
+    with pytest.raises(RuntimeError, match="no rendered directions"):
+        nodes.CharacterAtlasBuilder().build(
+            manifest, tree.char, "pose", "base", "all", "grid", 0, False
+        )
+
+
+def test_character_atlas_builder_is_changed_volatile_without_character(manifest, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: "output/characters")
+    token = nodes.CharacterAtlasBuilder.IS_CHANGED(
+        manifest, "", "pose", "", "all", "grid", 0, False
+    )
+    assert token != token
+
+
+def test_character_atlas_builder_pads_mismatched_direction_sizes(manifest, tree, monkeypatch):
+    """Directions with different H/W are zero-padded before torch.cat — no crash."""
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    # Write sidecars via Tree so node_complete is True for both directions, then
+    # overwrite the placeholder PNGs with real RGBA images of different sizes.
+    tree.pose("base", "EAST").pose("base", "SOUTH")
+    east_path = resolve.pose_image_path(tree.root, tree.char, "base", "EAST")
+    south_path = resolve.pose_image_path(tree.root, tree.char, "base", "SOUTH")
+    # EAST: 6×6 RGBA, SOUTH: 8×10 RGBA — mismatched, would crash torch.cat without padding
+    images.save_image_png(torch.zeros((1, 6, 6, 4)), east_path)
+    images.save_image_png(torch.zeros((1, 8, 10, 4)), south_path)
+    sheet, atlas, report = nodes.CharacterAtlasBuilder().build(
+        manifest, tree.char, "pose", "base", "all", "grid", 0, False
+    )
+    # Sheet must be a single-image batch (pack_sheet always returns B=1).
+    assert sheet.shape[0] == 1
+    # Atlas must record exactly the two directions that were complete.
+    assert len(atlas["directions"]) == 2
+    assert "EAST" in atlas["directions"]
+    assert "SOUTH" in atlas["directions"]
+
+
+def test_palette_node_extract_only_passthrough():
+    img = torch.ones((1, 2, 2, 3))
+    out_img, pal = nodes.PaletteQuantizeLock().run(img, colors=4, dither="none",
+        preserve_alpha=True, extract_only=True)
+    assert torch.equal(out_img, img) and "colors" in pal
+
+
+def test_auto_pose_selector_has_skip_mirrored_input():
+    req = nodes.AutoPoseSelector.INPUT_TYPES()["required"]
+    assert "skip_mirrored" in req
+
+
+def test_manikin_pose_control_direction_only(monkeypatch, tmp_path):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    manifest = {"version": 1, "poses": {"base": {"directions": {"EAST": {}}}},
+                "animations": {}, "defaults": {}}
+    img, pos, dname = nodes.ManikinPoseControl().control(manifest, "(select character)",
+        "base", "EAST", direction_only=True)
+    assert img.shape[-1] == 3 and dname == "EAST"
+
+
+def test_mirror_writer_batch_all(tmp_path, monkeypatch):
+    from andypack import io
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    root = str(tmp_path)
+    char = "hero"
+    manifest = {
+        "version": 1,
+        "mirror_map": {"WEST": "EAST"},
+        "poses": {
+            "base": {"directions": {"EAST": {}}},
+            "p": {"from": {"ref": "base"}, "directions": {"EAST": {}, "WEST": {}}},
+        },
+        "animations": {},
+        "defaults": {},
+    }
+    src = resolve.pose_image_path(root, char, "p", "EAST")
+    os.makedirs(os.path.dirname(src), exist_ok=True)
+    images.save_image_png(torch.ones((1, 4, 4, 4)), src)
+    r = resolve.resolve_pose(manifest, root, char, "p", "EAST")
+    io.atomic_write_json(
+        resolve.pose_sidecar_path(root, char, "p", "EAST"),
+        io.build_pose_sidecar(r["meta"], created_utc="t"),
+    )
+    dirs, count = nodes.MirrorFrameWriter().write(
+        manifest, char, "pose", "p", "", mirror_all=True
+    )
+    assert count == 1
+    assert os.path.exists(resolve.pose_image_path(root, char, "p", "WEST"))
+
+
+# --- CharacterIdentityAnchor ------------------------------------------------ #
+
+def test_action_set_selector_input_has_action_set():
+    req = nodes.ActionSetSelector.INPUT_TYPES()["required"]
+    assert "action_set" in req
+
+
+def test_character_identity_anchor(monkeypatch, tmp_path):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    root = str(tmp_path)
+    char = "hero"
+    images.save_image_png(
+        torch.ones((1, 4, 4, 3)), resolve.reference_image_path(root, char)
+    )
+    manifest = {
+        "version": 1,
+        "poses": {"base": {"directions": {"EAST": {}}}},
+        "animations": {},
+        "defaults": {},
+    }
+    ref, base, batch = nodes.CharacterIdentityAnchor().anchor(
+        manifest, char, "EAST",
+        include_reference=True, include_base=False, base_pose="base",
+    )
+    assert ref.shape[-1] == 3 and batch.shape[0] >= 1
+
+
+# --- TurnaroundSheet -------------------------------------------------------- #
+
+def test_turnaround_sheet_raises_for_placeholder_character(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    with pytest.raises(RuntimeError, match="character"):
+        nodes.TurnaroundSheet().build(manifest, nodes._NO_CHARACTER, "base")
+
+
+def test_turnaround_sheet_returns_image_sheet(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST")
+    images.save_image_png(
+        _img(4, 4),
+        resolve.pose_image_path(tree.root, tree.char, "base", "EAST"),
+    )
+    out = nodes.TurnaroundSheet().build(manifest, tree.char, "base")
+    sheet = out["result"][0]
+    assert sheet.shape[0] == 1 and sheet.ndim == 4  # [1, H, W, C]
+
+
+def test_turnaround_sheet_all_unrendered_returns_placeholders(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()  # character exists but nothing rendered
+    out = nodes.TurnaroundSheet().build(manifest, tree.char, "base", columns=4)
+    sheet = out["result"][0]
+    # 8 directions in 4 columns = 2 rows; all cells are mid-gray placeholder
+    assert sheet.shape[0] == 1
+    assert sheet.shape[3] == 3  # 3-ch RGB
+
+
+def test_turnaround_sheet_is_changed_always_nan(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    token = nodes.TurnaroundSheet.IS_CHANGED(manifest, tree.char, "base")
+    assert token != token  # NaN != NaN
+
+
+def test_turnaround_sheet_node_registered():
+    assert "TurnaroundSheet" in nodes.NODE_CLASS_MAPPINGS
+    assert "TurnaroundSheet" in nodes.NODE_DISPLAY_NAME_MAPPINGS
+
+
+# --- BoomerangLoopWriter ---------------------------------------------------- #
+
+def test_boomerang_writes_palindrome(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    anim = {
+        "output_dir": str(tmp_path / "idle" / "EAST"),
+        "_meta": {"prompt_hash": "sha1:x", "loop": False},
+    }
+    f = torch.arange(3).float().reshape(3, 1, 1, 1).repeat(1, 4, 4, 3)
+    out = nodes.BoomerangLoopWriter().write(anim, f, mode="boomerang")
+    d = out["result"][0] if isinstance(out, dict) else out[0]
+    meta = json.load(open(os.path.join(d, "meta.json")))
+    assert meta["loop"] is True and meta["frames"]["count"] == 4  # 0,1,2,1
+
+
+# --- TweenClipProvider ------------------------------------------------------ #
+
+def test_tween_requires_fflf():
+    with pytest.raises(RuntimeError):
+        nodes.TweenClipProvider()._validate_fflf(start=None, end=None)
+
+
+# --- FrameTimingNormalizer -------------------------------------------------- #
+
+def test_frame_timing_normalizer_registered():
+    assert "FrameTimingNormalizer" in nodes.NODE_CLASS_MAPPINGS
+    assert "FrameTimingNormalizer" in nodes.NODE_DISPLAY_NAME_MAPPINGS
+
+
+def test_frame_timing_normalizer_resample_to_target():
+    f = torch.zeros((5, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "resample", enforce_4n1=False, target_length=9
+    )
+    assert out.shape[0] == 9
+    assert length == 9
+
+
+def test_frame_timing_normalizer_length_output_matches_frames():
+    # LENGTH must equal the actual emitted count, not the requested target.
+    f = torch.zeros((4, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "trim", enforce_4n1=False, target_length=10
+    )
+    assert length == int(out.shape[0])
+    assert length == 4  # trim can't invent frames
+
+
+def test_frame_timing_normalizer_4n1_snap_up():
+    # 6 -> nearest 4n+1 above = 9
+    f = torch.zeros((5, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "pad_hold", enforce_4n1=True, target_length=6
+    )
+    assert out.shape[0] == 9
+    assert length == 9
+
+
+def test_frame_timing_normalizer_4n1_no_snap_on_aligned():
+    # 33 is already 4n+1 (32 % 4 == 0); must not change.
+    f = torch.zeros((30, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "resample", enforce_4n1=True, target_length=33
+    )
+    assert length == 33
+
+
+def test_frame_timing_normalizer_target_from_animation():
+    anim = {"_meta": {"length": 17, "fps": 16}, "output_dir": ""}
+    f = torch.zeros((5, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "resample", enforce_4n1=False, animation=anim
+    )
+    assert length == 17
+
+
+def test_frame_timing_normalizer_target_length_overrides_animation():
+    anim = {"_meta": {"length": 33, "fps": 16}, "output_dir": ""}
+    f = torch.zeros((5, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "resample", enforce_4n1=False, animation=anim, target_length=9
+    )
+    assert length == 9  # explicit target_length wins
+
+
+def test_frame_timing_normalizer_noop_when_no_target():
+    f = torch.zeros((7, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "resample", enforce_4n1=False
+    )
+    assert length == 7  # pass-through when no target specified
+
+
+def test_frame_timing_normalizer_animation_zero_length_falls_back():
+    # When animation._meta.length is 0 the node should pass through.
+    anim = {"_meta": {"length": 0, "fps": 16}, "output_dir": ""}
+    f = torch.zeros((5, 2, 2, 3))
+    out, length = nodes.FrameTimingNormalizer().run(
+        f, "resample", enforce_4n1=False, animation=anim
+    )
+    assert length == 5
+
+
+# --- ColorVariantBatcher ----------------------------------------------------- #
+
+def test_color_variant_batcher_pose_writes_sibling_png(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()
+    # tree.pose() touches an empty PNG then writes the sidecar; overwrite with a
+    # real PNG afterwards so load_image_tensor can open it.
+    tree.pose("base", "EAST")
+    images.save_image_png(
+        _img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST")
+    )
+
+    variants_text = "red: hue=0, sat=1.0, val=1.0\nblue: hue=240, sat=1.0, val=1.0"
+    dirs, count = nodes.ColorVariantBatcher().write(
+        manifest, tree.char, "pose", "base", "EAST", variants_text
+    )
+
+    assert count == 2
+    assert os.path.exists(
+        resolve.pose_image_path(tree.root, tree.char, "base__red", "EAST")
+    )
+    assert os.path.exists(
+        resolve.pose_image_path(tree.root, tree.char, "base__blue", "EAST")
+    )
+    # Sidecar must have variant_of provenance
+    red_sidecar = json.loads(
+        open(resolve.pose_sidecar_path(tree.root, tree.char, "base__red", "EAST")).read()
+    )
+    assert red_sidecar["variant_of"] == {"id": "base", "variant": "red"}
+    assert red_sidecar.get("render_id", "").startswith("rid:")
+
+
+def test_color_variant_batcher_animation_writes_sibling_frames(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()
+    tree.animation("fighting_stance_idle", "EAST", frames=3)
+    src_d = resolve.animation_frame_dir(tree.root, tree.char, "fighting_stance_idle", "EAST")
+    for i in range(3):
+        images.save_image_png(_img(), os.path.join(src_d, f"frame_{i:05d}.png"))
+
+    dirs, count = nodes.ColorVariantBatcher().write(
+        manifest, tree.char, "animation", "fighting_stance_idle", "EAST",
+        "green: #00FF00"
+    )
+
+    assert count == 1
+    dst_d = resolve.animation_frame_dir(
+        tree.root, tree.char, "fighting_stance_idle__green", "EAST"
+    )
+    assert os.path.exists(os.path.join(dst_d, "frame_00000.png"))
+    meta = json.loads(
+        open(resolve.animation_meta_path(
+            tree.root, tree.char, "fighting_stance_idle__green", "EAST"
+        )).read()
+    )
+    assert meta["frames"]["count"] == 3
+    assert meta["variant_of"] == {"id": "fighting_stance_idle", "variant": "green"}
+
+
+def test_color_variant_batcher_raises_when_source_missing(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()
+    with pytest.raises(RuntimeError, match="not generated"):
+        nodes.ColorVariantBatcher().write(
+            manifest, tree.char, "pose", "base", "EAST", "red: hue=0, sat=1, val=1"
+        )
+
+
+def test_color_variant_batcher_raises_on_empty_variants(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.character()
+    tree.pose("base", "EAST")
+    images.save_image_png(
+        _img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST")
+    )
+    with pytest.raises(RuntimeError, match="no valid variants"):
+        nodes.ColorVariantBatcher().write(
+            manifest, tree.char, "pose", "base", "EAST", "   \n  "
+        )
+
+
+def test_color_variant_batcher_is_changed_nan_without_id(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    token = nodes.ColorVariantBatcher.IS_CHANGED(
+        manifest, tree.char, "pose", "", "EAST", "red: hue=0"
+    )
+    assert token != token  # NaN
+
+
+def test_variant_layer_composer_recomputes_hash():
+    pose = {
+        "source_image": images.empty_image(),
+        "pose_reference": images.empty_image(),
+        "positive": "a hero",
+        "negative": "blurry",
+        "output_dir": "/x/_p",
+        "_meta": {"prompt_hash": "sha1:old", "image": "EAST.png"},
+    }
+    (out,) = nodes.VariantLayerComposer().compose(pose, "gold", "golden armor", "")
+    assert "golden armor" in out["positive"]
+    assert out["_meta"]["prompt_hash"] != "sha1:old"
+    assert out["output_dir"].endswith("__gold")
+    # Input bundle must NOT be mutated
+    assert pose["_meta"]["prompt_hash"] == "sha1:old"
+
+
+# --- AnimatedSpriteExport --------------------------------------------------- #
+
+def test_animated_sprite_export_registered():
+    assert "AnimatedSpriteExport" in nodes.NODE_CLASS_MAPPINGS
+    assert nodes.NODE_DISPLAY_NAME_MAPPINGS["AnimatedSpriteExport"] == "Animated Sprite Export"
+
+
+def test_animated_sprite_export_writes_gif(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes.api, "output_dir", lambda: str(tmp_path))
+    # Use distinct frames so PIL does not deduplicate them.
+    frames = torch.stack([
+        torch.full((4, 4, 3), v, dtype=torch.float32) for v in (0.1, 0.4, 0.7)
+    ])
+    result = nodes.AnimatedSpriteExport().export(
+        frames, format="gif", loop=True, fps=8, name="hero"
+    )
+    out_file = tmp_path / "hero.gif"
+    assert out_file.exists()
+    # result dict has ui (may be {}) and result tuple
+    frames_out, out_dir = result["result"]
+    assert frames_out.shape == frames.shape
+    assert out_dir == str(tmp_path)
+    from PIL import Image
+    with Image.open(str(out_file)) as im:
+        assert im.is_animated and im.n_frames == 3
+
+
+def test_animated_sprite_export_onion_skin_changes_frames(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes.api, "output_dir", lambda: str(tmp_path))
+    # frame0=0, frame1=1, frame2=0 — onion skin on frame1 should darken it
+    f = torch.zeros((3, 2, 2, 3))
+    f[1] = 1.0
+    result = nodes.AnimatedSpriteExport().export(
+        f, format="gif", loop=True, fps=8,
+        onion_skin=True, onion_prev=1, onion_next=1, onion_opacity=0.5, name="oss"
+    )
+    frames_out, _ = result["result"]
+    # frame1 should be blended: 0.5*1 + 0.5*mean(0,0) = 0.5
+    assert abs(float(frames_out[1].mean()) - 0.5) < 1e-4
+
+
+def test_animated_sprite_export_webp(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes.api, "output_dir", lambda: str(tmp_path))
+    frames = torch.stack([
+        torch.full((4, 4, 3), v, dtype=torch.float32) for v in [0.2, 0.5, 0.8]
+    ])
+    nodes.AnimatedSpriteExport().export(frames, format="webp", loop=True, fps=12, name="clip")
+    assert (tmp_path / "clip.webp").exists()

@@ -6,7 +6,7 @@ import json
 
 from aiohttp import web
 
-from andypack import api
+from andypack import api, images
 from andypack.manifest import ManifestError, load_manifest
 
 try:
@@ -22,12 +22,16 @@ def _manifest_from_request(request):
     # directory itself. A bad/missing manifest returns a JSON 400, not an unhandled
     # 500 from open()-ing a directory or a nonexistent file.
     name = request.query.get("manifest") or "default.json"
+    path = api.safe_manifest_path(name)
+    if path is None:
+        raise web.HTTPBadRequest(
+            text=json.dumps({"error": f"unsafe manifest name {name!r}"}),
+            content_type="application/json")
     try:
-        return load_manifest(api.resolve_manifest_path(name))
+        return load_manifest(path)
     except (OSError, ManifestError) as exc:
         raise web.HTTPBadRequest(
-            text=json.dumps({"error": str(exc)}), content_type="application/json"
-        ) from exc
+            text=json.dumps({"error": str(exc)}), content_type="application/json") from exc
 
 
 if _routes is not None:
@@ -51,9 +55,11 @@ if _routes is not None:
         return web.json_response(api.manifest_options(manifest))
 
     def _root_and_char(request):
-        return api.character_root_and_name(
-            request.query.get("character_dir", ""), request.query.get("character", "")
-        )
+        root = api.characters_dir() or ""
+        name = request.query.get("character", "")
+        if not api._is_safe_segment(name):
+            return (root, "")  # unsafe name -> empty character (read-only options degrade)
+        return (root, name)
 
     @_routes.get("/anim_coord/options")
     async def _options(request):
@@ -134,5 +140,24 @@ if _routes is not None:
             root, str(body.get("character") or ""),
             str(body.get("positive_prompt") or ""),
             str(body.get("negative_prompt") or ""),
+            overlay={"poses": body.get("poses"), "animations": body.get("animations")},
         )
         return web.json_response(result, status=200 if result.get("ok") else 400)
+
+    @_routes.get("/anim_coord/thumb")
+    async def _thumb(request):
+        # Returns a base64 data-URI for a rendered pose/animation/reference cell.
+        # All segments are validated by api.thumb_path — nothing the client sends
+        # can escape the server-resolved characters dir.
+        root = api.characters_dir() or ""
+        character = request.query.get("character", "")
+        kind = request.query.get("kind", "")
+        entity_id = request.query.get("id", "")
+        direction = request.query.get("direction", "")
+        path = api.thumb_path(root, character, kind, entity_id, direction)
+        if path is None:
+            raise web.HTTPNotFound(
+                text=json.dumps({"error": "thumbnail not found"}),
+                content_type="application/json",
+            )
+        return web.json_response({"data_uri": images.thumbnail_data_uri(path)})

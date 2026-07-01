@@ -145,3 +145,24 @@ def test_build_character_preserves_overlay_and_drops_cleared_keys():
     assert out["positive_prompt"] == "new"
     assert "negative_prompt" not in out
     assert out["poses"] == existing["poses"]
+
+
+def test_sidecar_records_has_alpha():
+    meta = {"prompt_hash": "sha1:x", "direction": "EAST"}
+    s = io.build_pose_sidecar(meta, created_utc="2026-01-01T00:00:00Z", has_alpha=True)
+    assert s["has_alpha"] is True
+
+
+def test_atomic_write_text_writes_and_replaces(tmp_path):
+    p = str(tmp_path / "sub" / "data.json")
+    io.atomic_write_text(p, '{"hello": "world"}')
+    assert open(p, encoding="utf-8").read() == '{"hello": "world"}'
+    # no leftover temp files in the directory
+    assert os.listdir(tmp_path / "sub") == ["data.json"]
+
+
+def test_atomic_write_text_replaces_existing(tmp_path):
+    p = str(tmp_path / "data.txt")
+    io.atomic_write_text(p, "first")
+    io.atomic_write_text(p, "second")
+    assert open(p, encoding="utf-8").read() == "second"
