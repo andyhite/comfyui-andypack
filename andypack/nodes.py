@@ -354,12 +354,16 @@ class PoseSweepSelector:
         return float("nan")
 
     @staticmethod
-    def _ctx(character, mode, skip_mirrored, include_base, category, pose, direction):
+    def _ctx(manifest, character, mode, skip_mirrored, include_base, category, pose, direction):
         return {
             "character": character, "kind": "pose", "mode": mode,
             "exclude_root": not include_base, "category": category or None,
             "skip_mirrored": skip_mirrored,
             "target": (pose, direction) if mode == "target" else None,
+            # The writer takes no manifest input, but recomputing REMAINING
+            # post-write needs one — stash the already-computed effective
+            # manifest here (in-memory only; _sweep is never persisted).
+            "manifest": manifest,
         }
 
     def select(self, manifest, character, mode, skip_mirrored, include_base,
@@ -368,7 +372,7 @@ class PoseSweepSelector:
             raise RuntimeError("PoseSweepSelector: select a character first")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
-        ctx = self._ctx(character, mode, skip_mirrored, include_base, category,
+        ctx = self._ctx(manifest, character, mode, skip_mirrored, include_base, category,
                         pose, direction)
         if mode == "target":
             if not pose or not direction:
@@ -404,11 +408,28 @@ class PoseSweepSelector:
         return (_build_pose_bundle(r, root, character, sweep=ctx),)
 
 
+def _sweep_remaining(bundle: dict) -> int:
+    """The count of cells still actionable after a write, for the sweep loop's
+    continue-signal. `target` mode (or any bundle with no `_sweep`, e.g. a
+    manually-wired single write) returns 0 so the loop runs exactly once;
+    `sweep` mode returns the live post-write count so the loop drains then
+    stops cleanly at 0. Must be recomputed after each write — dependency depth
+    means a write can unblock new cells the pre-write count didn't see."""
+    s = bundle.get("_sweep") or {}
+    if s.get("mode") != "sweep":
+        return 0
+    return api.remaining_actionable(
+        s["manifest"], _characters_root(), s["character"], s["kind"],
+        exclude_root=s.get("exclude_root", False),
+        category=s.get("category"), skip_mirrored=s.get("skip_mirrored", False),
+    )
+
+
 class PoseFrameWriter:
     CATEGORY = "andypack/Pose"
     FUNCTION = "write"
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("OUTPUT_DIR",)
+    RETURN_TYPES = ("STRING", "INT")
+    RETURN_NAMES = ("OUTPUT_DIR", "REMAINING")
     OUTPUT_NODE = True
 
     @classmethod
@@ -435,7 +456,7 @@ class PoseFrameWriter:
         images.save_image_png(image, png_path, mask=mask)
         sidecar = io.build_pose_sidecar(meta, created_utc=_utc_now(), has_alpha=has_alpha)
         io.atomic_write_json(sidecar_path, sidecar)
-        return (output_dir,)
+        return (output_dir, _sweep_remaining(pose))
 
 
 class AnimationSweepSelector:
@@ -481,12 +502,16 @@ class AnimationSweepSelector:
         return float("nan")
 
     @staticmethod
-    def _ctx(character, mode, skip_mirrored, category, animation, direction):
+    def _ctx(manifest, character, mode, skip_mirrored, category, animation, direction):
         return {
             "character": character, "kind": "animation", "mode": mode,
             "exclude_root": False, "category": category or None,
             "skip_mirrored": skip_mirrored,
             "target": (animation, direction) if mode == "target" else None,
+            # The writer takes no manifest input, but recomputing REMAINING
+            # post-write needs one — stash the already-computed effective
+            # manifest here (in-memory only; _sweep is never persisted).
+            "manifest": manifest,
         }
 
     def select(self, manifest, character, mode, skip_mirrored, category, animation, direction):
@@ -494,7 +519,7 @@ class AnimationSweepSelector:
             raise RuntimeError("AnimationSweepSelector: select a character first")
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
-        ctx = self._ctx(character, mode, skip_mirrored, category, animation, direction)
+        ctx = self._ctx(manifest, character, mode, skip_mirrored, category, animation, direction)
         if mode == "target":
             if not animation or not direction:
                 raise RuntimeError(
@@ -534,8 +559,8 @@ class AnimationSweepSelector:
 class AnimationFrameWriter:
     CATEGORY = "andypack/Animation"
     FUNCTION = "write"
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("OUTPUT_DIR",)
+    RETURN_TYPES = ("STRING", "INT")
+    RETURN_NAMES = ("OUTPUT_DIR", "REMAINING")
     OUTPUT_NODE = True
 
     @classmethod
@@ -605,7 +630,7 @@ class AnimationFrameWriter:
             has_alpha=has_alpha,
         )
         io.atomic_write_json(meta_path, full_meta)
-        return (output_dir,)
+        return (output_dir, _sweep_remaining(animation))
 
 
 # (key, output name) for each Unpack output, in slot order. The keys must cover
