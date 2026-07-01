@@ -112,8 +112,8 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
   graph. RGBA materializes ONLY at the writer/pack disk boundary — either because a
   4-channel image was explicitly supplied, or because an optional `MASK` input was
   connected. `has_alpha` is recorded in the sidecar/meta when alpha is present. All
-  alpha logic lives in `images.py`; `resolve.py`, `manifest.py`, and `io.py` stay
-  torch-free and have no knowledge of alpha channels.
+  alpha pixel logic lives in `images.py`; `resolve.py` and `manifest.py` are alpha-unaware;
+  `io.py` stays torch-free and records the `has_alpha` flag but does no pixel-level alpha work.
 - **HTTP routes take no client filesystem paths**: the `/anim_coord/*` routes
   return JSON only and never serve file bytes. Reads enumerate the pack's own
   server-resolved dirs; writes (`manifest/save`, `character/create|save`) address a
