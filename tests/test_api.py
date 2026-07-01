@@ -258,6 +258,25 @@ def test_remaining_actionable_zero_when_nothing_actionable(manifest, tree):
     assert api.remaining_actionable(manifest, tree.root, tree.char, "animation") == 0
 
 
+def test_sweep_drains_derived_after_base_renders(manifest, tree):
+    # Fixture: `fighting_stance` (`from: {ref: base, direction: same}`) is the
+    # only non-root pose, and its only direction is EAST (base covers EAST,
+    # SOUTH_EAST, SOUTH, but fighting_stance only defines EAST) — so EAST is
+    # the direction that actually expresses the base -> derived edge here.
+    tree.character(concept="x")
+    d = "EAST"
+    # Render base (root) for the direction — mirrors Character Creator / include_base.
+    tree.pose("base", d)
+    # A derived pose depending on base should now be actionable for that direction.
+    job = api.next_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+    assert job is not None, "a derived pose should unblock once base is rendered"
+    assert job["id"] == "fighting_stance" and job["direction"] == d
+    before = api.remaining_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+    tree.pose(job["id"], job["direction"])
+    after = api.remaining_actionable(manifest, tree.root, tree.char, "pose", exclude_root=True)
+    assert after == before - 1
+
+
 def test_read_character_layer_rejects_path_traversal(tmp_path):
     import json
     # A character.json planted OUTSIDE the characters root must not be reachable
