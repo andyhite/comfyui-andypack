@@ -301,7 +301,7 @@
     "Node name for S&R": "UNETLoader"
    },
    "widgets_values": [
-    "wan2.2_i2v_high_noise_14B_fp16.safetensors",
+    "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
     "default"
    ]
   },
@@ -453,7 +453,7 @@
     "Node name for S&R": "UNETLoader"
    },
    "widgets_values": [
-    "wan2.2_i2v_low_noise_14B_fp16.safetensors",
+    "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
     "default"
    ]
   },
@@ -606,7 +606,7 @@
     "Node name for S&R": "CLIPLoader"
    },
    "widgets_values": [
-    "umt5_xxl_fp16.safetensors",
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
     "wan",
     "default"
    ]
