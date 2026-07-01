@@ -6,7 +6,7 @@ import json
 import os
 import shutil
 import warnings
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from andypack import io
 from andypack.manifest import (
@@ -473,7 +473,7 @@ def _actionable_items(
     exclude_root: bool = False,
     category: Optional[str] = None,
     skip_mirrored: bool = False,
-):
+) -> Iterator[dict]:
     """Yield selectable-now (ready/stale) cells of `kind` in dependency order —
     the shared filter that backs both `next_actionable` and
     `remaining_actionable`.
@@ -574,6 +574,5 @@ def remaining_actionable(
             skip_mirrored=skip_mirrored,
         )
     )
-    return None
 
 
