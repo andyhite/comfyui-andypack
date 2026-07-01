@@ -215,6 +215,28 @@ def test_recolor_hex_remaps_hue():
     assert float(out[0, 0, 0, 2]) > 0.9
 
 
+def test_save_animated_gif_rgba_batch(tmp_path):
+    """A 4-ch RGBA frame batch must not crash — alpha is dropped to RGB for GIF."""
+    import torch
+    from PIL import Image
+    f = torch.stack([torch.full((4, 4, 4), v, dtype=torch.float32) for v in (0.1, 0.4, 0.7)])
+    p = str(tmp_path / "rgba.gif")
+    images.save_animated_gif(f, p, 8)
+    with Image.open(p) as im:
+        assert im.is_animated and im.n_frames == 3
+
+
+def test_save_animated_webp_rgba_batch(tmp_path):
+    """A 4-ch RGBA frame batch must not crash — alpha is dropped to RGB for WebP."""
+    import torch
+    from PIL import Image
+    f = torch.stack([torch.full((4, 4, 4), v, dtype=torch.float32) for v in (0.1, 0.4, 0.7)])
+    p = str(tmp_path / "rgba.webp")
+    images.save_animated_webp(f, p, 8)
+    with Image.open(p) as im:
+        assert getattr(im, "n_frames", 1) == 3
+
+
 def test_save_gif(tmp_path):
     import torch
     from PIL import Image

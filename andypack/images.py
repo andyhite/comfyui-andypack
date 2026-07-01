@@ -422,7 +422,7 @@ def save_animated_webp(
     When ``loop`` is True (the default) the animation repeats indefinitely
     (loop count 0). When False it plays once (loop count 1).
     """
-    arr = (frames.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
+    arr = (frames[..., :3].clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
     pil = [Image.fromarray(a, mode="RGB") for a in arr]
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
@@ -443,7 +443,7 @@ def save_animated_gif(
     When ``loop`` is True (the default) the animation repeats indefinitely
     (loop count 0). When False it plays once (loop count 1).
     """
-    arr = (frames.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
+    arr = (frames[..., :3].clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
     pil = [Image.fromarray(a, mode="RGB").convert("P") for a in arr]
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
@@ -464,7 +464,7 @@ def save_animated_apng(
     When ``loop`` is True (the default) the animation repeats indefinitely
     (loop count 0). When False it plays once (loop count 1).
     """
-    arr = (frames.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
+    arr = (frames[..., :3].clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
     pil = [Image.fromarray(a, mode="RGB") for a in arr]
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)

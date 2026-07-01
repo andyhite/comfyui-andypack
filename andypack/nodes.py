@@ -1300,7 +1300,6 @@ class SpritesheetPacker:
             "optional": {
                 "trim_data": ("SPRITE_TRIM",),
                 "fps": ("INT", {"forceInput": True}),
-                "names": ("STRING", {"default": ""}),
             },
         }
 
@@ -1314,7 +1313,6 @@ class SpritesheetPacker:
         power_of_two,
         trim_data=None,
         fps=None,
-        names="",
     ):
         sheet, atlas_dict = sprites.pack_sheet(
             image,
