@@ -7,19 +7,19 @@ opens as a graph you can run. Each carries a **Note** node explaining the step.
 Run them in order. State is disk-backed under `<output>/characters/<char>/`, so
 each stage reads what the previous one wrote.
 
-| File | Stage | Model | What it does |
-|------|-------|-------|--------------|
-| `1a_character_create.json` | Create | FLUX.2 Klein 9B | txt2img a character reference, persist it (`CharacterCreator`), and render `base@SOUTH` via `PoseEditConditioning`. |
-| `1b_turnaround_batch.json` | Turnaround | FLUX.2 Klein 9B | `AutoPoseSelector(include_base)` → `PoseEditConditioning` → sampler → `PoseFrameWriter`. **Queue repeatedly** to fill every base + derived pose across all directions in ONE graph. |
-| `2_animate_fflf.json` | Animate | WAN 2.2 14B i2v | `AutoAnimationSelector` → dual hi/lo (+ lightx2v 4-step + pixel-animate LoRAs) → `PainterFLF2V` → dual-pass ddim → BiRefNet alpha → `AnimationFrameWriter`. **Queue repeatedly** for every clip. |
-| `3_sprite_export.json` | Export | — | `AnimationSheetBuilder` (rows = directions, cols = frames) → `AtlasMetadataWriter` (Aseprite). One node builds the game sheet + tagged atlas. |
+| File                       | Stage      | Model           | What it does                                                                                                                                                                                     |
+| -------------------------- | ---------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `1a_character_create.json` | Create     | FLUX.2 Klein 9B | txt2img a character reference, persist it (`CharacterCreator`), and render `base@SOUTH` via `PoseEditConditioning`.                                                                              |
+| `1b_turnaround_batch.json` | Turnaround | FLUX.2 Klein 9B | `AutoPoseSelector(include_base)` → `PoseEditConditioning` → sampler → `PoseFrameWriter`. **Queue repeatedly** to fill every base + derived pose across all directions in ONE graph.              |
+| `2_animate_fflf.json`      | Animate    | WAN 2.2 14B i2v | `AutoAnimationSelector` → dual hi/lo (+ lightx2v 4-step + pixel-animate LoRAs) → `PainterFLF2V` → dual-pass ddim → BiRefNet alpha → `AnimationFrameWriter`. **Queue repeatedly** for every clip. |
+| `3_sprite_export.json`     | Export     | —               | `AnimationSheetBuilder` (rows = directions, cols = frames) → `AtlasMetadataWriter` (Aseprite). One node builds the game sheet + tagged atlas.                                                    |
 
 ## Requirements
 
 - **Models** (see `pod/models.txt` in the deploy repo, or `docs/prompting-guide.md`):
   `flux-2-klein-9b` + `qwen_3_8b` encoder + `flux2-vae`; `wan2.2_i2v_high/low_noise_14B`
-  + `umt5_xxl` + `wan_2.1_vae` + `clip_vision_h` + `lightx2v` 4-step LoRAs +
-  `wan2.2_animate_adapter_model` (the pixel-animate LoRA).
+  - `umt5_xxl` + `wan_2.1_vae` + `clip_vision_h` + `lightx2v` 4-step LoRAs +
+    `wan2.2_animate_adapter_model` (the pixel-animate LoRA).
 - **Custom nodes**: `Comfyui-PainterFLF2V` (first-last-frame) and `comfyui-rmbg`
   (BiRefNet) for the animation workflow's alpha path, plus this pack.
 
