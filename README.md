@@ -300,6 +300,80 @@ for prompt structure, the standard Wan negative block, and sampler settings.
 
 ---
 
+## Game-asset / sprite export
+
+Once you have rendered poses and animation clips, comfyui-andypack provides a
+second layer of nodes for turning those renders into engine-ready game assets.
+
+### Alpha → trim → pack → atlas pipeline
+
+Bring your own background-removal step (any BG remover node in your graph). Feed
+its output into the writers' optional **MASK** input (or supply a 4-channel RGBA
+image directly). The writers record `has_alpha` in the sidecar/meta and preserve
+the transparency throughout the pack chain. ComfyUI IMAGE tensors stay 3-channel
+inside the graph; RGBA materializes only at the disk boundary.
+
+From there:
+
+1. **Sprite Trim & Pivot** — trims transparent padding from each frame and records
+   the pivot offset so all frames in a sheet stay consistently anchored.
+2. **Spritesheet Packer** — packs a batch of trimmed frames into a single
+   spritesheet image (row-major by default) ready for engine import.
+3. **Atlas Metadata Writer** — serializes frame coordinates, pivots, and animation
+   metadata to JSON or XML in the engine format of your choice.
+4. **Animated Sprite Export** — convenience node that chains trim, pack, and
+   metadata write into one step for a completed animation clip.
+
+### Character Atlas Builder
+
+FFLF-aware, 8-direction atlas builder. Given a fully rendered character (all
+directions + animations), it composites a single atlas sheet organized by direction
+— ready to drop into a 2D engine's character importer.
+
+### Palette Quantize & Lock
+
+For pixel-art workflows: **Palette Quantize & Lock** reduces each frame to a
+fixed color palette and locks it across all 8 directions so AI color drift doesn't
+produce per-direction inconsistencies. Apply after background removal and before
+sprite packing.
+
+### Diagnostics: turnaround, identity, state machine
+
+- **Turnaround Sheet** — composites all rendered directions for a pose side-by-side
+  as an unlabeled contact sheet. Use it to catch drift between directions before
+  packing.
+- **Character Identity Anchor** — re-asserts the character's reference image at a
+  point in the graph, useful for multi-stage pipelines where the reference might
+  otherwise go stale.
+- **State Machine Report** — summarizes the animation dependency graph as a state
+  machine table (states, transitions, loop flags) for engine import planning.
+
+### Render-economy nodes
+
+- **Manikin Pose Control** — select and configure the bundled per-direction manikin
+  reference image from within the graph rather than hard-coding a file path.
+- **Variant Layer Composer** — layer a colour/outfit variant prompt on top of a
+  base pose for batch rendering color variants without re-authoring the full manifest.
+- **Action Set Selector (next job)** — picks the next unrendered action group in
+  dependency order, similar to the Auto Animation Selector but scoped to a named
+  action set.
+- **Boomerang Loop Writer** — synthesizes a seamless loop from a one-way A→B clip
+  by appending the reversed interior (ping-pong). `drop_turnaround=True` (default)
+  is stutter-free; `drop_turnaround=False` includes both extremes and a naive player
+  should drop the duplicate final frame.
+- **Tween Clip Provider** — supplies a short interpolated bridge clip between two
+  key poses, useful for generating transition animations without a full Wan run.
+- **Frame Timing Normalizer** — resamples a clip to a target frame count or fps,
+  normalizing timing before packing.
+- **Color Variant Batcher** — repeats a clip render with per-variant palette
+  overrides to produce color/outfit variants in a single queue run.
+- **Mirror Frame Writer** (existing) — synthesizes a `mirror_map` direction (e.g.
+  WEST from EAST) by flipping rendered frames. The `skip_mirrored` flag on
+  Auto Pose/Animation Selector skips directions that are already covered by a mirror
+  so the batch generator never double-renders them.
+
+---
+
 ## Development
 
 ```bash

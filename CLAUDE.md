@@ -38,8 +38,21 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
   `manifest_name_is_safe`); resolves paths under ComfyUI's `user`/`output` dirs
   (all return None / degrade outside ComfyUI).
 - `server.py` — aiohttp `/anim_coord/*` routes (read + write), registered on import.
-- `nodes.py` — the ComfyUI node classes + mappings (17 nodes), grouped into
-  `andypack/<Manifest|Character|Pose|Animation|Diagnostics>` categories.
+- `sprites.py` — pure tensor/PIL sprite ops: trim & pivot, spritesheet packing,
+  palette quantize & lock. No ComfyUI/torch side effects beyond tensor I/O.
+- `atlas.py` — pure-stdlib engine-format serializers (JSON/XML atlas metadata).
+  No ComfyUI/torch imports (keep it so).
+- `nodes.py` — the ComfyUI node classes + mappings (33 nodes), grouped into
+  `andypack/<Manifest|Character|Pose|Animation|Diagnostics|Sprite|Export>` categories.
+  Original 17 animation-coordinator nodes plus 16 new game-asset nodes:
+  - Sprite: Sprite Trim & Pivot, Spritesheet Packer, Character Atlas Builder,
+    Palette Quantize & Lock.
+  - Export: Atlas Metadata Writer, Animated Sprite Export.
+  - Pose: Manikin Pose Control, Variant Layer Composer.
+  - Character: Character Identity Anchor.
+  - Animation: Action Set Selector (next job), Boomerang Loop Writer, Tween Clip
+    Provider, Frame Timing Normalizer, Color Variant Batcher.
+  - Diagnostics: State Machine Report, Turnaround Sheet.
 - `web/anim_coord.js` — frontend extension for dynamic character-scoped combos
   (pure-Python `INPUT_TYPES` can't populate these; it needs the server routes).
   The character combo is repopulated from `/anim_coord/characters` on node add /
@@ -76,6 +89,8 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
 - **Generation params** (`width`/`height`/`length`/`fps`/`shift`) ride in the
   animation meta (from `defaults` + per-animation override) and surface as wireable
   selector outputs so they drive `WanFirstLastFrameToVideo` / `ModelSamplingSD3`.
+  `width`/`height`/`length`/`fps` are now **required** to resolve to a positive int
+  per animation — the loader raises a fatal error if any are missing or zero.
 - **Atomic write ordering**: write the payload (image/frames) first, then the
   `meta.json` / `.json` sidecar LAST via temp-file + atomic rename. There is no
   `.complete` marker — a dir with no parseable meta/sidecar is treated as
@@ -83,14 +98,22 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
   stale higher-index frames behind.
 - **Staleness** (`outdated`): a complete node is stale if its merged-prompt hash
   drifted, OR a recorded source's `render_id` changed (re-rendered even with an
-  unchanged prompt), OR any ancestor is outdated. The `base` pose roots the tree —
-  its per-direction sidecars carry the provenance descendants stale against.
-  `character.json` carries NO provenance; editing the character prompt re-stales
-  via prompt-hash drift (it appears in compiled prompts through `{character_prompt}`).
+  unchanged prompt), OR any ancestor is outdated, OR the recorded dependency key-set
+  changed (a swapped `start_from`/`end_at` ref, or an `end_at` added/removed —
+  anchor-identity drift). The `base` pose roots the tree — its per-direction sidecars
+  carry the provenance descendants stale against. `character.json` carries NO
+  provenance; editing the character prompt re-stales via prompt-hash drift (it appears
+  in compiled prompts through `{character_prompt}`).
 - **A loop is derived, never authored**: `resolve_animation` sets `meta["loop"]`
   iff the start and end anchors resolve to the same image (`start_image ==
   end_image`); the writer then drops the duplicated final frame. There is no
   manifest `loop` field — don't add one back.
+- **Alpha boundary**: ComfyUI IMAGE tensors stay **3-channel** (RGB) throughout the
+  graph. RGBA materializes ONLY at the writer/pack disk boundary — either because a
+  4-channel image was explicitly supplied, or because an optional `MASK` input was
+  connected. `has_alpha` is recorded in the sidecar/meta when alpha is present. All
+  alpha logic lives in `images.py`; `resolve.py`, `manifest.py`, and `io.py` stay
+  torch-free and have no knowledge of alpha channels.
 - **HTTP routes take no client filesystem paths**: the `/anim_coord/*` routes
   return JSON only and never serve file bytes. Reads enumerate the pack's own
   server-resolved dirs; writes (`manifest/save`, `character/create|save`) address a
@@ -98,7 +121,11 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
   manifests dir and a character by a name snake-cased to one segment under the
   characters dir — nothing the client sends escapes those trees. A manifest is
   parsed + `validate_manifest`'d BEFORE it touches disk, so a bad edit is rejected,
-  not written over a working file.
+  not written over a working file. GET routes that accept a `manifest` or `character`
+  query param now gate those values against path traversal (the param must be a bare
+  segment with no separators). The new `GET /anim_coord/thumb` route returns a JSON
+  base64 data-URI; the path it reads is server-resolved and segment-validated — the
+  client sends no filesystem path.
 - Routes register on import only inside ComfyUI (`PromptServer` import is guarded);
   `api`/`io` helpers return None when `folder_paths` is unavailable.
 

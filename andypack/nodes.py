@@ -1612,7 +1612,7 @@ class CharacterIdentityAnchor:
 
 
 class TurnaroundSheet:
-    """Composite every rendered direction of a pose into one labeled contact sheet.
+    """Composite every rendered direction of a pose into one unlabeled contact sheet.
 
     Iterates over CANONICAL_DIRECTIONS in order; each rendered direction loads its
     PNG, each unrendered direction becomes a mid-gray placeholder. Returns a single
@@ -1747,6 +1747,12 @@ class BoomerangLoopWriter:
     Boomerang (default): appends the reversed interior of the clip so that playback
     ping-pongs without duplicating the turn-around extremes. Sets meta loop=True so
     downstream tools know this clip plays as a seamless loop.
+
+    drop_turnaround=True (default): the reversed interior excludes both extremes
+    (first and last frame), producing a stutter-free seamless loop.
+    drop_turnaround=False: the reversed interior includes both turnaround extremes
+    (first == last), so the combined clip has a duplicated boundary frame — a naive
+    player must drop the duplicate final frame to avoid a stutter.
 
     trim_seam: drops the trailing duplicate boundary frame from a clip that already
     nearly loops, for use when the sampler produced a near-loop and only the seam

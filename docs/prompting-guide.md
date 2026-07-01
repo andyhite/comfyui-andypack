@@ -168,7 +168,25 @@ already does this when the resolver derives `loop`).
 
 ---
 
-## 5. ComfyUI sidebar tab API (CRUD manifest panel)
+## 5. Engine-ready sprite export tips
+
+**Alpha cutouts (bring your own BG removal).** To produce transparent sprites
+directly usable in a game engine, run a background-removal node upstream of the
+Pose Frame Writer or Animation Frame Writer and connect its mask to the writer's
+optional **MASK** input (or supply a pre-composited RGBA image). The writers
+preserve the alpha channel at the disk boundary and record `has_alpha` in the
+sidecar/meta; everything inside the graph stays 3-channel (RGB). Chain into
+Sprite Trim & Pivot → Spritesheet Packer for the full pipeline.
+
+**Palette lock for pixel-art consistency.** If your character uses a restricted
+palette (pixel-art, limited-color, or hand-painted look), apply **Palette Quantize
+& Lock** after background removal and before packing. This forces every direction
+and animation to the same quantized color table, preventing per-direction color
+drift that would be visually obvious in a sprite sheet.
+
+---
+
+## 6. ComfyUI sidebar tab API (CRUD manifest panel)
 
 > Re-verify signatures against the installed frontend version (the API has churned).
 
