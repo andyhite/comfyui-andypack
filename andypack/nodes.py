@@ -304,6 +304,44 @@ class CharacterReferenceLoader:
         return (images.load_image_tensor(path),)
 
 
+class CharacterPromptLoader:
+    """Read a character's authored identity prompts from `character.json` as
+    wireable STRINGs, so a txt2img / FLUX edit graph can drive the character's
+    own positive/negative without hand-typing them. Unlike
+    CharacterReferenceLoader (which needs persisted reference art), this only
+    needs the authored layer, so it works before any render exists — e.g. to
+    seed the Create stage's reference generation from the character combo."""
+
+    CATEGORY = "andypack/Character"
+    FUNCTION = "load"
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("POSITIVE", "NEGATIVE")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"character": (_character_choices(),)}}
+
+    @classmethod
+    def IS_CHANGED(cls, character):
+        if character in ("", _NO_CHARACTER):
+            return float("nan")
+        path = os.path.join(
+            _characters_root(), io.to_snake_case(character), "character.json"
+        )
+        return f"{path}:{_mtime(path)}"
+
+    def load(self, character):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("CharacterPromptLoader: select a character first")
+        identity = resolve.read_character(
+            _characters_root(), io.to_snake_case(character)
+        )
+        return (
+            str(identity.get("positive_prompt", "") or ""),
+            str(identity.get("negative_prompt", "") or ""),
+        )
+
+
 class PoseSweepSelector:
     """Sweep or spot-fix the pose turnaround. mode=sweep emits the next actionable
     (ready/stale) non-root pose in dependency order — drive it inside a Sweep Loop
@@ -1408,6 +1446,7 @@ NODE_CLASS_MAPPINGS = {
     "AnimationManifestLoader": AnimationManifestLoader,
     "CharacterCreator": CharacterCreator,
     "CharacterReferenceLoader": CharacterReferenceLoader,
+    "CharacterPromptLoader": CharacterPromptLoader,
     "PoseSweepSelector": PoseSweepSelector,
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
@@ -1430,6 +1469,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationManifestLoader": "Animation Manifest Loader",
     "CharacterCreator": "Character Creator",
     "CharacterReferenceLoader": "Character Reference Loader",
+    "CharacterPromptLoader": "Character Prompt Loader",
     "PoseSweepSelector": "Pose Sweep Selector",
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",
