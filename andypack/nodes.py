@@ -1403,6 +1403,65 @@ class PoseEditConditioning:
         return (positive, negative, latent)
 
 
+class ManikinLoader:
+    """Load a bundled manikin (the per-direction camera/body-orientation reference)
+    as an IMAGE, plus its direction name. The starting point for authoring CUSTOM
+    pose references: drive a pose-capable graph (e.g. an OpenPose ControlNet on an
+    SDXL/SD1.5 checkpoint — FLUX.2 Klein has no ControlNet path — or a pose-transfer
+    edit) once per direction, then persist each result with Pose Reference Writer."""
+
+    CATEGORY = "andypack/Pose"
+    FUNCTION = "load"
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("MANIKIN", "DIRECTION")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"direction": (manikins.CANONICAL_DIRECTIONS,)}}
+
+    def load(self, direction):
+        return (images.load_image_tensor(manikins.manikin_path(direction)), direction)
+
+
+class PoseReferenceWriter:
+    """Save an IMAGE into the pose-references dir as `<name>_<DIRECTION>.png` —
+    exactly the filename a pose direction layer's `reference_image` points at.
+    Returns that filename so it can be pasted into the manifest. Wire Manikin
+    Loader's DIRECTION output into `direction_from` to keep the loader and writer
+    on the same direction automatically (it overrides the combo when connected)."""
+
+    CATEGORY = "andypack/Pose"
+    FUNCTION = "write"
+    OUTPUT_NODE = True
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("FILENAME",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "name": ("STRING", {"default": "pose"}),
+                "direction": (manikins.CANONICAL_DIRECTIONS,),
+            },
+            "optional": {
+                "direction_from": ("STRING", {"default": "", "forceInput": True}),
+            },
+        }
+
+    def write(self, image, name, direction, direction_from=""):
+        d = direction_from or direction
+        if d not in manikins.CANONICAL_DIRECTIONS:
+            raise RuntimeError(f"PoseReferenceWriter: unknown direction {d!r}")
+        try:
+            snake = io.to_snake_case(name)
+        except ValueError as exc:
+            raise RuntimeError(f"PoseReferenceWriter: {exc}") from exc
+        filename = f"{snake}_{d}.png"
+        images.save_image_png(image, os.path.join(_pose_references_root(), filename))
+        return (filename,)
+
+
 class AnimationFrames:
     """Load a rendered animation clip's frames back as an IMAGE batch (+ its fps) —
     just the raw frames on disk, no dep-chaining or loop semantics. Use it to
@@ -1611,6 +1670,8 @@ NODE_CLASS_MAPPINGS = {
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
     "PoseEditConditioning": PoseEditConditioning,
+    "ManikinLoader": ManikinLoader,
+    "PoseReferenceWriter": PoseReferenceWriter,
     "AnimationSweepSelector": AnimationSweepSelector,
     "AnimationFrameWriter": AnimationFrameWriter,
     "AnimationUnpack": AnimationUnpack,
@@ -1636,6 +1697,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",
     "PoseEditConditioning": "Pose Edit Conditioning",
+    "ManikinLoader": "Manikin Loader",
+    "PoseReferenceWriter": "Pose Reference Writer",
     "AnimationSweepSelector": "Animation Sweep Selector",
     "AnimationFrameWriter": "Animation Frame Writer",
     "AnimationUnpack": "Unpack Animation",

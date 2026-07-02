@@ -975,3 +975,32 @@ def test_frame_retime_upsamples():
     frames, fps = nodes.FrameRetime().retime(_batch(4), fps=8, target_fps=16, mode="resample")
     assert int(frames.shape[0]) == 8
     assert fps == 16
+
+
+def test_manikin_loader_returns_image_and_direction():
+    img, direction = nodes.ManikinLoader().load("EAST")
+    assert direction == "EAST"
+    assert not images.is_empty(img)
+
+
+def test_pose_reference_writer_writes_and_names(tmp_path, monkeypatch):
+    refs = str(tmp_path / "pose_refs")
+    monkeypatch.setattr(nodes, "_pose_references_root", lambda: refs)
+    (filename,) = nodes.PoseReferenceWriter().write(_img(4, 4), "Crouch Low", "EAST")
+    assert filename == "crouch_low_EAST.png"
+    assert os.path.exists(os.path.join(refs, filename))
+
+
+def test_pose_reference_writer_direction_from_overrides(tmp_path, monkeypatch):
+    refs = str(tmp_path / "pose_refs")
+    monkeypatch.setattr(nodes, "_pose_references_root", lambda: refs)
+    (filename,) = nodes.PoseReferenceWriter().write(
+        _img(4, 4), "crouch", "EAST", direction_from="WEST"
+    )
+    assert filename == "crouch_WEST.png"
+
+
+def test_pose_reference_writer_rejects_bad_direction(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_pose_references_root", lambda: str(tmp_path))
+    with pytest.raises(RuntimeError, match="direction"):
+        nodes.PoseReferenceWriter().write(_img(4, 4), "crouch", "EAST", direction_from="SIDEWAYS")
