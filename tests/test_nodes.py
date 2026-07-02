@@ -840,6 +840,39 @@ def test_animation_sheet_builder_packs_direction_rows(manifest, tree, monkeypatc
     assert "fighting_stance_idle" in report
 
 
+def _render_animation(tree, anim_id, direction, frames=2):
+    tree.animation(anim_id, direction, frames=frames)
+    d = resolve.animation_frame_dir(tree.root, tree.char, anim_id, direction)
+    for i in range(frames):  # real PNGs so the sheet builder can load them
+        images.save_image_png(_img(4, 4), os.path.join(d, f"frame_{i:05d}.png"))
+
+
+def test_sheet_export_all_writes_every_rendered_animation(manifest, tree, tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    monkeypatch.setattr(nodes.api, "output_dir", lambda: str(tmp_path / "out"))
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST")
+    _render_animation(tree, "fighting_stance_idle", "EAST")
+    _render_animation(tree, "walk", "EAST")
+    out = nodes.SheetExportAll().export(
+        manifest, tree.char, "all", "json_hash", 2, False
+    )
+    out_dir, report = out["result"]
+    for aid in ("fighting_stance_idle", "walk"):
+        assert os.path.exists(os.path.join(out_dir, f"{tree.char}_{aid}.png"))
+        assert os.path.exists(os.path.join(out_dir, f"{tree.char}_{aid}.json"))
+    # Unrendered animations are reported, not silently dropped.
+    assert "punch" in report and "skipped" in report
+    assert out["ui"]["text"] == (report,)
+
+
+def test_sheet_export_all_raises_when_nothing_rendered(manifest, tree, tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    monkeypatch.setattr(nodes.api, "output_dir", lambda: str(tmp_path / "out"))
+    tree.character()
+    with pytest.raises(RuntimeError, match="no animation"):
+        nodes.SheetExportAll().export(manifest, tree.char, "all", "json_hash", 2, False)
+
+
 def test_animation_frames_loads_clip(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     _render_clip(tree, "fighting_stance_idle", "EAST", n=3)

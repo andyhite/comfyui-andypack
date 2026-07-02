@@ -25,7 +25,7 @@ const SELECTOR_NODES = {
 
 // Nodes whose execution pushes {"ui": {"text": [...]}} — render it in-node as a
 // read-only multiline widget (no third-party Show Text pack needed).
-const TEXT_DISPLAY_NODES = new Set(["CoverageReport"]);
+const TEXT_DISPLAY_NODES = new Set(["CoverageReport", "SheetExportAll"]);
 
 const enc = encodeURIComponent;
 

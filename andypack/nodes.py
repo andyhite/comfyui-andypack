@@ -1153,11 +1153,7 @@ class AtlasMetadataWriter:
                 f"(no directory separators), got {name!r}"
             )
         output_dir = os.path.join(api.output_dir() or "output", output_subdir)
-        png_path = os.path.join(output_dir, f"{name}.png")
-        images.save_image_png(sheet, png_path)
-        text, ext = _atlas_mod.serialize(atlas, name, format)
-        meta_path = os.path.join(output_dir, f"{name}{ext}")
-        io.atomic_write_text(meta_path, text)
+        _write_atlas(output_dir, name, sheet, atlas, format)
         if animation is not None:
             prompt_hash = animation.get("_meta", {}).get("prompt_hash")
             if prompt_hash is not None:
@@ -1309,6 +1305,45 @@ class FrameRetime:
         return (images.retime_batch(frames, target, mode), int(target_fps))
 
 
+def _animation_sheet(manifest, root, character, animation, dirs, padding,
+                     power_of_two, trim=False):
+    """(sheet, atlas, row_dirs) for one animation's rendered directions, or None
+    when no direction is rendered. Raises when a rendered direction has no frames
+    on disk (a corrupt render — meta present, payload missing)."""
+    pairs = resolve.rendered_directions(
+        manifest, root, character, "animation", animation, dirs
+    )
+    if not pairs:
+        return None
+    rows: list[tuple[str, list]] = []
+    for d, path in pairs:
+        frame_files = sorted(
+            n for n in os.listdir(path)
+            if n.startswith("frame_") and n.endswith(".png")
+        )
+        if not frame_files:
+            raise RuntimeError(f"{animation!r}@{d} has no frames in {path}")
+        rows.append((d, [
+            images.load_image_tensor(os.path.join(path, fn), keep_alpha=True)
+            for fn in frame_files
+        ]))
+    if trim:
+        rows = sprites.union_trim_rows(rows)
+    fps = resolve.animation_fps(manifest, animation)
+    sheet, atlas = sprites.pack_direction_rows(
+        rows, fps=fps, padding=padding, power_of_two=power_of_two
+    )
+    return sheet, atlas, [d for d, _f in rows]
+
+
+def _write_atlas(output_dir, name, sheet, atlas, fmt):
+    """Write a sheet PNG + its serialized atlas metadata (payload first, text
+    atomic) under `output_dir` as `<name>.png` / `<name><ext>`."""
+    images.save_image_png(sheet, os.path.join(output_dir, f"{name}.png"))
+    text, ext = _atlas_mod.serialize(atlas, name, fmt)
+    io.atomic_write_text(os.path.join(output_dir, f"{name}{ext}"), text)
+
+
 class AnimationSheetBuilder:
     """Pack a full animation into a game-ready sprite sheet: one ROW per rendered
     direction, one COLUMN per frame. Unlike Character Atlas Builder (one frame per
@@ -1359,7 +1394,8 @@ class AnimationSheetBuilder:
             parts.append(f"{d}:{path}:{_mtime(meta)}")
         return "|".join(parts)
 
-    def build(self, manifest, character, animation, directions, padding, power_of_two, trim=False):
+    def build(self, manifest, character, animation, directions, padding,
+              power_of_two, trim=False):
         if character in ("", _NO_CHARACTER):
             raise RuntimeError("AnimationSheetBuilder: select a character first")
         if not animation:
@@ -1367,39 +1403,90 @@ class AnimationSheetBuilder:
         root = _characters_root()
         manifest = effective_manifest(manifest, root, character)
         dirs = _atlas_directions(directions)
-        pairs = resolve.rendered_directions(manifest, root, character, "animation", animation, dirs)
-        if not pairs:
+        built = _animation_sheet(
+            manifest, root, character, animation, dirs, padding, power_of_two, trim
+        )
+        if built is None:
             raise RuntimeError(
                 f"AnimationSheetBuilder: no rendered directions for animation "
                 f"{animation!r} (tried: {dirs})"
             )
-        rows: list[tuple[str, list]] = []
-        for d, path in pairs:
-            frame_files = sorted(
-                n for n in os.listdir(path)
-                if n.startswith("frame_") and n.endswith(".png")
-            )
-            if not frame_files:
-                raise RuntimeError(
-                    f"AnimationSheetBuilder: {animation!r}@{d} has no frames in {path}"
-                )
-            frames = [
-                images.load_image_tensor(os.path.join(path, fn), keep_alpha=True)
-                for fn in frame_files
-            ]
-            rows.append((d, frames))
-        if trim:
-            rows = sprites.union_trim_rows(rows)
+        sheet, atlas, row_dirs = built
         fps = resolve.animation_fps(manifest, animation)
-        sheet, atlas = sprites.pack_direction_rows(
-            rows, fps=fps, padding=padding, power_of_two=power_of_two
-        )
         report = (
-            f"{animation}: {len(rows)} directions × up to "
-            f"{max(len(f) for _d, f in rows)} frames @ {fps}fps\n"
-            + "Rows: " + ", ".join(d for d, _f in rows)
+            f"{animation}: {len(row_dirs)} directions @ {fps}fps\n"
+            + "Rows: " + ", ".join(row_dirs)
         )
         return {"ui": _image_preview(sheet), "result": (sheet, atlas, report)}
+
+
+class SheetExportAll:
+    """Stage-3 batch export: build and write a game sheet + atlas for EVERY
+    animation in the character's effective manifest that has at least one
+    rendered direction — one queue press instead of one Animation Sheet Builder
+    run per animation. Files land in `<output>/<output_subdir>/` as
+    `<character>_<animation>.png` + metadata. Animations with nothing rendered
+    are listed in the report, never silently dropped."""
+
+    CATEGORY = "andypack/Export"
+    FUNCTION = "export"
+    OUTPUT_NODE = True
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("OUTPUT_DIR", "REPORT")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "character": (_character_choices(),),
+                "directions": (["all", "cardinal_4"],),
+                "format": (["json_hash", "json_array", "aseprite",
+                            "godot_spriteframes", "unity", "texturepacker", "css"],),
+                "padding": ("INT", {"default": 2, "min": 0}),
+                "power_of_two": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "trim": ("BOOLEAN", {"default": False}),
+                "output_subdir": ("STRING", {"default": "atlas"}),
+            },
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, *a, **k):
+        return float("nan")  # disk-backed: re-export reflects the rendered tree
+
+    def export(self, manifest, character, directions, format, padding,
+               power_of_two, trim=False, output_subdir="atlas"):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("SheetExportAll: select a character first")
+        root = _characters_root()
+        manifest = effective_manifest(manifest, root, character)
+        dirs = _atlas_directions(directions)
+        out_dir = os.path.join(api.output_dir() or "output", output_subdir)
+        exported: list[str] = []
+        skipped: list[str] = []
+        for aid in sorted(manifest.get("animations", {})):
+            built = _animation_sheet(
+                manifest, root, character, aid, dirs, padding, power_of_two, trim
+            )
+            if built is None:
+                skipped.append(aid)
+                continue
+            sheet, atlas, row_dirs = built
+            name = f"{character}_{aid}"
+            _write_atlas(out_dir, name, sheet, atlas, format)
+            exported.append(f"{aid}: {len(row_dirs)} direction(s) -> {name}.png")
+        if not exported:
+            raise RuntimeError(
+                "SheetExportAll: no animation has any rendered direction — "
+                "run the animation sweep first"
+            )
+        lines = [f"exported {len(exported)} animation(s) to {out_dir}", *exported]
+        if skipped:
+            lines.append(f"skipped (nothing rendered): {', '.join(skipped)}")
+        report = "\n".join(lines)
+        return {"ui": {"text": (report,)}, "result": (out_dir, report)}
 
 
 class PoseEditConditioning:
@@ -1834,6 +1921,7 @@ NODE_CLASS_MAPPINGS = {
     "SpritesheetPacker": SpritesheetPacker,
     "AtlasMetadataWriter": AtlasMetadataWriter,
     "AnimationSheetBuilder": AnimationSheetBuilder,
+    "SheetExportAll": SheetExportAll,
     "TurnaroundSheet": TurnaroundSheet,
     "AnimatedSpriteExport": AnimatedSpriteExport,
     "FrameRetime": FrameRetime,
@@ -1862,6 +1950,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SpritesheetPacker": "Spritesheet Packer",
     "AtlasMetadataWriter": "Atlas Metadata Writer",
     "AnimationSheetBuilder": "Animation Sheet Builder",
+    "SheetExportAll": "Sheet Export All",
     "TurnaroundSheet": "Turnaround Sheet",
     "AnimatedSpriteExport": "Animated Sprite Export",
     "FrameRetime": "Frame Retime",
