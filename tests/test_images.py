@@ -133,9 +133,8 @@ def test_save_animated_gif_rgba_batch(tmp_path):
     p = str(tmp_path / "rgba.gif")
     images.save_animated_gif(f, p, 8)
     with Image.open(p) as im:
-        # GIF may deduplicate visually identical frames after quantization/palette transparency.
-        # Just verify it saved and has at least 1 frame (basic functionality).
-        assert im.n_frames >= 1
+        # Pillow merges consecutive frame bytes when identical (e.g., fully transparent frames).
+        assert im.n_frames == 2
 
 
 def test_save_animated_webp_rgba_batch(tmp_path):
