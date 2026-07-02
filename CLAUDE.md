@@ -42,12 +42,15 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
   palette quantize & lock. No ComfyUI/torch side effects beyond tensor I/O.
 - `atlas.py` — pure-stdlib engine-format serializers (JSON/XML atlas metadata).
   No ComfyUI/torch imports (keep it so).
-- `nodes.py` — the ComfyUI node classes + mappings (**20 focused nodes**), grouped
+- `nodes.py` — the ComfyUI node classes + mappings (**21 focused nodes**), grouped
   into `andypack/<Manifest|Character|Pose|Animation|Diagnostics|Sprite|Export>`.
   The pack was culled to the pipeline-essential set (2026-06-30); pure helpers for
   removed nodes may still linger in `sprites.py`/`api.py` (not exposed).
   - Manifest: Animation Manifest Loader.
-  - Character: Character Creator, Character Reference Loader.
+  - Character: Character Creator (writes character.json + emits base pose),
+    Character Loader (read-only: emits base pose, never writes character.json),
+    Character Reference Loader, Character Prompt Loader (character.json prompts
+    as STRINGs).
   - Pose: **Pose Sweep Selector** (unifies the old Character/Auto Pose Selectors;
     `mode: sweep|target` — sweep emits the next actionable pose in dependency
     order, `include_base` drives the whole turnaround with base manikin-paired;

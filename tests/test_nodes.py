@@ -782,3 +782,53 @@ def test_character_prompt_loader_missing_fields_yield_empty(tmp_path, monkeypatc
 def test_character_prompt_loader_requires_character():
     with pytest.raises(RuntimeError, match="select a character"):
         nodes.CharacterPromptLoader().load(nodes._NO_CHARACTER)
+
+
+# --- CharacterLoader (read-only base-pose emitter) --------------------------- #
+
+def test_character_loader_emits_base_pose(manifest, tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    (pose,) = nodes.CharacterLoader().load(manifest, _img(), "cortex", "EAST")
+    assert pose["_meta"]["pose"] == "base" and pose["_meta"]["direction"] == "EAST"
+    assert pose["output_dir"].endswith(os.path.join("cortex", "_base"))
+    assert not images.is_empty(pose["source_image"])      # the supplied reference
+    assert not images.is_empty(pose["pose_reference"])     # the direction's manikin
+
+
+def test_character_loader_does_not_write_character_json(manifest, tmp_path, monkeypatch):
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    # Author a character.json up front; the loader must leave it byte-for-byte intact.
+    os.makedirs(os.path.join(root, "cortex"), exist_ok=True)
+    cj = os.path.join(root, "cortex", "character.json")
+    with open(cj, "w") as f:
+        json.dump({"positive_prompt": "a brave hero", "negative_prompt": "blurry"}, f)
+    before = open(cj).read()
+    nodes.CharacterLoader().load(manifest, _img(), "cortex", "EAST")
+    assert open(cj).read() == before
+
+
+def test_character_loader_persists_reference_by_default(manifest, tmp_path, monkeypatch):
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    nodes.CharacterLoader().load(manifest, _img(3, 4), "cortex", "EAST")
+    assert os.path.isfile(resolve.reference_image_path(root, "cortex"))
+
+
+def test_character_loader_can_skip_reference_persistence(manifest, tmp_path, monkeypatch):
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    nodes.CharacterLoader().load(manifest, _img(), "cortex", "EAST", save_reference=False)
+    assert not os.path.exists(resolve.reference_image_path(root, "cortex"))
+
+
+def test_character_loader_rejects_unknown_direction(manifest, tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    with pytest.raises(RuntimeError, match="direction"):
+        nodes.CharacterLoader().load(manifest, _img(), "cortex", "UP")
+
+
+def test_character_loader_requires_character(manifest, tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
+    with pytest.raises(RuntimeError, match="character"):
+        nodes.CharacterLoader().load(manifest, _img(), nodes._NO_CHARACTER, "EAST")
