@@ -174,22 +174,36 @@ class CharacterCreator:
         if save_reference:
             images.save_image_png(image, resolve.reference_image_path(root, char_name))
 
-        eff = effective_manifest(manifest, root, char_name)
-        if "base" not in eff.get("poses", {}):
-            raise RuntimeError("CharacterCreator: manifest has no 'base' pose")
-        if direction not in eff["poses"]["base"]["directions"]:
-            raise RuntimeError(f"CharacterCreator: base has no direction {direction!r}")
-        r = resolve_pose(eff, root, char_name, "base", direction)
-        manikin = images.load_image_tensor(manikins.manikin_path(direction))
-        pose = {
-            "source_image": image,        # the character reference (first reference)
-            "pose_reference": manikin,    # the manikin for this direction (second)
-            "positive": r["positive"],
-            "negative": r["negative"],
-            "output_dir": r["output_dir"],
-            "_meta": r["meta"],
-        }
+        pose = _character_base_pose(
+            "CharacterCreator", manifest, root, char_name, direction, image
+        )
         return (pose,)
+
+
+def _character_base_pose(label, manifest, root, char_name, direction, image):
+    """Resolve the `base` pose for a character+direction through the effective
+    manifest (character overlay applied) and pair the supplied reference `image`
+    (first FLUX-edit reference) with the direction's bundled manikin (second) into
+    an ANIM_POSE dict. Shared by Character Creator (which persists the prompt layer
+    first) and the read-only Character Loader. `label` prefixes error messages with
+    the calling node's name."""
+    if direction not in manikins.CANONICAL_DIRECTIONS:
+        raise RuntimeError(f"{label}: unknown direction {direction!r}")
+    eff = effective_manifest(manifest, root, char_name)
+    if "base" not in eff.get("poses", {}):
+        raise RuntimeError(f"{label}: manifest has no 'base' pose")
+    if direction not in eff["poses"]["base"]["directions"]:
+        raise RuntimeError(f"{label}: base has no direction {direction!r}")
+    r = resolve_pose(eff, root, char_name, "base", direction)
+    manikin = images.load_image_tensor(manikins.manikin_path(direction))
+    return {
+        "source_image": image,        # the character reference (first reference)
+        "pose_reference": manikin,    # the manikin for this direction (second)
+        "positive": r["positive"],
+        "negative": r["negative"],
+        "output_dir": r["output_dir"],
+        "_meta": r["meta"],
+    }
 
 
 def _build_pose_bundle(r: dict, root: str = "", character: str = "", sweep=None) -> dict:
