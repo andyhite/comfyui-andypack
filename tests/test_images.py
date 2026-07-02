@@ -60,6 +60,16 @@ def test_contact_sheet_infers_cell_from_tile_max():
     assert sheet.shape[1] == 10 and sheet.shape[2] == 40
 
 
+def test_contact_sheet_draws_labels():
+    import torch
+    tiles = [torch.zeros((1, 32, 32, 3)), None]
+    plain = images.contact_sheet(tiles, columns=2)
+    labeled = images.contact_sheet(tiles, columns=2, labels=["EAST", "WEST"])
+    assert labeled.shape == plain.shape
+    # Drawing text must actually change pixels (the widget can't be a no-op).
+    assert not torch.equal(plain, labeled)
+
+
 def test_retime_resample_to_target():
     import torch
     f = torch.arange(4).float().reshape(4, 1, 1, 1).repeat(1, 2, 2, 3)

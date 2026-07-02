@@ -361,7 +361,8 @@ def contact_sheet(
         cell: optional ``(cell_w, cell_h)`` target size per tile in pixels.
             When None, the cell size is the maximum H and W across all non-None
             tiles, falling back to (64, 64) when every tile is None.
-        labels: reserved for future caption support; currently ignored.
+        labels: optional per-tile caption strings, drawn at each cell's top-left
+            (white with a black stroke). Extra labels beyond len(tiles) are ignored.
 
     Returns:
         IMAGE tensor ``[1, rows*cell_h, columns*cell_w, 3]``.
@@ -397,4 +398,19 @@ def contact_sheet(
             resized = _resize_batch(tile[..., :3], cell_h, cell_w)
             sheet[:, y:y + cell_h, x:x + cell_w, :] = resized
 
+    if labels:
+        from PIL import ImageDraw
+
+        arr = (sheet[0].clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
+        pil = Image.fromarray(arr, mode="RGB")
+        draw = ImageDraw.Draw(pil)
+        for idx in range(min(n, len(labels))):
+            row, col = divmod(idx, columns)
+            draw.text(
+                (col * cell_w + 4, row * cell_h + 4), str(labels[idx]),
+                fill=(255, 255, 255), stroke_width=2, stroke_fill=(0, 0, 0),
+            )
+        sheet = torch.from_numpy(
+            np.asarray(pil, dtype=np.float32) / 255.0
+        ).unsqueeze(0)
     return sheet
