@@ -559,10 +559,14 @@ class PoseFrameWriter:
             },
             "optional": {
                 "mask": ("MASK",),
+                # Provenance only: the seed that drove the upstream sampler.
+                # forceInput = link-only, so no `control_after_generate` widget
+                # can mutate the recorded value out of sync with the sampler.
+                "seed": ("INT", {"default": 0, "forceInput": True}),
             },
         }
 
-    def write(self, pose, image, mask=None):
+    def write(self, pose, image, mask=None, seed=0):
         output_dir = pose["output_dir"]
         meta = pose["_meta"]
         has_alpha = mask is not None or int(image.shape[-1]) == 4
@@ -572,7 +576,9 @@ class PoseFrameWriter:
         sidecar_path = os.path.join(output_dir, f"{meta['direction']}.json")
         io.remove_if_exists(sidecar_path)
         images.save_image_png(image, png_path, mask=mask)
-        sidecar = io.build_pose_sidecar(meta, created_utc=_utc_now(), has_alpha=has_alpha)
+        sidecar = io.build_pose_sidecar(
+            meta, created_utc=_utc_now(), has_alpha=has_alpha, seed=seed
+        )
         io.atomic_write_json(sidecar_path, sidecar)
         return (output_dir, _sweep_remaining(pose))
 

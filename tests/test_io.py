@@ -47,6 +47,12 @@ def test_build_pose_sidecar_carries_meta_plus_timestamp():
     assert side["created_utc"] == "2026-06-29T00:00:00Z"
 
 
+def test_pose_sidecar_records_seed():
+    meta = {"kind": "pose", "pose": "base", "direction": "EAST", "prompt_hash": "sha1:x"}
+    side = io.build_pose_sidecar(meta, created_utc="2026-01-01T00:00:00Z", seed=1234)
+    assert side["seed"] == 1234
+
+
 def test_build_animation_meta_adds_frame_pointers():
     meta = {"kind": "animation", "animation": "punch", "direction": "EAST",
             "fps": 16, "length": 21, "loop": False,

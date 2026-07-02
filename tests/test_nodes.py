@@ -88,6 +88,15 @@ def test_pose_rewrite_replaces_sidecar(tmp_path):
     assert side["prompt_hash"] == "sha1:two"
 
 
+def test_pose_writer_records_seed(tmp_path):
+    out = str(tmp_path / "_base")
+    meta = {"kind": "pose", "pose": "base", "direction": "EAST", "from": None,
+            "image": "EAST.png", "manifest_version": 1, "prompt_hash": "sha1:one"}
+    nodes.PoseFrameWriter().write(_pose_dict(meta, out), _img(), seed=42)
+    side = json.loads(open(os.path.join(out, "EAST.json")).read())
+    assert side["seed"] == 42
+
+
 # --- selector IS_CHANGED fingerprint ---------------------------------------- #
 
 def test_pose_sweep_selector_is_changed_always_reruns(manifest, tree, monkeypatch):

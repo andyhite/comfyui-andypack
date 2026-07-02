@@ -117,10 +117,13 @@ def build_character(layer: dict, existing: Optional[dict] = None) -> dict:
     return {**preserved, **layer}
 
 
-def build_pose_sidecar(meta: dict, created_utc: str, has_alpha: bool = False) -> dict:
-    """Pose sidecar = resolve_pose meta + created_utc + render_id + has_alpha."""
+def build_pose_sidecar(
+    meta: dict, created_utc: str, has_alpha: bool = False, seed: Optional[int] = None
+) -> dict:
+    """Pose sidecar = resolve_pose meta + created_utc + render_id + has_alpha + seed."""
     return {
         **meta,
+        "seed": seed,
         "created_utc": created_utc,
         "render_id": render_id(meta["prompt_hash"], created_utc),
         "has_alpha": has_alpha,
