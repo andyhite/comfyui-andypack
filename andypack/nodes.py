@@ -1064,6 +1064,40 @@ class SpriteTrimPivot:
         return (out, {"frames": rects, "trim_mode": trim_mode, "pivot_kind": pivot})
 
 
+class PaletteQuantizeLock:
+    """Force a frame batch onto one shared, limited palette (pixel-art / hand-
+    painted consistency). Build the palette from the batch itself, or connect
+    `palette_image` to LOCK to an external source (another direction's frames, a
+    saved swatch) so every direction and animation shares identical colors —
+    preventing the per-direction color drift that reads as a glitch in a sprite
+    sheet. Alpha passes through untouched. Run after background removal, before
+    packing."""
+
+    CATEGORY = "andypack/Sprite"
+    FUNCTION = "quantize"
+    RETURN_TYPES = ("IMAGE", "IMAGE")
+    RETURN_NAMES = ("IMAGE", "PALETTE")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "colors": ("INT", {"default": 16, "min": 2, "max": 256}),
+                "dither": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "palette_image": ("IMAGE",),
+            },
+        }
+
+    def quantize(self, image, colors, dither, palette_image=None):
+        out, swatch = sprites.quantize_to_palette(
+            image, colors=colors, palette_image=palette_image, dither=dither
+        )
+        return (out, swatch)
+
+
 class SpritesheetPacker:
     CATEGORY = "andypack/Sprite"
     FUNCTION = "pack"
@@ -1918,6 +1952,7 @@ NODE_CLASS_MAPPINGS = {
     "AnimationFrames": AnimationFrames,
     "CoverageReport": CoverageReport,
     "SpriteTrimPivot": SpriteTrimPivot,
+    "PaletteQuantizeLock": PaletteQuantizeLock,
     "SpritesheetPacker": SpritesheetPacker,
     "AtlasMetadataWriter": AtlasMetadataWriter,
     "AnimationSheetBuilder": AnimationSheetBuilder,
@@ -1947,6 +1982,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationFrames": "Animation Frames (load)",
     "CoverageReport": "Coverage Report",
     "SpriteTrimPivot": "Sprite Trim & Pivot",
+    "PaletteQuantizeLock": "Palette Quantize & Lock",
     "SpritesheetPacker": "Spritesheet Packer",
     "AtlasMetadataWriter": "Atlas Metadata Writer",
     "AnimationSheetBuilder": "Animation Sheet Builder",

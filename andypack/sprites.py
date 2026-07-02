@@ -8,7 +8,9 @@ from __future__ import annotations
 import math
 from typing import Optional
 
+import numpy as np
 import torch
+from PIL import Image as PILImage
 from torch import Tensor
 
 from andypack import images
@@ -557,4 +559,53 @@ def pack_direction_rows(
         "tags": tags,
     }
     return canvas.unsqueeze(0), atlas
+
+
+# ---------------------------------------------------------------------------
+# Palette extraction and quantization
+# ---------------------------------------------------------------------------
+
+
+def _rgb_to_pil(frame_rgb: Tensor) -> "PILImage.Image":
+    arr = (frame_rgb.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
+    return PILImage.fromarray(arr, mode="RGB")
+
+
+def quantize_to_palette(
+    image: Tensor,
+    colors: int = 16,
+    palette_image: Optional[Tensor] = None,
+    dither: bool = False,
+) -> tuple[Tensor, Tensor]:
+    """Quantize an IMAGE batch [B, H, W, C] to ONE shared palette (pixel-art /
+    limited-color consistency). The palette is built from `palette_image` when
+    given (LOCK mode — e.g. another direction's frames or a saved swatch, so
+    every direction/animation shares identical colors), else from all frames of
+    the batch. Alpha (C == 4) passes through untouched. Returns the quantized
+    batch (same shape) and a palette swatch IMAGE [1, 16, colors*16, 3]."""
+    b = int(image.shape[0])
+    colors = max(2, int(colors))
+    if palette_image is not None:
+        src_frame = palette_image[0] if palette_image.dim() == 4 else palette_image
+        src = _rgb_to_pil(src_frame[..., :3])
+    else:
+        strip = torch.cat([image[i, :, :, :3] for i in range(b)], dim=1)
+        src = _rgb_to_pil(strip)
+    pal = src.quantize(colors=colors, method=PILImage.Quantize.MEDIANCUT)
+    dith = PILImage.Dither.FLOYDSTEINBERG if dither else PILImage.Dither.NONE
+    out = image.clone()
+    for i in range(b):
+        q = _rgb_to_pil(image[i, :, :, :3]).quantize(palette=pal, dither=dith)
+        out[i, :, :, :3] = torch.from_numpy(
+            np.asarray(q.convert("RGB"), dtype=np.float32) / 255.0
+        )
+    raw = (pal.getpalette() or [0, 0, 0])[: colors * 3]
+    raw = raw + [0] * (colors * 3 - len(raw))  # PIL may return a short palette
+    swatch = torch.zeros((1, 16, colors * 16, 3), dtype=torch.float32)
+    for i in range(colors):
+        r, g, bl = raw[i * 3: i * 3 + 3]
+        swatch[0, :, i * 16:(i + 1) * 16, 0] = r / 255.0
+        swatch[0, :, i * 16:(i + 1) * 16, 1] = g / 255.0
+        swatch[0, :, i * 16:(i + 1) * 16, 2] = bl / 255.0
+    return out, swatch
 

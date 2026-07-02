@@ -141,3 +141,35 @@ def test_union_trim_rows_noop_without_alpha():
     rows = [("EAST", [torch.zeros((1, 8, 8, 3))])]
     out = sprites.union_trim_rows(rows)
     assert int(out[0][1][0].shape[1]) == 8  # full frame: nothing to trim
+
+
+def test_quantize_to_palette_limits_colors():
+    from andypack import sprites
+    torch.manual_seed(0)
+    batch = torch.rand((2, 16, 16, 3))
+    out, swatch = sprites.quantize_to_palette(batch, colors=8)
+    assert out.shape == batch.shape
+    flat = out.reshape(-1, 3)
+    unique = {tuple(px.tolist()) for px in (flat * 255).round().to(torch.int32)}
+    assert len(unique) <= 8
+    assert tuple(swatch.shape) == (1, 16, 8 * 16, 3)
+
+
+def test_quantize_to_palette_keeps_alpha():
+    from andypack import sprites
+    batch = torch.rand((1, 8, 8, 4))
+    batch[..., 3] = 0.25
+    out, _sw = sprites.quantize_to_palette(batch, colors=4)
+    assert torch.equal(out[..., 3], batch[..., 3])
+
+
+def test_quantize_locks_to_palette_image():
+    from andypack import sprites
+    # A pure-red palette source forces every output pixel to red.
+    palette_src = torch.zeros((1, 8, 8, 3))
+    palette_src[..., 0] = 1.0
+    batch = torch.rand((1, 8, 8, 3))
+    out, _sw = sprites.quantize_to_palette(batch, colors=2, palette_image=palette_src)
+    flat = (out.reshape(-1, 3) * 255).round().to(torch.int32)
+    for px in {tuple(p.tolist()) for p in flat}:
+        assert px[1] == 0 and px[2] == 0  # only reds/blacks from the red source
