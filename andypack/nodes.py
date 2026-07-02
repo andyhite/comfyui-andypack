@@ -356,6 +356,65 @@ class CharacterPromptLoader:
         )
 
 
+class CharacterLoader:
+    """Emit the base-pose FLUX-edit job for an EXISTING character + direction,
+    pairing the supplied reference `image` (first reference) with the bundled
+    manikin (second) — exactly like the Character Creator, but READ-ONLY: it never
+    writes character.json, so authored prompts survive. Use it in a Create graph
+    that generates the reference art from an authored character.json (via
+    CharacterPromptLoader → txt2img) and needs the base pose without re-authoring
+    the prompt layer. A missing/empty character.json is not an error — the base
+    pose's {character_prompt} just expands to empty."""
+
+    CATEGORY = "andypack/Character"
+    FUNCTION = "load"
+    RETURN_TYPES = ("ANIM_POSE",)
+    RETURN_NAMES = ("POSE",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": ("ANIM_MANIFEST",),
+                "image": ("IMAGE",),
+                "character": (_character_choices(),),
+                "direction": (manikins.CANONICAL_DIRECTIONS,),
+            },
+            "optional": {
+                # Persist the reference art to `<char>/_reference.png` so the
+                # Stage-2 turnaround sweep can reload the root reference. Not a
+                # prompt write — character.json is never touched here.
+                "save_reference": ("BOOLEAN", {"default": True}),
+            },
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, manifest, image, character, direction, save_reference=True):
+        if character in ("", _NO_CHARACTER):
+            return float("nan")
+        root = _characters_root()
+        try:
+            char_name = io.to_snake_case(character)
+            eff = effective_manifest(manifest, root, char_name)
+            r = resolve_pose(eff, root, char_name, "base", direction)
+        except Exception:
+            return float("nan")
+        return "|".join([r["meta"]["prompt_hash"], direction, str(save_reference)])
+
+    def load(self, manifest, image, character, direction, save_reference=True):
+        if character in ("", _NO_CHARACTER):
+            raise RuntimeError("CharacterLoader: select a character first")
+        root = _characters_root()
+        char_name = io.to_snake_case(character)
+        pose = _character_base_pose(
+            "CharacterLoader", manifest, root, char_name, direction, image
+        )
+        # Read-only w.r.t. the prompt layer; only the reference art may be written.
+        if save_reference:
+            images.save_image_png(image, resolve.reference_image_path(root, char_name))
+        return (pose,)
+
+
 class PoseSweepSelector:
     """Sweep or spot-fix the pose turnaround. mode=sweep emits the next actionable
     (ready/stale) non-root pose in dependency order — drive it inside a Sweep Loop
@@ -1461,6 +1520,7 @@ NODE_CLASS_MAPPINGS = {
     "CharacterCreator": CharacterCreator,
     "CharacterReferenceLoader": CharacterReferenceLoader,
     "CharacterPromptLoader": CharacterPromptLoader,
+    "CharacterLoader": CharacterLoader,
     "PoseSweepSelector": PoseSweepSelector,
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
@@ -1484,6 +1544,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "CharacterCreator": "Character Creator",
     "CharacterReferenceLoader": "Character Reference Loader",
     "CharacterPromptLoader": "Character Prompt Loader",
+    "CharacterLoader": "Character Loader",
     "PoseSweepSelector": "Pose Sweep Selector",
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",
