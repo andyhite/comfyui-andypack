@@ -750,3 +750,35 @@ def test_animated_sprite_export_webp(tmp_path, monkeypatch):
     ])
     nodes.AnimatedSpriteExport().export(frames, format="webp", loop=True, fps=12, name="clip")
     assert (tmp_path / "clip.webp").exists()
+
+
+# --- CharacterPromptLoader --------------------------------------------------- #
+
+def _write_character(root, name, payload):
+    os.makedirs(os.path.join(root, name), exist_ok=True)
+    with open(os.path.join(root, name, "character.json"), "w") as f:
+        json.dump(payload, f)
+
+
+def test_character_prompt_loader_returns_authored_prompts(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    _write_character(root, "cortex", {"positive_prompt": "a brave hero", "negative_prompt": "blurry"})
+    # combo value is snake-cased, so a display-cased name still resolves.
+    pos, neg = nodes.CharacterPromptLoader().load("Cortex")
+    assert pos == "a brave hero"
+    assert neg == "blurry"
+
+
+def test_character_prompt_loader_missing_fields_yield_empty(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    monkeypatch.setattr(nodes, "_characters_root", lambda: root)
+    _write_character(root, "ghost", {"positive_prompt": "x"})
+    pos, neg = nodes.CharacterPromptLoader().load("ghost")
+    assert pos == "x"
+    assert neg == ""
+
+
+def test_character_prompt_loader_requires_character():
+    with pytest.raises(RuntimeError, match="select a character"):
+        nodes.CharacterPromptLoader().load(nodes._NO_CHARACTER)
