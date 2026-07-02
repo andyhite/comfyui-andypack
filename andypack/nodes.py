@@ -615,12 +615,16 @@ class PoseFrameWriter:
                 # forceInput = link-only, so no `control_after_generate` widget
                 # can mutate the recorded value out of sync with the sampler.
                 "seed": ("INT", {"default": 0, "forceInput": True}),
+                # Also write a horizontally-flipped copy into every mirror_map
+                # direction derived from this one (precomputed `_mirror` jobs on
+                # the bundle) — each with the MIRRORED direction's own resolved
+                # sidecar, so anchors/staleness/coverage see a real render.
+                "write_mirrored": ("BOOLEAN", {"default": False}),
             },
         }
 
-    def write(self, pose, image, mask=None, seed=0):
-        output_dir = pose["output_dir"]
-        meta = pose["_meta"]
+    @staticmethod
+    def _write_one(output_dir, meta, image, mask, seed):
         has_alpha = mask is not None or int(image.shape[-1]) == 4
         # Re-render discipline: drop the sidecar (completion sentinel) FIRST so an
         # interrupted rewrite reads as incomplete, then payload, then sidecar last.
@@ -632,6 +636,22 @@ class PoseFrameWriter:
             meta, created_utc=_utc_now(), has_alpha=has_alpha, seed=seed
         )
         io.atomic_write_json(sidecar_path, sidecar)
+
+    def write(self, pose, image, mask=None, seed=0, write_mirrored=False):
+        output_dir = pose["output_dir"]
+        meta = pose["_meta"]
+        self._write_one(output_dir, meta, image, mask, seed)
+        if write_mirrored:
+            flipped = torch.flip(image, dims=[2])
+            flipped_mask = (
+                torch.flip(mask, dims=[mask.dim() - 1]) if mask is not None else None
+            )
+            for job in pose.get("_mirror") or []:
+                self._write_one(
+                    job["output_dir"],
+                    {**job["meta"], "mirrored_from": meta["direction"]},
+                    flipped, flipped_mask, seed,
+                )
         return (output_dir, _sweep_remaining(pose))
 
 
@@ -777,35 +797,17 @@ class AnimationFrameWriter:
                 # closing frames land back on the opening palette. Applied only
                 # when the resolver derived `loop` (no-op for non-loop clips).
                 "loop_color_match": ("BOOLEAN", {"default": False}),
+                # Also write a horizontally-flipped copy into every mirror_map
+                # direction derived from this one (precomputed `_mirror` jobs on
+                # the bundle) — each with the MIRRORED direction's own resolved
+                # meta, so anchors/staleness/coverage see a real render.
+                "write_mirrored": ("BOOLEAN", {"default": False}),
             },
         }
 
-    def write(self, animation, frames, seed=0, mask=None, loop_color_match=False):
-        output_dir = animation["output_dir"]
-        meta = animation["_meta"]
+    @staticmethod
+    def _write_clip(output_dir, meta, frames, mask, seed):
         has_alpha = mask is not None or int(frames.shape[-1]) == 4
-        # Reject an empty frame batch up front, before touching the existing render.
-        # Writing it would produce a meta.json with count=0 and a negative-index
-        # last_frame ("frame_-0001.png"), which animation_complete reads as
-        # "complete" — a corrupt clip masquerading as done, then a FileNotFoundError
-        # in any downstream animation that consumes it as an anchor.
-        if images.is_empty(frames):
-            raise RuntimeError(
-                "AnimationFrameWriter: received an empty or 1x1 sentinel frame batch; "
-                "nothing to write (check the upstream sampler)")
-
-        if mask is not None:
-            mask = mask if mask.dim() == 3 else mask.unsqueeze(0)
-            if int(mask.shape[0]) not in (1, int(frames.shape[0])):
-                raise RuntimeError(
-                    f"AnimationFrameWriter: mask batch of {int(mask.shape[0])} frames "
-                    f"doesn't match the {int(frames.shape[0])}-frame image batch — "
-                    "supply one mask per frame, or a single mask to apply to all"
-                )
-
-        if loop_color_match and meta.get("loop") and int(frames.shape[0]) > 1:
-            frames = images.match_color_ramp(frames, frames[0:1])
-
         os.makedirs(output_dir, exist_ok=True)
         # Re-render discipline: drop meta.json (the completion sentinel) FIRST and
         # clear any stale frames so an interrupted rewrite reads as incomplete and
@@ -846,6 +848,45 @@ class AnimationFrameWriter:
             has_alpha=has_alpha,
         )
         io.atomic_write_json(meta_path, full_meta)
+
+    def write(self, animation, frames, seed=0, mask=None,
+              loop_color_match=False, write_mirrored=False):
+        output_dir = animation["output_dir"]
+        meta = animation["_meta"]
+        # Reject an empty frame batch up front, before touching the existing render.
+        # Writing it would produce a meta.json with count=0 and a negative-index
+        # last_frame ("frame_-0001.png"), which animation_complete reads as
+        # "complete" — a corrupt clip masquerading as done, then a FileNotFoundError
+        # in any downstream animation that consumes it as an anchor.
+        if images.is_empty(frames):
+            raise RuntimeError(
+                "AnimationFrameWriter: received an empty or 1x1 sentinel frame batch; "
+                "nothing to write (check the upstream sampler)")
+
+        if mask is not None:
+            mask = mask if mask.dim() == 3 else mask.unsqueeze(0)
+            if int(mask.shape[0]) not in (1, int(frames.shape[0])):
+                raise RuntimeError(
+                    f"AnimationFrameWriter: mask batch of {int(mask.shape[0])} frames "
+                    f"doesn't match the {int(frames.shape[0])}-frame image batch — "
+                    "supply one mask per frame, or a single mask to apply to all"
+                )
+
+        if loop_color_match and meta.get("loop") and int(frames.shape[0]) > 1:
+            frames = images.match_color_ramp(frames, frames[0:1])
+
+        self._write_clip(output_dir, meta, frames, mask, seed)
+        if write_mirrored:
+            flipped = torch.flip(frames, dims=[2])
+            flipped_mask = (
+                torch.flip(mask, dims=[mask.dim() - 1]) if mask is not None else None
+            )
+            for job in animation.get("_mirror") or []:
+                self._write_clip(
+                    job["output_dir"],
+                    {**job["meta"], "mirrored_from": meta["direction"]},
+                    flipped, flipped_mask, seed,
+                )
         return (output_dir, _sweep_remaining(animation))
 
 

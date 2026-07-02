@@ -101,6 +101,63 @@ def test_pose_writer_records_seed(tmp_path):
     assert side["seed"] == 42
 
 
+# --- write_mirrored -------------------------------------------------------- #
+
+def _mirror_pose_dict(tmp_path):
+    """A pose bundle for EAST with one precomputed WEST mirror job."""
+    out = str(tmp_path / "_fighting_stance")
+    east = {"kind": "pose", "pose": "fighting_stance", "direction": "EAST",
+            "from": {"ref": "base"}, "image": "EAST.png",
+            "manifest_version": 1, "prompt_hash": "sha1:east"}
+    west = {"kind": "pose", "pose": "fighting_stance", "direction": "WEST",
+            "from": {"ref": "base"}, "image": "WEST.png",
+            "manifest_version": 1, "prompt_hash": "sha1:west"}
+    d = _pose_dict(east, out)
+    d["_mirror"] = [{"direction": "WEST", "meta": west, "output_dir": out}]
+    return d, out
+
+
+def test_pose_writer_mirrors_flipped_copy(tmp_path):
+    d, out = _mirror_pose_dict(tmp_path)
+    img = _img(2, 4)
+    img[0, 0, 0, 0] = 1.0  # asymmetric marker at x=0
+    nodes.PoseFrameWriter().write(d, img, write_mirrored=True)
+    assert os.path.exists(os.path.join(out, "EAST.png"))
+    assert os.path.exists(os.path.join(out, "WEST.png"))
+    west_side = json.loads(open(os.path.join(out, "WEST.json")).read())
+    assert west_side["prompt_hash"] == "sha1:west"     # WEST's own hash
+    assert west_side["mirrored_from"] == "EAST"
+    from PIL import Image
+    import numpy as np
+    with Image.open(os.path.join(out, "WEST.png")) as im:
+        arr = np.asarray(im)
+    assert arr[0, 3, 0] == 255 and arr[0, 0, 0] == 0   # marker flipped to x=w-1
+
+
+def test_pose_writer_mirror_off_by_default(tmp_path):
+    d, out = _mirror_pose_dict(tmp_path)
+    nodes.PoseFrameWriter().write(d, _img(2, 4))
+    assert not os.path.exists(os.path.join(out, "WEST.png"))
+
+
+def test_animation_writer_mirrors_clip(tmp_path):
+    out_e = str(tmp_path / "walk" / "EAST")
+    out_w = str(tmp_path / "walk" / "WEST")
+    east = {"kind": "animation", "animation": "walk", "direction": "EAST",
+            "fps": 16, "length": 3, "loop": False, "manifest_version": 1,
+            "prompt_hash": "sha1:east"}
+    west = dict(east, direction="WEST", prompt_hash="sha1:west")
+    d = _anim_dict(east, out_e)
+    d["_mirror"] = [{"direction": "WEST", "meta": west, "output_dir": out_w}]
+    nodes.AnimationFrameWriter().write(d, _batch(3), write_mirrored=True)
+    for out in (out_e, out_w):
+        assert sum(n.startswith("frame_") for n in os.listdir(out)) == 3
+        assert os.path.exists(os.path.join(out, "meta.json"))
+    west_meta = json.loads(open(os.path.join(out_w, "meta.json")).read())
+    assert west_meta["prompt_hash"] == "sha1:west"
+    assert west_meta["mirrored_from"] == "EAST"
+
+
 # --- selector IS_CHANGED fingerprint ---------------------------------------- #
 
 def test_pose_sweep_selector_is_changed_always_reruns(manifest, tree, monkeypatch):
