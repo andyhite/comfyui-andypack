@@ -170,9 +170,12 @@ def test_animation_writer_empty_batch_keeps_prior_render(tmp_path):
 def test_coverage_report_node(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()
-    report, blob = nodes.CoverageReport().report(manifest, tree.char)
+    out = nodes.CoverageReport().report(manifest, tree.char)
+    report, blob = out["result"]
     assert "base" in report
     assert json.loads(blob)["total"] > 0
+    # The table is also pushed to the frontend so the node shows it inline.
+    assert out["ui"]["text"] == (report,)
 
 
 def test_animation_selector_outputs_length_and_fps(manifest, tree, monkeypatch):

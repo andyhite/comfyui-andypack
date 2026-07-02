@@ -891,7 +891,8 @@ class CoverageReport:
     def report(self, manifest, character):
         char = "" if character == _NO_CHARACTER else character
         data = api.coverage_report(manifest, _characters_root(), char)
-        return (api.format_coverage_table(data), json.dumps(data, indent=2))
+        table = api.format_coverage_table(data)
+        return {"ui": {"text": (table,)}, "result": (table, json.dumps(data, indent=2))}
 
 
 class SpriteTrimPivot:

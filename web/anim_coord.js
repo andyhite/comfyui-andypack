@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { ComfyWidgets } from "../../scripts/widgets.js";
 
 const TAG = "[andypack]";
 console.debug(`${TAG} anim_coord.js loaded`);
@@ -21,6 +22,10 @@ const SELECTOR_NODES = {
   PoseSweepSelector: { idWidget: "pose", kind: "pose" },
   AnimationSweepSelector: { idWidget: "animation", kind: "animation" },
 };
+
+// Nodes whose execution pushes {"ui": {"text": [...]}} — render it in-node as a
+// read-only multiline widget (no third-party Show Text pack needed).
+const TEXT_DISPLAY_NODES = new Set(["CoverageReport"]);
 
 const enc = encodeURIComponent;
 
@@ -341,5 +346,22 @@ app.registerExtension({
   },
   async loadedGraphNode(node) {
     wire(node);
+  },
+  async beforeRegisterNodeDef(nodeType, nodeData) {
+    if (!TEXT_DISPLAY_NODES.has(nodeData.name)) return;
+    const prev = nodeType.prototype.onExecuted;
+    nodeType.prototype.onExecuted = function (message) {
+      prev?.apply(this, arguments);
+      const text = (message?.text || []).join("");
+      let w = (this.widgets || []).find((x) => x.name === "display");
+      if (!w) {
+        w = ComfyWidgets.STRING(this, "display", ["STRING", { multiline: true }], app).widget;
+        w.inputEl.readOnly = true;
+        w.inputEl.style.fontFamily = "monospace";
+        w.inputEl.style.fontSize = "10px";
+      }
+      w.value = text;
+      this.onResize?.(this.size);
+    };
   },
 });
