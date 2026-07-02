@@ -148,7 +148,7 @@ def test_save_animated_gif_rgba_batch(tmp_path):
 
 
 def test_save_animated_webp_rgba_batch(tmp_path):
-    """A 4-ch RGBA frame batch must not crash — alpha is dropped to RGB for WebP."""
+    """A 4-ch RGBA frame batch must not crash — alpha is now preserved for WebP."""
     import torch
     from PIL import Image
     f = torch.stack([torch.full((4, 4, 4), v, dtype=torch.float32) for v in (0.1, 0.4, 0.7)])
