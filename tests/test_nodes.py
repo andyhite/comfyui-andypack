@@ -212,18 +212,26 @@ def test_animation_writer_loop_color_match(tmp_path):
     meta = {"kind": "animation", "animation": "spin", "direction": "EAST",
             "fps": 16, "length": 5, "loop": True, "manifest_version": 1,
             "prompt_hash": "sha1:abc"}
-    frames = torch.rand((5, 8, 8, 3)) * 0.3
-    frames[-1] = (frames[-1] + 0.5).clamp(0, 1)  # drifted final frame
+    torch.manual_seed(0)
+    frames = torch.rand((5, 8, 8, 3)) * 0.2
+    # Drift injected into frames[3] -- the LAST WRITTEN frame once loop-closure
+    # drops frames[-1] (the duplicated closing frame; see apply_loop_closure).
+    # Drifting frames[-1] instead would be invisible: it never reaches disk.
+    # match_color_ramp's ramp weight at index 3 of 5 is 3/(5-1) = 0.75, and the
+    # match pulls the frame's mean/std to exactly match frames[0]'s, so the
+    # written mean becomes 0.25*drifted_mean + 0.75*frames[0]_mean -- i.e. only
+    # 25% of the drift survives. The drift below (+0.6) is large enough that
+    # the surviving 25% is comfortably inside the tolerance while the raw
+    # (unmatched) 100%-drifted frame is comfortably outside it.
+    frames[3] = (frames[3] + 0.6).clamp(0, 1)
     nodes.AnimationFrameWriter().write(
         _anim_dict(meta, out), frames, loop_color_match=True
     )
     from PIL import Image
     import numpy as np
-    # loop=True drops the duplicated closing frame -> frames 0..3 written; the
-    # matched frame 3 should sit close to frame 0's brightness, not the raw drift.
     with Image.open(os.path.join(out, "frame_00003.png")) as img:
-        last_mean = np.asarray(img, dtype=np.float32).mean() / 255.0
-    assert abs(last_mean - float(frames[0].mean())) < 0.15
+        written_mean = np.asarray(img, dtype=np.float32).mean() / 255.0
+    assert abs(written_mean - float(frames[0].mean())) < 0.2
 
 
 def test_coverage_report_node(manifest, tree, monkeypatch):
