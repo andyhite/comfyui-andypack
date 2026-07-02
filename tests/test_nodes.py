@@ -887,3 +887,15 @@ def test_character_loader_requires_character(manifest, tmp_path, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: str(tmp_path))
     with pytest.raises(RuntimeError, match="character"):
         nodes.CharacterLoader().load(manifest, _img(), nodes._NO_CHARACTER, "EAST")
+
+
+def test_frame_retime_resamples_to_target_fps():
+    frames, fps = nodes.FrameRetime().retime(_batch(16), fps=16, target_fps=8, mode="resample")
+    assert int(frames.shape[0]) == 8
+    assert fps == 8
+
+
+def test_frame_retime_upsamples():
+    frames, fps = nodes.FrameRetime().retime(_batch(4), fps=8, target_fps=16, mode="resample")
+    assert int(frames.shape[0]) == 8
+    assert fps == 16

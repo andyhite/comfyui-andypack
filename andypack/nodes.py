@@ -1175,6 +1175,34 @@ class AnimatedSpriteExport:
         return {"ui": _animated_preview(frames, fps_safe), "result": (frames, out_dir)}
 
 
+class FrameRetime:
+    """Retime an IMAGE batch to a target fps (uniform resample / trim / pad-hold).
+    Wan renders natively at 16fps; game sprites often want 8-12. Wire the source
+    FPS from Animation Frames / Unpack Animation, pick a target, and feed the
+    result to the packer/exporter with the new FPS."""
+
+    CATEGORY = "andypack/Sprite"
+    FUNCTION = "retime"
+    RETURN_TYPES = ("IMAGE", "INT")
+    RETURN_NAMES = ("FRAMES", "FPS")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "frames": ("IMAGE",),
+                "fps": ("INT", {"default": 16, "min": 1, "forceInput": True}),
+                "target_fps": ("INT", {"default": 12, "min": 1, "max": 120}),
+                "mode": (["resample", "trim", "pad_hold"],),
+            }
+        }
+
+    def retime(self, frames, fps, target_fps, mode):
+        n = int(frames.shape[0])
+        target = max(1, round(n * int(target_fps) / max(int(fps), 1)))
+        return (images.retime_batch(frames, target, mode), int(target_fps))
+
+
 class AnimationSheetBuilder:
     """Pack a full animation into a game-ready sprite sheet: one ROW per rendered
     direction, one COLUMN per frame. Unlike Character Atlas Builder (one frame per
@@ -1563,6 +1591,7 @@ NODE_CLASS_MAPPINGS = {
     "AnimationSheetBuilder": AnimationSheetBuilder,
     "TurnaroundSheet": TurnaroundSheet,
     "AnimatedSpriteExport": AnimatedSpriteExport,
+    "FrameRetime": FrameRetime,
     "SweepLoopOpen": SweepLoopOpen,
     "SweepLoopClose": SweepLoopClose,
 }
@@ -1587,6 +1616,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimationSheetBuilder": "Animation Sheet Builder",
     "TurnaroundSheet": "Turnaround Sheet",
     "AnimatedSpriteExport": "Animated Sprite Export",
+    "FrameRetime": "Frame Retime",
     "SweepLoopOpen": "Sweep Loop Open",
     "SweepLoopClose": "Sweep Loop Close",
 }
