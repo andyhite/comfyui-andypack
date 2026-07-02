@@ -229,66 +229,77 @@ def retime_batch(
     raise ValueError(f"retime_batch: unknown mode {mode!r}")
 
 
+def _pil_frames(frames: torch.Tensor) -> list["Image.Image"]:
+    """An IMAGE batch as PIL frames — RGBA when the batch carries 4 channels,
+    RGB otherwise. The disk boundary is where alpha materializes; everything
+    upstream in the graph stays 3-channel."""
+    arr = (frames.clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
+    mode = "RGBA" if int(frames.shape[-1]) == 4 else "RGB"
+    return [Image.fromarray(a, mode=mode) for a in arr]
+
+
 def save_animated_webp(
     frames: torch.Tensor, path: str, fps: int, loop: bool = True
 ) -> None:
     """Encode an IMAGE batch [N, H, W, C] as an animated WEBP at `path`, played at
-    `fps`. A single frame writes a still WEBP.
-
-    When ``loop`` is True (the default) the animation repeats indefinitely
-    (loop count 0). When False it plays once (loop count 1).
-    """
-    arr = (frames[..., :3].clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
-    pil = [Image.fromarray(a, mode="RGB") for a in arr]
+    `fps`. RGBA batches keep their alpha channel. A single frame writes a still
+    WEBP. `loop` True = repeat forever (loop count 0), False = play once."""
+    pil = _pil_frames(frames)
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
     duration = int(round(1000.0 / max(int(fps), 1)))
-    loop_count = 0 if loop else 1
     pil[0].save(
         path, format="WEBP", save_all=True, append_images=pil[1:],
-        duration=duration, loop=loop_count, quality=80, method=4,
+        duration=duration, loop=0 if loop else 1, quality=80, method=4,
     )
+
+
+def _gif_frame(img: "Image.Image") -> "tuple[Image.Image, Optional[int]]":
+    """Quantize one frame for GIF. RGBA frames reserve palette index 255 for
+    fully-transparent pixels (GIF has 1-bit transparency); returns the paletted
+    frame and the transparency index (None for opaque frames)."""
+    if img.mode != "RGBA":
+        return img.convert("RGB").convert("P", palette=Image.ADAPTIVE), None  # type: ignore[attr-defined]
+    alpha = img.getchannel("A")
+    p = img.convert("RGB").convert("P", palette=Image.ADAPTIVE, colors=255)  # type: ignore[attr-defined]
+    transparent = alpha.point(lambda a: 255 if a < 128 else 0)
+    p.paste(255, transparent)
+    return p, 255
 
 
 def save_animated_gif(
     frames: torch.Tensor, path: str, fps: int, loop: bool = True
 ) -> None:
-    """Encode an IMAGE batch [N, H, W, C] as an animated GIF at ``path``, played at
-    ``fps``. A single frame writes a still GIF.
-
-    When ``loop`` is True (the default) the animation repeats indefinitely
-    (loop count 0). When False it plays once (loop count 1).
-    """
-    arr = (frames[..., :3].clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
-    pil = [Image.fromarray(a, mode="RGB").convert("P") for a in arr]
+    """Encode an IMAGE batch as an animated GIF. RGBA batches get palette
+    transparency (alpha < 0.5 -> fully transparent; GIF has no partial alpha).
+    `loop` True = repeat forever, False = play once."""
+    quantized = [_gif_frame(f) for f in _pil_frames(frames)]
+    pil = [q for q, _t in quantized]
+    transparency = quantized[0][1]
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
     duration_ms = int(round(1000.0 / max(int(fps), 1)))
-    loop_count = 0 if loop else 1
+    kwargs: dict = {}
+    if transparency is not None:
+        kwargs["transparency"] = transparency
     pil[0].save(
         path, format="GIF", save_all=True, append_images=pil[1:],
-        duration=duration_ms, loop=loop_count, disposal=2,
+        duration=duration_ms, loop=0 if loop else 1, disposal=2, **kwargs,
     )
 
 
 def save_animated_apng(
     frames: torch.Tensor, path: str, fps: int, loop: bool = True
 ) -> None:
-    """Encode an IMAGE batch [N, H, W, C] as an animated PNG (APNG) at ``path``,
-    played at ``fps``. A single frame writes a still PNG.
-
-    When ``loop`` is True (the default) the animation repeats indefinitely
-    (loop count 0). When False it plays once (loop count 1).
-    """
-    arr = (frames[..., :3].clamp(0.0, 1.0).cpu().numpy() * 255.0).round().astype(np.uint8)
-    pil = [Image.fromarray(a, mode="RGB") for a in arr]
+    """Encode an IMAGE batch as an animated PNG (APNG). RGBA batches keep their
+    alpha channel. `loop` True = repeat forever, False = play once."""
+    pil = _pil_frames(frames)
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
     duration = int(round(1000.0 / max(int(fps), 1)))
-    loop_count = 0 if loop else 1
     pil[0].save(
         path, format="PNG", save_all=True, append_images=pil[1:],
-        duration=duration, loop=loop_count,
+        duration=duration, loop=0 if loop else 1,
     )
 
 
