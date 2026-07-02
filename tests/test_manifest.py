@@ -152,3 +152,19 @@ def test_topo_order_places_dependencies_first():
     assert pos["base"] < pos["fighting_stance"] < pos["fighting_stance_idle"] < pos["punch"]
     # walk has no explicit start_from -> depends on defaults.start_from (base)
     assert pos["base"] < pos["walk"]
+
+
+def test_reference_image_must_be_safe_png():
+    from andypack.manifest import ManifestError, validate_manifest
+    base = {
+        "version": 1, "poses": {
+            "base": {"directions": {"EAST": {"reference_image": "../evil.png"}}},
+        }, "animations": {},
+    }
+    with pytest.raises(ManifestError, match="reference_image"):
+        validate_manifest(base)
+    base["poses"]["base"]["directions"]["EAST"]["reference_image"] = "notpng.jpg"
+    with pytest.raises(ManifestError, match="reference_image"):
+        validate_manifest(base)
+    base["poses"]["base"]["directions"]["EAST"]["reference_image"] = "crouch_EAST.png"
+    validate_manifest(base)  # valid: bare *.png filename

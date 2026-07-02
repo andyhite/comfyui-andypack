@@ -394,6 +394,16 @@ def pose_source_image(
     return _single_image(manifest, root, character, frm["ref"], resolved_dir(frm, direction))
 
 
+def pose_reference_name(manifest: Manifest, pose_id: str, direction: str) -> Optional[str]:
+    """The per-direction custom pose-reference filename authored on the pose's
+    direction layer (`reference_image`), or None. A bare *.png filename the nodes
+    resolve under the pose-references dir (`user/default/andypack/pose_references`)
+    — it replaces the bundled manikin as the second FLUX-edit reference, and on a
+    derived pose it ADDS a second reference where there was none."""
+    dlayer = (manifest["poses"][pose_id].get("directions", {}) or {}).get(direction) or {}
+    return dlayer.get("reference_image") or None
+
+
 def _animation_frame(
     manifest: Manifest, root: str, character: str, ref: str, direction: str, key: str
 ) -> Optional[str]:
@@ -529,6 +539,10 @@ def stale_locally(manifest: Manifest, root: str, character: str, ref: str, direc
         return True
     if _sources_drifted(manifest, root, character, ref, direction, meta):
         return True
+    if kind == "pose" and (meta or {}).get("reference_image") != pose_reference_name(
+        manifest, ref, direction
+    ):
+        return True
     return False
 
 
@@ -545,6 +559,10 @@ def _outdated(manifest: Manifest, root: str, character: str, ref: str, direction
     # this node is stale. Absent on pre-provenance metas, in which case we fall
     # back to the transitive-hash walk below.
     if _sources_drifted(manifest, root, character, ref, direction, meta):
+        return True
+    if kind == "pose" and (meta or {}).get("reference_image") != pose_reference_name(
+        manifest, ref, direction
+    ):
         return True
     if kind == "pose":
         frm = manifest["poses"][ref].get("from")
@@ -614,7 +632,9 @@ def resolve_pose(manifest: Manifest, root: str, character: str, pose_id: str, di
         "output_dir": _pose_basedir(root, character, pose_id),
         "meta": {
             "kind": "pose", "pose": pose_id, "direction": direction, "from": frm,
-            "image": f"{direction}.png", "manifest_version": manifest["version"],
+            "image": f"{direction}.png",
+            "reference_image": pose_reference_name(manifest, pose_id, direction),
+            "manifest_version": manifest["version"],
             "prompt_hash": hash_prompts(positive, negative),
             "sources": recorded_sources(manifest, root, character, pose_id, direction),
         },

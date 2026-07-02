@@ -44,6 +44,19 @@ def _validate_directions(label: str, entity: dict) -> None:
                 f"{label} direction {dname!r} must be an object, got "
                 f"{type(dlayer).__name__}"
             )
+        ref_img = dlayer.get("reference_image")
+        if ref_img is not None:
+            if (
+                not isinstance(ref_img, str)
+                or not ref_img.endswith(".png")
+                or ref_img == ".png"
+                or not _is_safe_segment(ref_img)
+            ):
+                raise ManifestError(
+                    f"{label} direction {dname!r} 'reference_image' must be a "
+                    f"bare *.png filename (resolved under the pose-references "
+                    f"dir), got {ref_img!r}"
+                )
 
 
 def _validate_gen_params(label: str, obj: dict) -> None:

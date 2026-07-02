@@ -508,3 +508,8 @@ def test_save_character_layer_preserves_overlay(tmp_path):
         overlay={"poses": {"wave": {"from": {"ref": "base"}, "directions": {"EAST": {}}}}})
     layer = api.read_character_layer(root, "hero")
     assert "wave" in layer.get("poses", {})
+
+
+def test_pose_references_dir_outside_comfyui():
+    # No folder_paths outside ComfyUI -> None (same degrade as manifests_dir).
+    assert api.pose_references_dir() is None

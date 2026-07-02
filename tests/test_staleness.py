@@ -66,3 +66,12 @@ def test_staleness_is_transitive(manifest, tree):
     assert outdated(manifest, tree.root, tree.char, "fighting_stance", "EAST") is True
     # ripples all the way to punch (start_from idle -> fighting_stance -> base)
     assert outdated(manifest, tree.root, tree.char, "punch", "EAST") is True
+
+
+def test_reference_image_drift_makes_pose_stale(manifest, tree):
+    tree.pose("base", "EAST").pose("fighting_stance", "EAST")
+    assert not resolve.stale_locally(manifest, tree.root, tree.char, "fighting_stance", "EAST")
+    # Authoring a reference_image the render didn't use -> stale (own reasons).
+    manifest["poses"]["fighting_stance"]["directions"]["EAST"]["reference_image"] = "fs_EAST.png"
+    assert resolve.stale_locally(manifest, tree.root, tree.char, "fighting_stance", "EAST")
+    assert resolve.outdated(manifest, tree.root, tree.char, "fighting_stance", "EAST")

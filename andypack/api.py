@@ -72,6 +72,16 @@ def manifests_dir() -> Optional[str]:
     return os.path.join(base, "andypack", "animations")
 
 
+def pose_references_dir() -> Optional[str]:
+    """The pack's pose-reference dir: `user/default/andypack/pose_references`.
+    Holds the per-direction reference images that a pose direction layer's
+    `reference_image` names. None when not running in ComfyUI."""
+    base = user_default_base()
+    if base is None:
+        return None
+    return os.path.join(base, "andypack", "pose_references")
+
+
 def list_manifest_names() -> list[str]:
     """Available manifest filenames (e.g. `default.json`) in the manifests dir."""
     return io.list_json_names(manifests_dir())

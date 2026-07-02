@@ -258,3 +258,11 @@ def test_rendered_directions_skips_unrendered(tmp_path):
     )
     got = resolve.rendered_directions(manifest, root, char, "pose", "base", ["EAST", "WEST"])
     assert [d for d, _ in got] == ["EAST"]
+
+
+def test_pose_reference_name_and_meta(manifest, tree):
+    manifest["poses"]["fighting_stance"]["directions"]["EAST"]["reference_image"] = "fs_EAST.png"
+    assert resolve.pose_reference_name(manifest, "fighting_stance", "EAST") == "fs_EAST.png"
+    assert resolve.pose_reference_name(manifest, "base", "EAST") is None
+    r = resolve.resolve_pose(manifest, tree.root, tree.char, "fighting_stance", "EAST")
+    assert r["meta"]["reference_image"] == "fs_EAST.png"
