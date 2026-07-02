@@ -183,6 +183,11 @@ def test_animation_fps_floor_is_one(manifest):
     assert animation_fps(manifest, "punch") == 1
 
 
+def test_mirror_targets(manifest):
+    assert resolve.mirror_targets(manifest, "EAST") == ["WEST"]
+    assert resolve.mirror_targets(manifest, "SOUTH") == []
+
+
 def test_read_character_cache_refreshes_on_rewrite(tree):
     # The identity cache is keyed by mtime, so a rewrite is observed (never stale).
     tree.character(positive_prompt="first")

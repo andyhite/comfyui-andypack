@@ -303,6 +303,36 @@ def test_animation_selector_returns_single_dict(manifest, tree, monkeypatch):
     assert sorted(k for k in anim if not k.startswith("_")) == nodes.ANIMATION_OUTPUT_KEYS
 
 
+def test_selector_stashes_mirror_jobs(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    # Declare WEST on the pose so the EAST render has a mirror target to fill.
+    manifest["poses"]["fighting_stance"]["directions"]["WEST"] = {}
+    tree.pose("base", "EAST")
+    images.save_image_png(
+        _img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST")
+    )
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "target", True, False, "", "fighting_stance", "EAST"
+    )
+    jobs = pose["_mirror"]
+    assert [j["direction"] for j in jobs] == ["WEST"]
+    assert jobs[0]["meta"]["direction"] == "WEST"
+    assert jobs[0]["meta"]["prompt_hash"]  # WEST's own hash, not EAST's
+    assert jobs[0]["output_dir"].endswith("_fighting_stance")
+
+
+def test_selector_mirror_jobs_empty_when_undeclared(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    tree.pose("base", "EAST")
+    images.save_image_png(
+        _img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST")
+    )
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "target", True, False, "", "fighting_stance", "EAST"
+    )
+    assert pose["_mirror"] == []  # fixture declares only EAST on fighting_stance
+
+
 def test_pose_unpack_forwards_dict_and_fans_out_typed_outputs():
     pose = {"positive": "hello", "negative": "blurry", "source_image": _img(),
             "pose_reference": _img(), "output_dir": "/x", "_meta": {}}

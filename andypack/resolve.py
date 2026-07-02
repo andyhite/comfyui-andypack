@@ -298,6 +298,14 @@ def resolved_dir(dep: dict, selected_dir: str) -> str:
     return selected_dir if d in (None, "same") else d
 
 
+def mirror_targets(manifest: Manifest, direction: str) -> list[str]:
+    """Directions DERIVED from `direction` via `mirror_map` (the map reads
+    mirrored -> source, e.g. {"WEST": "EAST"}). These are the cells a writer can
+    fill deterministically by horizontally flipping the source render."""
+    mirror_map = manifest.get("mirror_map") or {}
+    return [mirrored for mirrored, source in mirror_map.items() if source == direction]
+
+
 def _count_frames(base: str) -> int:
     try:
         names = os.listdir(base)

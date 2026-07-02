@@ -224,7 +224,7 @@ def _character_base_pose(label, manifest, root, char_name, direction, image):
         raise RuntimeError(f"{label}: base has no direction {direction!r}")
     r = resolve_pose(eff, root, char_name, "base", direction)
     manikin = _pose_reference_tensor(r["meta"])
-    return {
+    pose = {
         "source_image": image,        # the character reference (first reference)
         "pose_reference": manikin,    # the manikin for this direction (second)
         "positive": r["positive"],
@@ -232,6 +232,8 @@ def _character_base_pose(label, manifest, root, char_name, direction, image):
         "output_dir": r["output_dir"],
         "_meta": r["meta"],
     }
+    pose["_mirror"] = _mirror_jobs(eff, root, char_name, "pose", "base", direction)
+    return pose
 
 
 def _build_pose_bundle(r: dict, root: str = "", character: str = "", sweep=None) -> dict:
@@ -303,6 +305,28 @@ def _build_animation_bundle(r: dict, sweep=None) -> dict:
         "_meta": meta,
         "_sweep": sweep or {},
     }
+
+
+def _mirror_jobs(manifest, root, character, kind, entity_id, direction):
+    """Resolved write-jobs for every mirror_map direction derived from `direction`
+    that `entity_id` declares: each is {"direction", "meta", "output_dir"}, with
+    the MIRRORED direction's own prompt hash / sources / output dir. Precomputed
+    at select time and stashed on the bundle (`_mirror`) so the writers can
+    mirror-write without a manifest input."""
+    collection = manifest["poses"] if kind == "pose" else manifest["animations"]
+    entity = collection.get(entity_id, {})
+    declared = entity.get("directions", {}) or {}
+    jobs = []
+    for d in resolve.mirror_targets(manifest, direction):
+        if d not in declared:
+            continue
+        r = (
+            resolve_pose(manifest, root, character, entity_id, d)
+            if kind == "pose"
+            else resolve_animation(manifest, root, character, entity_id, d)
+        )
+        jobs.append({"direction": d, "meta": r["meta"], "output_dir": r["output_dir"]})
+    return jobs
 
 
 class CharacterReferenceLoader:
@@ -546,7 +570,12 @@ class PoseSweepSelector:
             r = resolve_pose(manifest, root, character, job["id"], job["direction"])
         # Bundle the loose outputs into one POSE dict (see POSE_OUTPUT_KEYS), stamped
         # with sweep context so a later writer can recompute remaining work.
-        return (_build_pose_bundle(r, root, character, sweep=ctx),)
+        bundle = _build_pose_bundle(r, root, character, sweep=ctx)
+        m = r["meta"]
+        bundle["_mirror"] = _mirror_jobs(
+            manifest, root, character, "pose", m["pose"], m["direction"]
+        )
+        return (bundle,)
 
 
 def _sweep_remaining(bundle: dict) -> int:
@@ -713,7 +742,12 @@ class AnimationSweepSelector:
         # stamped with sweep context so a later writer can recompute remaining work.
         # The wireable generation params (length/fps/width/height/shift) drive the
         # WanFirstLastFrameToVideo node + ModelSamplingSD3 directly.
-        return (_build_animation_bundle(r, sweep=ctx),)
+        bundle = _build_animation_bundle(r, sweep=ctx)
+        m = r["meta"]
+        bundle["_mirror"] = _mirror_jobs(
+            manifest, root, character, "animation", m["animation"], m["direction"]
+        )
+        return (bundle,)
 
 
 class AnimationFrameWriter:
