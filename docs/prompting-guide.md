@@ -26,7 +26,11 @@ single node handles both cases. The generated clip's literal final frame equals
 the supplied `end_image`, which is exactly why the FFLF cross-wiring
 (`start_from` → dep LAST frame, `end_at` → dep FIRST frame, loop when
 `start_image == end_image` then drop the duplicate final frame) is sound. **Keep
-all of it.**
+all of it.** The pack now ships **Wan Animation Conditioning**, a one-node
+wrapper that performs this exact wiring automatically — including the
+leave-`end_image`-unconnected rule for a non-FFLF clip — from an
+`ANIM_ANIMATION` bundle; manual `WanFirstLastFrameToVideo` wiring (below)
+remains valid for graphs that need more control.
 
 **Models** (`ComfyUI/models/diffusion_models/`): `wan2.2_i2v_high_noise_14B` +
 `wan2.2_i2v_low_noise_14B` (fp16 or fp8_scaled); text encoder
@@ -36,7 +40,11 @@ VAE). CLIP-vision sockets are vestigial from the 2.1 FLF model; leave unconnecte
 
 **Loop color drift caveat:** when `start_image == end_image`, the low-noise expert
 can drift color/contrast and make the seam visible. Mitigate: keep loop clips
-≤49 frames, keep `shift` moderate (3.0 @ 480p), optional output color-match pass.
+≤49 frames, keep `shift` moderate (3.0 @ 480p), optional output color-match pass
+— the Animation Frame Writer's `loop_color_match` flag is the built-in version
+of that pass: it ramps a per-channel color match toward the first frame across
+a derived loop clip, applied only when the resolver derived `loop` (a no-op on
+non-loop clips).
 
 ---
 

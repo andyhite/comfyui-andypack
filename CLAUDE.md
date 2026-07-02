@@ -42,10 +42,14 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
   palette quantize & lock. No ComfyUI/torch side effects beyond tensor I/O.
 - `atlas.py` — pure-stdlib engine-format serializers (JSON/XML atlas metadata).
   No ComfyUI/torch imports (keep it so).
-- `nodes.py` — the ComfyUI node classes + mappings (**21 focused nodes**), grouped
-  into `andypack/<Manifest|Character|Pose|Animation|Diagnostics|Sprite|Export>`.
-  The pack was culled to the pipeline-essential set (2026-06-30); pure helpers for
-  removed nodes may still linger in `sprites.py`/`api.py` (not exposed).
+- `nodes.py` — the ComfyUI node classes + mappings (the pipeline-essential node
+  set, **28 nodes** — verify with
+  `python -c "from andypack import nodes; print(len(nodes.NODE_CLASS_MAPPINGS))"`),
+  grouped into `andypack/<Manifest|Character|Pose|Animation|Diagnostics|Sprite|Export>`.
+  The pack was culled to a smaller set (2026-06-30), then grew back a handful of
+  focused nodes (manikin authoring, mirroring, palette lock, batch export, Wan
+  conditioning, retime) as real workflows needed them — see the six new nodes
+  called out below.
   - Manifest: Animation Manifest Loader.
   - Character: Character Creator (writes character.json + emits base pose),
     Character Loader (read-only: emits base pose, never writes character.json),
@@ -56,26 +60,51 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
     order, `include_base` drives the whole turnaround with base manikin-paired;
     target force-regenerates one named pose@direction as a spot-fix), Pose Frame
     Writer (returns `(OUTPUT_DIR, REMAINING)` — `REMAINING` is the sweep loop's
-    continue/stop signal), Unpack Pose (has `HAS_POSE_REFERENCE`), **Pose Edit
-    Conditioning** (one node = FLUX edit conditioning: text encode + source
-    reference latent + manikin latent when present + zeroed negative + empty
-    latent).
+    continue/stop signal; `write_mirrored` also writes a flipped copy into every
+    `mirror_map` direction derived from the one written, each with its own
+    resolved sidecar + a `mirrored_from` key), Unpack Pose (has
+    `HAS_POSE_REFERENCE`), **Pose Edit Conditioning** (one node = FLUX edit
+    conditioning: text encode + source reference latent + manikin latent when
+    present + zeroed negative + empty latent), **Manikin Loader** (loads a
+    bundled per-direction manikin as an IMAGE + its direction name — the
+    starting point for authoring a custom pose reference), **Pose Reference
+    Writer** (saves an IMAGE as `<name>_<DIRECTION>.png` under
+    `user/default/andypack/pose_references/` and returns the filename — what a
+    pose direction layer's `reference_image` points at).
   - Animation: **Animation Sweep Selector** (unifies the old Character/Auto
     Animation Selectors; `mode: sweep|target`, `category` scope), Animation Frame
-    Writer (returns `(OUTPUT_DIR, REMAINING)`, same sweep-loop signal), Unpack
-    Animation, **Animation Frames** (load a rendered clip back as an IMAGE batch).
+    Writer (returns `(OUTPUT_DIR, REMAINING)`, same sweep-loop signal;
+    `write_mirrored` — same semantics as Pose Frame Writer's — and
+    `loop_color_match`, a per-channel color-match ramp toward the first frame
+    that mitigates the low-noise expert's color drift on a derived loop's
+    `start_image == end_image` seam), Unpack Animation, **Animation Frames**
+    (load a rendered clip back as an IMAGE batch), **Wan Animation Conditioning**
+    (one-node Wan 2.2 i2v/FFLF conditioning from an `ANIM_ANIMATION` bundle:
+    text-encode + delegate to core `WanFirstLastFrameToVideo`, omitting
+    `end_image` for a non-FFLF clip).
   - Diagnostics: Coverage Report, Turnaround Sheet.
   - Sprite: Sprite Trim & Pivot, Spritesheet Packer, **Animation Sheet Builder**
     (full clip → rows=directions × cols=frames + per-direction tagged atlas: the
-    Stage-3 packer).
-  - Export: Atlas Metadata Writer, Animated Sprite Export.
+    Stage-3 packer; optional `trim` union-trims transparent padding across all
+    directions before packing), **Palette Quantize & Lock** (forces a frame
+    batch onto one shared limited palette, optionally locked to a
+    `palette_image`, for pixel-art color consistency across directions/
+    animations), **Frame Retime** (resamples a clip to a target fps —
+    resample/trim/pad_hold — before packing/export).
+  - Export: Atlas Metadata Writer, Animated Sprite Export (now preserves alpha:
+    a 4-channel input or connected `MASK` produces a transparent GIF/APNG/WebP
+    instead of flattening to RGB), **Sheet Export All** (Stage-3 batch export:
+    one sheet + atlas per animation with ≥1 rendered direction, in one queue
+    press; animations with nothing rendered are listed in the report, not
+    silently dropped).
   - **Loop**: Sweep Loop Open, Sweep Loop Close — the one-press sweep bracket.
     Open emits a `SWEEP_FLOW` token wired into the sweep selector's optional
     `flow` input and into Close's `flow`; the body's writer's `REMAINING` output
     wires into Close's `remaining`. While `remaining > 0`, Close clones and
     re-expands the Open→Close body so the engine runs another iteration;
     terminates cleanly (no `expand` key) at `remaining <= 0`. Keyed on the
-    writer's post-write `REMAINING`, not a fixed iteration count.
+    writer's post-write `REMAINING`, not a fixed iteration count (unchanged by
+    the six new nodes above).
 - `web/anim_coord.js` — frontend extension for dynamic character-scoped combos
   (pure-Python `INPUT_TYPES` can't populate these; it needs the server routes).
   The character combo is repopulated from `/anim_coord/characters` on node add /
@@ -131,6 +160,16 @@ Klein / Wan 2.2 i2v prompt structure + ComfyUI settings the seed manifest follow
   iff the start and end anchors resolve to the same image (`start_image ==
   end_image`); the writer then drops the duplicated final frame. There is no
   manifest `loop` field — don't add one back.
+- **Pose references**: a pose direction layer's `reference_image` names a bare
+  `*.png` under `user/default/andypack/pose_references/`; it overrides the
+  bundled manikin (root) or adds a second FLUX reference (derived). Recorded in
+  the sidecar; drift re-stales the cell.
+- **Mirrored cells are real renders**: `write_mirrored` writes a flipped payload
+  with the MIRRORED direction's own resolved meta (+ `mirrored_from`); nothing
+  downstream special-cases mirrors.
+- **The 1×1 end-image sentinel must never reach a sampler**: `WanAnimationConditioning`
+  (via `_wan_end_image`) omits `end_image` for non-FFLF clips; don't wire
+  `Unpack Animation.END_IMAGE` into a Wan node without checking `IS_FFLF`.
 - **Alpha boundary**: ComfyUI IMAGE tensors stay **3-channel** (RGB) throughout the
   graph. RGBA materializes ONLY at the writer/pack disk boundary — either because a
   4-channel image was explicitly supplied, or because an optional `MASK` input was

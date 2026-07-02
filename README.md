@@ -165,15 +165,21 @@ The `*Unpack` nodes fan a bundle out into individual typed outputs.
 | **Character Reference Loader** | Reload a character's persisted reference art (`_reference.png`) as an IMAGE — feed it back into the Character Creator to re-generate base directions later. |
 | **Pose Sweep Selector** | `mode=sweep` emits the *next* actionable (ready/stale) pose in dependency order — drive it inside a Sweep Loop to batch-generate every pose in one Queue press; raises when none remain. `include_base=on` also emits root (base) poses paired with their manikin, so one graph (→ Pose Edit Conditioning) drives the whole turnaround. `mode=target` force-regenerates one named `pose@direction` as a spot-fix, ignoring the completeness gate. Takes an optional `flow` (`SWEEP_FLOW`) input to sit inside a Sweep Loop. |
 | **Unpack Pose** | Fan an `ANIM_POSE` out into `SOURCE_IMAGE`, `POSE_REFERENCE`, `POSITIVE_PROMPT`, `NEGATIVE_PROMPT`, `OUTPUT_DIR`, `HAS_POSE_REFERENCE` (and forward the bundle). |
-| **Pose Frame Writer** | Write `{dir}.png` then the `{dir}.json` sidecar last (atomic). Returns `(OUTPUT_DIR, REMAINING)` — `REMAINING` is the live post-write actionable count (sweep mode) or `0` (target mode), feeding a Sweep Loop's continue/stop signal. |
+| **Pose Frame Writer** | Write `{dir}.png` then the `{dir}.json` sidecar last (atomic). Returns `(OUTPUT_DIR, REMAINING)` — `REMAINING` is the live post-write actionable count (sweep mode) or `0` (target mode), feeding a Sweep Loop's continue/stop signal. Optional `write_mirrored` also writes a horizontally-flipped copy into every `mirror_map` direction derived from the one just written, each with its own sidecar and a `mirrored_from` provenance key (sound only for bilaterally symmetric designs — see [`docs/prompting-guide.md`](docs/prompting-guide.md) §4). |
 | **Animation Sweep Selector** | `mode=sweep` emits the *next* actionable animation in dependency order — drive it inside a Sweep Loop to batch-generate every clip in one Queue press; raises when none remain. `category` scopes the sweep to one manifest category. `mode=target` force-regenerates one named `animation@direction` as a spot-fix. Emits an `ANIM_ANIMATION` bundle: `START_IMAGE`, `END_IMAGE`, `IS_FFLF`, merged prompts, plus `LENGTH`/`FPS`/`WIDTH`/`HEIGHT`/`SHIFT` that wire straight into `WanFirstLastFrameToVideo` + `ModelSamplingSD3`. Takes an optional `flow` (`SWEEP_FLOW`) input to sit inside a Sweep Loop. |
 | **Unpack Animation** | Fan an `ANIM_ANIMATION` out into its typed outputs (start/end image, prompts, is_fflf, length, fps, width, height, shift, output_dir). |
-| **Animation Frame Writer** | Write `frame_{:05d}.png`, trim the duplicate closing frame of a seamless loop, then write `meta.json` last (atomic). Records the sampler `seed`. Returns `(OUTPUT_DIR, REMAINING)` — same sweep-loop continue/stop signal as Pose Frame Writer. |
+| **Animation Frame Writer** | Write `frame_{:05d}.png`, trim the duplicate closing frame of a seamless loop, then write `meta.json` last (atomic). Records the sampler `seed`. Returns `(OUTPUT_DIR, REMAINING)` — same sweep-loop continue/stop signal as Pose Frame Writer. Optional `write_mirrored` (same semantics as Pose Frame Writer's) and `loop_color_match` (ramps a per-channel color match toward the first frame across a derived loop clip, mitigating the low-noise expert's color/contrast drift on the `start_image == end_image` seam). |
 | **Animation Frames** | Load a rendered clip back as an IMAGE batch (+ fps) to reprocess (re-matte, re-pack, re-export) without re-sampling. |
 | **Pose Edit Conditioning** | One-node FLUX.2 pose-edit conditioning: text-encode + source (and manikin-when-present) reference latents + zeroed negative + empty latent → `(positive, negative, latent)`. |
+| **Manikin Loader** | Load a bundled per-direction manikin as an IMAGE (+ its direction name) — the pose/camera source for authoring custom pose references (drive an OpenPose/ControlNet-capable graph per direction). |
+| **Pose Reference Writer** | Save an IMAGE into the pose-references dir (`user/default/andypack/pose_references/`) as `<name>_<DIRECTION>.png` and return the filename — exactly what a pose direction layer's `reference_image` points at. |
+| **Wan Animation Conditioning** | One-node Wan 2.2 conditioning from an `ANIM_ANIMATION` bundle: text-encode + core FFLF encode, omitting `end_image` entirely for non-FFLF clips (the sentinel never reaches the sampler). Wire `SHIFT` into `ModelSamplingSD3` as before. |
 | **Coverage Report** | A status table over every `(entity, direction)` for a character: generated / ready / stale / blocked, plus a JSON blob. |
 | **Sweep Loop Open** | Marks the start of a one-press sweep loop; emits a `SWEEP_FLOW` token wired into the sweep body's selector (`flow`) and into Sweep Loop Close (`flow`). |
 | **Sweep Loop Close** | Closes the loop: while the writer's `REMAINING` (wired to `remaining`) is `> 0`, clones and re-expands the Open→Close body so the engine runs another iteration; terminates cleanly at `remaining <= 0`. |
+| **Sheet Export All** | Stage-3 batch export: one sheet + atlas per animation with ≥1 rendered direction, in one queue press. Skipped animations are listed in the report. |
+| **Palette Quantize & Lock** | Force frames onto one shared limited palette (optionally locked to a `palette_image`) for pixel-art consistency across directions/animations. |
+| **Frame Retime** | Resample a clip to a target fps (resample / trim / pad-hold) before packing/export. |
 
 Most of this is also driveable from the **Andypack sidebar panel** (see below).
 
@@ -242,6 +248,16 @@ pose. The Character Creator pairs the character reference image with the matchin
 manikin as a second FLUX.2 reference, so all 8 base directions are generated
 directly — base does not rely on `mirror_map`.
 
+A pose's per-direction layer can also carry its own `reference_image`: a bare
+`*.png` filename resolved under `user/default/andypack/pose_references/`. On a
+**root** pose (no `from`, e.g. `base`) it *overrides* the bundled manikin as the
+second FLUX.2 reference; on a **derived** pose it *adds* a second reference where
+there was none. Author these with **Manikin Loader** (load the bundled manikin
+for a direction) → your own pose graph (e.g. an OpenPose ControlNet on an
+SDXL/SD1.5 checkpoint, since FLUX.2 Klein has no ControlNet path) → **Pose
+Reference Writer** (saves `<name>_<DIRECTION>.png` and returns the filename to
+paste into the manifest).
+
 ---
 
 ## HTTP routes
@@ -291,8 +307,13 @@ onto the conditioning. Distilled Klein: 4 steps, guidance ~1.0, Euler + Simple
 (never Euler Ancestral). FLUX.2 has no negative prompt — leave `NEGATIVE_PROMPT`
 unwired. Pipe the edit → **Pose Frame Writer**.
 
-**Animations — Wan 2.2 14B i2v first-last-frame.** Use
-`WanFirstLastFrameToVideo` (core node) driven by the standard Wan 2.2 i2v models
+**Animations — Wan 2.2 14B i2v first-last-frame.** The recommended path is
+**Animation Sweep Selector → Wan Animation Conditioning → samplers → Animation
+Frame Writer**: the conditioning node text-encodes the bundle's merged prompts
+and delegates to the core `WanFirstLastFrameToVideo`, omitting `end_image`
+entirely for a non-FFLF clip so one graph serves both FFLF and plain-i2v
+animations without a switch. Manual `WanFirstLastFrameToVideo` wiring remains
+valid too — driven by the standard Wan 2.2 i2v models
 (`wan2.2_i2v_high_noise_14B` + `wan2.2_i2v_low_noise_14B`, `umt5_xxl` text
 encoder, `wan_2.1_vae`). Wire `START_IMAGE`→`start_image`,
 `END_IMAGE`→`end_image` (leave `end_image` unconnected when `IS_FFLF` is false),
@@ -321,20 +342,35 @@ From there, the one-node path for a finished clip:
 
 - **Animation Sheet Builder** — the Stage-3 packer. Loads every frame of every
   rendered direction of an animation and packs a game sheet (rows = directions,
-  cols = frames) with a per-direction *tagged* atlas (fps included). Feed its
-  `ATLAS` + `SHEET` straight into **Atlas Metadata Writer** (`aseprite` /
-  `godot_spriteframes` get one animation per direction).
+  cols = frames) with a per-direction *tagged* atlas (fps included). Optional
+  `trim` union-trims transparent padding across ALL directions' frames before
+  packing (RGBA renders only), shrinking cells while keeping every direction
+  registered. Feed its `ATLAS` + `SHEET` straight into **Atlas Metadata Writer**
+  (`aseprite` / `godot_spriteframes` get one animation per direction).
+- **Sheet Export All** — the batch form of the above: builds and writes a sheet +
+  atlas for *every* animation in the character's manifest that has at least one
+  rendered direction, in one queue press, instead of one Animation Sheet Builder
+  run per animation. Animations with nothing rendered are listed in the report,
+  never silently dropped.
 
 Or the manual chain when you want per-frame control:
 
 1. **Animation Frames** — load a rendered clip back as an IMAGE batch (+ fps) to
    re-process without re-sampling.
-2. **Sprite Trim & Pivot** — trims transparent padding from each frame and records
+2. **Frame Retime** — resample a clip to a target fps (`resample` / `trim` /
+   `pad_hold`) before packing/export — Wan renders natively at 16 fps, game
+   sprites often want less.
+3. **Palette Quantize & Lock** — force every direction/animation onto one shared
+   limited palette (optionally locked to a `palette_image`) for pixel-art
+   consistency; run after background removal, before packing.
+4. **Sprite Trim & Pivot** — trims transparent padding from each frame and records
    the pivot offset so all frames in a sheet stay consistently anchored.
-3. **Spritesheet Packer** — packs a batch of frames into a single spritesheet image.
-4. **Atlas Metadata Writer** — serializes frame coordinates, pivots, and per-frame
+5. **Spritesheet Packer** — packs a batch of frames into a single spritesheet image.
+6. **Atlas Metadata Writer** — serializes frame coordinates, pivots, and per-frame
    duration to the engine format of your choice.
-5. **Animated Sprite Export** — GIF/APNG/WebP preview of a completed clip.
+7. **Animated Sprite Export** — GIF/APNG/WebP preview of a completed clip; now
+   preserves alpha (a 4-channel input, or a connected `MASK`, produces a
+   transparent export instead of flattening to RGB).
 
 ### Diagnostics & conditioning helpers
 
@@ -355,10 +391,13 @@ Or the manual chain when you want per-frame control:
   `category` scopes the sweep to one manifest category (e.g. `locomotion`,
   `combat`); leave empty for all.
 
-> The node set was culled (2026-06-30) to the pipeline-essential **20 nodes** for
-> clarity; niche/unused nodes (manikin control, variant/color batchers, boomerang,
-> tween, mirror, extra reports, palette lock, the one-frame Character Atlas Builder)
-> were removed in favor of the core create → turnaround → animate → sheet path.
+> The node set was culled (2026-06-30) to the pipeline-essential node set for
+> clarity; niche/unused nodes (variant/color batchers, boomerang, tween, extra
+> reports, the one-frame Character Atlas Builder) were removed in favor of the
+> core create → turnaround → animate → sheet path. Manikin control, mirroring,
+> and palette lock were later reinstated as focused nodes (Manikin Loader / Pose
+> Reference Writer, the writers' `write_mirrored` flag, Palette Quantize & Lock)
+> once real authoring workflows needed them.
 
 ---
 

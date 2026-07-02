@@ -145,6 +145,37 @@ prompt (or a global) references `{direction_prompt}`. Use a non-empty
 direction layer when one specific direction needs a one-off tweak that
 `view_phrases` doesn't already cover.
 
+A direction layer may also carry `reference_image` — a **pose-only** field (not
+valid on an animation's `directions` entry, though the loader only rejects the
+type, not the entity kind):
+
+| Field | Type | Purpose |
+|---|---|---|
+| `reference_image` | string (bare `*.png`) | Names a file under `user/default/andypack/pose_references/`, resolved by the nodes at render time — never a path (no `/`, `\`, `..`; must end in `.png` and be more than just `.png`). Validated at load time (`_validate_directions`), so a malformed value fails fast with a clear message. |
+
+**Precedence and effect** — on a **root** pose (no `from`, e.g. `base`), the
+authored `reference_image` *overrides* the bundled per-direction manikin as the
+second FLUX.2 reference; on a **derived** pose (has `from`), it *adds* a second
+reference where there would otherwise be none (a derived pose is normally a
+single-reference edit). A pose direction with a `reference_image` that doesn't
+exist on disk raises at render time rather than silently falling back — the
+file must be written before the cell can render.
+
+**Staleness** — `reference_image` is recorded on the pose's sidecar
+(`pose_reference_name` feeds the resolved meta); changing which file a
+direction points at (adding, removing, or swapping it) changes the recorded
+dependency key-set, which re-stales that cell exactly like a swapped
+`start_from`/`end_at` ref does for animations.
+
+**Authoring workflow**: **Manikin Loader** (loads the bundled manikin for a
+direction as an IMAGE + the direction name) → your own pose-generation graph
+(e.g. an OpenPose ControlNet on an SDXL/SD1.5 checkpoint — FLUX.2 Klein has no
+ControlNet path — or any pose-transfer edit) → **Pose Reference Writer** (saves
+the result as `<name>_<DIRECTION>.png` under the pose-references dir and
+returns the filename, ready to paste into this field). Wire the loader's
+`DIRECTION` output into the writer's optional `direction_from` input to keep
+both nodes locked to the same direction as you iterate.
+
 #### Animation object
 
 ```json
