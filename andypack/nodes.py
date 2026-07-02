@@ -1318,10 +1318,10 @@ class PoseEditConditioning:
 
 
 class AnimationFrames:
-    """Load a rendered animation clip's frames back as an IMAGE batch (+ its fps),
-    with none of AnimationPlayback's dep-chaining / hold / loop semantics — just the
-    raw frames on disk. Use it to re-process a clip without re-sampling: re-matte,
-    re-time (Frame Timing Normalizer), pack (Spritesheet Packer), or re-export."""
+    """Load a rendered animation clip's frames back as an IMAGE batch (+ its fps) —
+    just the raw frames on disk, no dep-chaining or loop semantics. Use it to
+    re-process a clip without re-sampling: re-matte, retime (Frame Retime), pack
+    (Spritesheet Packer), or re-export."""
 
     CATEGORY = "andypack/Animation"
     FUNCTION = "load"

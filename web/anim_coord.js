@@ -20,7 +20,6 @@ let READY = false;
 const SELECTOR_NODES = {
   PoseSweepSelector: { idWidget: "pose", kind: "pose" },
   AnimationSweepSelector: { idWidget: "animation", kind: "animation" },
-  AnimationPlayback: { idWidget: "animation", kind: "animation" },
 };
 
 const enc = encodeURIComponent;
