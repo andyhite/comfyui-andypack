@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "comfy:comfyui": {
+      "command": "node",
+      "args": [
+        "/Users/user/Code/andyhite/comfyui-mcp/dist/index.js",
+        "--comfyui-url",
+        "http://comfyui.local:8188",
+        "--force-remote"
+      ],
+      "env": {}
+    }
+  }
+}
