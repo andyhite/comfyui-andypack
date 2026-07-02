@@ -16,6 +16,10 @@ def _batch(n, h=2, w=2):
     return torch.zeros((n, h, w, 3), dtype=torch.float32)
 
 
+def _mask(n, h=2, w=2):
+    return torch.ones((n, h, w), dtype=torch.float32)
+
+
 def _pose_dict(meta, output_dir, image=None):
     """An ANIM_POSE dict as the selector emits it (the writer reads `output_dir`
     and the bundled `_meta`)."""
@@ -174,6 +178,33 @@ def test_animation_writer_empty_batch_keeps_prior_render(tmp_path):
         nodes.AnimationFrameWriter().write(_anim_dict(meta, out), _batch(0))
     frames = sorted(n for n in os.listdir(out) if n.startswith("frame_"))
     assert frames == ["frame_00000.png", "frame_00001.png", "frame_00002.png"]
+
+
+def test_animation_writer_rejects_mismatched_mask(tmp_path):
+    out = str(tmp_path / "punch" / "EAST")
+    meta = {"kind": "animation", "animation": "punch", "direction": "EAST",
+            "fps": 16, "length": 5, "loop": False, "manifest_version": 1,
+            "prompt_hash": "sha1:abc"}
+    writer = nodes.AnimationFrameWriter()
+    writer.write(_anim_dict(meta, out), _batch(5))  # good prior render
+    with pytest.raises(RuntimeError, match="mask batch"):
+        writer.write(_anim_dict(meta, out), _batch(5), mask=_mask(3))
+    # The guard fires before clearing, so the prior render survives intact.
+    assert os.path.exists(os.path.join(out, "meta.json"))
+    assert sum(n.startswith("frame_") for n in os.listdir(out)) == 5
+
+
+def test_animation_writer_broadcasts_single_mask(tmp_path):
+    out = str(tmp_path / "punch" / "EAST")
+    meta = {"kind": "animation", "animation": "punch", "direction": "EAST",
+            "fps": 16, "length": 3, "loop": False, "manifest_version": 1,
+            "prompt_hash": "sha1:abc"}
+    nodes.AnimationFrameWriter().write(_anim_dict(meta, out), _batch(3), mask=_mask(1))
+    full = json.loads(open(os.path.join(out, "meta.json")).read())
+    assert full["has_alpha"] is True
+    from PIL import Image
+    with Image.open(os.path.join(out, "frame_00002.png")) as img:
+        assert img.mode == "RGBA"
 
 
 def test_coverage_report_node(manifest, tree, monkeypatch):

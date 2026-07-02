@@ -732,6 +732,15 @@ class AnimationFrameWriter:
                 "AnimationFrameWriter: received an empty or 1x1 sentinel frame batch; "
                 "nothing to write (check the upstream sampler)")
 
+        if mask is not None:
+            mask = mask if mask.dim() == 3 else mask.unsqueeze(0)
+            if int(mask.shape[0]) not in (1, int(frames.shape[0])):
+                raise RuntimeError(
+                    f"AnimationFrameWriter: mask batch of {int(mask.shape[0])} frames "
+                    f"doesn't match the {int(frames.shape[0])}-frame image batch — "
+                    "supply one mask per frame, or a single mask to apply to all"
+                )
+
         os.makedirs(output_dir, exist_ok=True)
         # Re-render discipline: drop meta.json (the completion sentinel) FIRST and
         # clear any stale frames so an interrupted rewrite reads as incomplete and
@@ -750,7 +759,12 @@ class AnimationFrameWriter:
         if meta.get("loop") and len(batch) > 1:
             batch = io.apply_loop_closure(batch, drop_last=True)
         for index, frame in enumerate(batch):
-            frame_mask = mask[index:index + 1] if mask is not None else None
+            if mask is None:
+                frame_mask = None
+            elif int(mask.shape[0]) == 1:
+                frame_mask = mask[0:1]
+            else:
+                frame_mask = mask[index:index + 1]
             images.save_image_png(
                 frame,
                 os.path.join(output_dir, io.frame_name(index)),
