@@ -1091,3 +1091,30 @@ def test_pose_reference_writer_rejects_bad_direction(tmp_path, monkeypatch):
     monkeypatch.setattr(nodes, "_pose_references_root", lambda: str(tmp_path))
     with pytest.raises(RuntimeError, match="direction"):
         nodes.PoseReferenceWriter().write(_img(4, 4), "crouch", "EAST", direction_from="SIDEWAYS")
+
+
+# --- WanAnimationConditioning ------------------------------------------------- #
+
+def test_wan_end_image_none_for_plain_i2v():
+    anim = {"is_fflf": False, "end_image": images.empty_image()}
+    assert nodes._wan_end_image(anim) is None
+
+
+def test_wan_end_image_none_for_sentinel_even_if_flagged():
+    # Defense in depth: a mis-built bundle claiming FFLF with a sentinel end must
+    # still resolve to None — the sentinel must never reach the sampler.
+    anim = {"is_fflf": True, "end_image": images.empty_image()}
+    assert nodes._wan_end_image(anim) is None
+
+
+def test_wan_end_image_passes_real_anchor():
+    end = _img(4, 4)
+    anim = {"is_fflf": True, "end_image": end}
+    assert nodes._wan_end_image(anim) is end
+
+
+def test_wan_animation_conditioning_registered():
+    assert "WanAnimationConditioning" in nodes.NODE_CLASS_MAPPINGS
+    assert nodes.WanAnimationConditioning.RETURN_TYPES == (
+        "CONDITIONING", "CONDITIONING", "LATENT"
+    )

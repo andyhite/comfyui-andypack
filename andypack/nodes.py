@@ -1478,6 +1478,75 @@ class PoseEditConditioning:
         return (positive, negative, latent)
 
 
+def _wan_end_image(animation: dict):
+    """The FFLF end anchor from an ANIMATION bundle, or None for a plain-i2v clip.
+    The 1x1 sentinel the bundle carries for a missing `end_at` must NEVER reach
+    the sampler — anchoring a clip's final frame to a black pixel — so both the
+    is_fflf flag and the sentinel shape are checked."""
+    if not animation.get("is_fflf"):
+        return None
+    end = animation.get("end_image")
+    if end is None or images.is_empty(end):
+        return None
+    return end
+
+
+class WanAnimationConditioning:
+    """One-node Wan 2.2 i2v / FFLF conditioning for an ANIMATION bundle: text-
+    encode the merged prompts and delegate to the core WanFirstLastFrameToVideo
+    with the bundle's width/height/length and start anchor — omitting `end_image`
+    entirely when the clip is not FFLF, so one graph handles FFLF, plain i2v, and
+    loop clips without switches or sentinel leaks. Wire `shift` (Unpack Animation)
+    into ModelSamplingSD3 as before; outputs feed the dual-expert samplers."""
+
+    CATEGORY = "andypack/Animation"
+    FUNCTION = "build"
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "LATENT")
+    RETURN_NAMES = ("positive", "negative", "latent")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "animation": ("ANIM_ANIMATION",),
+                "clip": ("CLIP",),
+                "vae": ("VAE",),
+            },
+            "optional": {
+                "batch_size": ("INT", {"default": 1, "min": 1, "max": 16}),
+            },
+        }
+
+    def build(self, animation, clip, vae, batch_size=1):
+        try:
+            from comfy_extras.nodes_wan import WanFirstLastFrameToVideo
+        except Exception as exc:  # pragma: no cover - requires a ComfyUI process
+            raise RuntimeError(
+                "WanAnimationConditioning needs ComfyUI (comfy_extras.nodes_wan "
+                "is unavailable outside a running ComfyUI)"
+            ) from exc
+
+        def encode(text):
+            return clip.encode_from_tokens_scheduled(clip.tokenize(text))
+
+        kwargs = dict(
+            positive=encode(animation["positive"]),
+            negative=encode(animation["negative"] or ""),
+            vae=vae,
+            width=int(animation["width"]),
+            height=int(animation["height"]),
+            length=int(animation["length"]),
+            batch_size=int(batch_size),
+            start_image=animation["start_image"],
+        )
+        end = _wan_end_image(animation)
+        if end is not None:
+            kwargs["end_image"] = end
+        core = WanFirstLastFrameToVideo()
+        positive, negative, latent = getattr(core, core.FUNCTION)(**kwargs)
+        return (positive, negative, latent)
+
+
 class ManikinLoader:
     """Load a bundled manikin (the per-direction camera/body-orientation reference)
     as an IMAGE, plus its direction name. The starting point for authoring CUSTOM
@@ -1745,6 +1814,7 @@ NODE_CLASS_MAPPINGS = {
     "PoseFrameWriter": PoseFrameWriter,
     "PoseUnpack": PoseUnpack,
     "PoseEditConditioning": PoseEditConditioning,
+    "WanAnimationConditioning": WanAnimationConditioning,
     "ManikinLoader": ManikinLoader,
     "PoseReferenceWriter": PoseReferenceWriter,
     "AnimationSweepSelector": AnimationSweepSelector,
@@ -1772,6 +1842,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PoseFrameWriter": "Pose Frame Writer",
     "PoseUnpack": "Unpack Pose",
     "PoseEditConditioning": "Pose Edit Conditioning",
+    "WanAnimationConditioning": "Wan Animation Conditioning",
     "ManikinLoader": "Manikin Loader",
     "PoseReferenceWriter": "Pose Reference Writer",
     "AnimationSweepSelector": "Animation Sweep Selector",
