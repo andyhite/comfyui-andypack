@@ -64,6 +64,34 @@ def _characters_root():
     return api.characters_dir() or "output/characters"
 
 
+def _pose_references_root():
+    return api.pose_references_dir() or os.path.join(
+        "user", "default", "andypack", "pose_references"
+    )
+
+
+def _pose_reference_tensor(meta):
+    """The pose-reference IMAGE for a resolved pose meta, in precedence order:
+    the authored per-direction `reference_image` (from the pose-references dir),
+    else the bundled manikin for a ROOT pose's direction, else the empty sentinel
+    (a derived pose stays a single-reference edit). A missing authored file
+    raises — silently falling back would bake the wrong reference latent."""
+    name = meta.get("reference_image")
+    if name:
+        path = os.path.join(_pose_references_root(), name)
+        if not os.path.exists(path):
+            raise RuntimeError(
+                f"pose reference {name!r} not found (expected {path}); save it "
+                "with the Pose Reference Writer, or remove the direction's "
+                "reference_image from the manifest"
+            )
+        return images.load_image_tensor(path)
+    direction = meta.get("direction", "")
+    if meta.get("from") is None and direction in manikins.CANONICAL_DIRECTIONS:
+        return images.load_image_tensor(manikins.manikin_path(direction))
+    return images.empty_image()
+
+
 _CARDINAL_4 = ["EAST", "SOUTH", "WEST", "NORTH"]
 
 
@@ -195,7 +223,7 @@ def _character_base_pose(label, manifest, root, char_name, direction, image):
     if direction not in eff["poses"]["base"]["directions"]:
         raise RuntimeError(f"{label}: base has no direction {direction!r}")
     r = resolve_pose(eff, root, char_name, "base", direction)
-    manikin = images.load_image_tensor(manikins.manikin_path(direction))
+    manikin = _pose_reference_tensor(r["meta"])
     return {
         "source_image": image,        # the character reference (first reference)
         "pose_reference": manikin,    # the manikin for this direction (second)
@@ -231,16 +259,11 @@ def _build_pose_bundle(r: dict, root: str = "", character: str = "", sweep=None)
                 "reference art directly, before targeting a root pose"
             )
         source = images.load_image_tensor(ref_path)
-        direction = meta.get("direction", "")
-        pose_reference = (
-            images.load_image_tensor(manikins.manikin_path(direction))
-            if direction in manikins.CANONICAL_DIRECTIONS
-            else images.empty_image()
-        )
+        pose_reference = _pose_reference_tensor(meta)
     else:
         src = r["source_image"]
         source = images.load_image_tensor(src) if src else images.empty_image()
-        pose_reference = images.empty_image()
+        pose_reference = _pose_reference_tensor(meta)
     return {
         "source_image": source,
         "pose_reference": pose_reference,

@@ -609,6 +609,55 @@ def test_pose_selector_sets_empty_pose_reference(manifest, tree, monkeypatch):
     assert images.is_empty(pose["pose_reference"])
 
 
+def _write_ref_png(path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    images.save_image_png(_img(4, 4), path)
+
+
+def test_derived_pose_uses_custom_reference(manifest, tree, tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    refs = str(tmp_path / "pose_refs")
+    monkeypatch.setattr(nodes, "_pose_references_root", lambda: refs)
+    _write_ref_png(os.path.join(refs, "fs_EAST.png"))
+    manifest["poses"]["fighting_stance"]["directions"]["EAST"]["reference_image"] = "fs_EAST.png"
+    tree.pose("base", "EAST")
+    images.save_image_png(
+        _img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST")
+    )
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "target", True, False, "", "fighting_stance", "EAST"
+    )
+    # Derived pose normally has NO second reference; the authored one adds it.
+    assert not images.is_empty(pose["pose_reference"])
+    assert pose["_meta"]["reference_image"] == "fs_EAST.png"
+
+
+def test_missing_custom_reference_raises(manifest, tree, tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    monkeypatch.setattr(nodes, "_pose_references_root", lambda: str(tmp_path / "empty"))
+    manifest["poses"]["fighting_stance"]["directions"]["EAST"]["reference_image"] = "gone.png"
+    tree.pose("base", "EAST")
+    images.save_image_png(
+        _img(), resolve.pose_image_path(tree.root, tree.char, "base", "EAST")
+    )
+    with pytest.raises(RuntimeError, match="gone.png"):
+        nodes.PoseSweepSelector().select(
+            manifest, tree.char, "target", True, False, "", "fighting_stance", "EAST"
+        )
+
+
+def test_root_pose_still_falls_back_to_manikin(manifest, tree, monkeypatch):
+    monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
+    images.save_image_png(
+        _img(), resolve.reference_image_path(tree.root, tree.char)
+    )
+    (pose,) = nodes.PoseSweepSelector().select(
+        manifest, tree.char, "target", True, True, "", "base", "EAST"
+    )
+    assert not images.is_empty(pose["pose_reference"])  # the bundled manikin
+    assert pose["_meta"]["reference_image"] is None
+
+
 # --- SpriteTrimPivot node ---------------------------------------------------- #
 
 def test_sprite_trim_pivot_node():
