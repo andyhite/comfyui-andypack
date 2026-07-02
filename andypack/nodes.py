@@ -1333,11 +1333,17 @@ class AnimationSheetBuilder:
                 "directions": (["all", "cardinal_4"],),
                 "padding": ("INT", {"default": 2, "min": 0}),
                 "power_of_two": ("BOOLEAN", {"default": False}),
-            }
+            },
+            "optional": {
+                # Union alpha-trim across ALL directions' frames before packing —
+                # shrinks cells while keeping every direction registered. Only
+                # meaningful for RGBA renders (writers with a MASK connected).
+                "trim": ("BOOLEAN", {"default": False}),
+            },
         }
 
     @classmethod
-    def IS_CHANGED(cls, manifest, character, animation, directions, padding, power_of_two):
+    def IS_CHANGED(cls, manifest, character, animation, directions, padding, power_of_two, trim=False):
         if character in ("", _NO_CHARACTER) or not animation:
             return float("nan")
         root = _characters_root()
@@ -1347,13 +1353,13 @@ class AnimationSheetBuilder:
             pairs = resolve.rendered_directions(eff, root, character, "animation", animation, dirs)
         except Exception:
             return float("nan")
-        parts = [str(padding), str(power_of_two)]
+        parts = [str(padding), str(power_of_two), str(trim)]
         for d, path in pairs:
             meta = resolve.animation_meta_path(root, character, animation, d)
             parts.append(f"{d}:{path}:{_mtime(meta)}")
         return "|".join(parts)
 
-    def build(self, manifest, character, animation, directions, padding, power_of_two):
+    def build(self, manifest, character, animation, directions, padding, power_of_two, trim=False):
         if character in ("", _NO_CHARACTER):
             raise RuntimeError("AnimationSheetBuilder: select a character first")
         if not animation:
@@ -1382,6 +1388,8 @@ class AnimationSheetBuilder:
                 for fn in frame_files
             ]
             rows.append((d, frames))
+        if trim:
+            rows = sprites.union_trim_rows(rows)
         fps = resolve.animation_fps(manifest, animation)
         sheet, atlas = sprites.pack_direction_rows(
             rows, fps=fps, padding=padding, power_of_two=power_of_two

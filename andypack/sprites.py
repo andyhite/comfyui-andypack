@@ -443,6 +443,37 @@ def pack_sheet(
     return sheet, atlas
 
 
+def union_trim_rows(
+    rows: list[tuple[str, list[Tensor]]],
+    threshold: float = 0.03,
+    pad: int = 0,
+) -> list[tuple[str, list[Tensor]]]:
+    """Crop every frame of every row to the single union alpha bbox computed
+    across ALL frames of ALL rows — shrinks sheet cells while keeping every
+    direction spatially registered (each frame shifts by the same offset).
+    3-channel frames make the union the full frame, so the call degrades to a
+    no-op. Frames are assumed to share H/W (they come from one render)."""
+    flat = [(f[0] if f.dim() == 4 else f) for _name, frames in rows for f in frames]
+    if not flat:
+        return rows
+    h, w = int(flat[0].shape[0]), int(flat[0].shape[1])
+    boxes = [b for b in (images.alpha_bbox(f, threshold) for f in flat) if b is not None]
+    if not boxes:
+        return rows
+    left = max(0, min(b[0] for b in boxes) - pad)
+    top = max(0, min(b[1] for b in boxes) - pad)
+    right = min(w, max(b[2] for b in boxes) + pad)
+    bottom = min(h, max(b[3] for b in boxes) + pad)
+    if (left, top, right, bottom) == (0, 0, w, h):
+        return rows
+
+    def crop(t: Tensor) -> Tensor:
+        f = t[0] if t.dim() == 4 else t
+        return f[top:bottom, left:right, :].unsqueeze(0)
+
+    return [(name, [crop(f) for f in frames]) for name, frames in rows]
+
+
 def pack_direction_rows(
     rows: list[tuple[str, list[Tensor]]],
     fps: int = 16,

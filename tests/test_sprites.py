@@ -118,3 +118,26 @@ def test_extrude_does_not_overwrite_neighbour_content() -> None:
         "Frame 1 extrude bleed overwrote frame 0's content; "
         f"min={region.min().item()}, max={region.max().item()}"
     )
+
+
+def test_union_trim_rows_crops_to_shared_bbox():
+    def frame(y, x):
+        f = torch.zeros((1, 16, 16, 4))
+        f[0, y, x, 3] = 1.0  # one opaque pixel
+        return f
+    rows = [("EAST", [frame(4, 4), frame(4, 10)]), ("SOUTH", [frame(9, 6)])]
+    out = sprites.union_trim_rows(rows)
+    # Union bbox spans y 4..9, x 4..10 -> crop is 6 tall, 7 wide, for EVERY frame.
+    for _name, frames in out:
+        for f in frames:
+            assert (int(f.shape[1]), int(f.shape[2])) == (6, 7)
+    # Registration: EAST frame 0's pixel was at (4,4) -> now at (0,0);
+    # SOUTH's was at (9,6) -> now at (5,2). Offsets shift identically.
+    assert float(out[0][1][0][0, 0, 0, 3]) == 1.0
+    assert float(out[1][1][0][0, 5, 2, 3]) == 1.0
+
+
+def test_union_trim_rows_noop_without_alpha():
+    rows = [("EAST", [torch.zeros((1, 8, 8, 3))])]
+    out = sprites.union_trim_rows(rows)
+    assert int(out[0][1][0].shape[1]) == 8  # full frame: nothing to trim
