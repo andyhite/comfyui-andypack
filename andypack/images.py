@@ -184,6 +184,34 @@ def _resize_batch(batch: torch.Tensor, height: int, width: int) -> torch.Tensor:
     return resized.permute(0, 2, 3, 1).contiguous()
 
 
+def match_color_ramp(
+    frames: torch.Tensor, reference: torch.Tensor, strength: float = 1.0
+) -> torch.Tensor:
+    """Per-channel mean/std color match of each frame toward `reference`, ramped
+    linearly from 0 at frame 0 to `strength` at the final frame. Hides the
+    loop-seam color drift Wan's low-noise expert introduces on start==end clips
+    (see docs/prompting-guide.md) without touching the clip's opening frames.
+    Only the RGB channels are matched; alpha passes through untouched."""
+    n = int(frames.shape[0])
+    if n <= 1:
+        return frames
+    ref = reference[0] if reference.dim() == 4 else reference
+    ref_rgb = ref[..., :3]
+    ref_mean = ref_rgb.mean(dim=(0, 1))
+    ref_std = ref_rgb.std(dim=(0, 1)).clamp_min(1e-6)
+    out = frames.clone()
+    for i in range(n):
+        weight = float(strength) * (i / (n - 1))
+        if weight <= 0.0:
+            continue
+        f = frames[i, ..., :3]
+        mean = f.mean(dim=(0, 1))
+        std = f.std(dim=(0, 1)).clamp_min(1e-6)
+        matched = (f - mean) / std * ref_std + ref_mean
+        out[i, ..., :3] = ((1.0 - weight) * f + weight * matched).clamp(0.0, 1.0)
+    return out
+
+
 def retime_batch(
     frames: torch.Tensor, target: int, mode: str = "resample"
 ) -> torch.Tensor:

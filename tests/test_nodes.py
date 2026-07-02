@@ -207,6 +207,25 @@ def test_animation_writer_broadcasts_single_mask(tmp_path):
         assert img.mode == "RGBA"
 
 
+def test_animation_writer_loop_color_match(tmp_path):
+    out = str(tmp_path / "spin" / "EAST")
+    meta = {"kind": "animation", "animation": "spin", "direction": "EAST",
+            "fps": 16, "length": 5, "loop": True, "manifest_version": 1,
+            "prompt_hash": "sha1:abc"}
+    frames = torch.rand((5, 8, 8, 3)) * 0.3
+    frames[-1] = (frames[-1] + 0.5).clamp(0, 1)  # drifted final frame
+    nodes.AnimationFrameWriter().write(
+        _anim_dict(meta, out), frames, loop_color_match=True
+    )
+    from PIL import Image
+    import numpy as np
+    # loop=True drops the duplicated closing frame -> frames 0..3 written; the
+    # matched frame 3 should sit close to frame 0's brightness, not the raw drift.
+    with Image.open(os.path.join(out, "frame_00003.png")) as img:
+        last_mean = np.asarray(img, dtype=np.float32).mean() / 255.0
+    assert abs(last_mean - float(frames[0].mean())) < 0.15
+
+
 def test_coverage_report_node(manifest, tree, monkeypatch):
     monkeypatch.setattr(nodes, "_characters_root", lambda: tree.root)
     tree.character()

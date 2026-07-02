@@ -715,10 +715,15 @@ class AnimationFrameWriter:
                 # that would mutate the recorded value out of sync with the sampler.
                 "seed": ("INT", {"default": 0, "forceInput": True}),
                 "mask": ("MASK",),
+                # Loop-seam mitigation: ramp a per-channel color match toward the
+                # FIRST frame across the clip, so a start==end loop's drifted
+                # closing frames land back on the opening palette. Applied only
+                # when the resolver derived `loop` (no-op for non-loop clips).
+                "loop_color_match": ("BOOLEAN", {"default": False}),
             },
         }
 
-    def write(self, animation, frames, seed=0, mask=None):
+    def write(self, animation, frames, seed=0, mask=None, loop_color_match=False):
         output_dir = animation["output_dir"]
         meta = animation["_meta"]
         has_alpha = mask is not None or int(frames.shape[-1]) == 4
@@ -740,6 +745,9 @@ class AnimationFrameWriter:
                     f"doesn't match the {int(frames.shape[0])}-frame image batch — "
                     "supply one mask per frame, or a single mask to apply to all"
                 )
+
+        if loop_color_match and meta.get("loop") and int(frames.shape[0]) > 1:
+            frames = images.match_color_ramp(frames, frames[0:1])
 
         os.makedirs(output_dir, exist_ok=True)
         # Re-render discipline: drop meta.json (the completion sentinel) FIRST and

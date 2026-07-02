@@ -224,6 +224,28 @@ def test_onion_skin_blends_neighbors():
     assert abs(float(out[1].mean()) - 0.5) < 1e-4
 
 
+# --- match_color_ramp --------------------------------------------------------
+
+def test_match_color_ramp_pins_last_frame_to_reference():
+    import torch
+    # Frames drift brighter; the ramp should pull the LAST frame's stats back to
+    # frame 0's, while leaving frame 0 untouched.
+    frames = torch.rand((5, 8, 8, 3)) * 0.5
+    for i in range(5):
+        frames[i] = (frames[i] + i * 0.08).clamp(0, 1)  # progressive brightening
+    out = images.match_color_ramp(frames, frames[0:1])
+    assert torch.equal(out[0], frames[0])  # start untouched
+    drift_before = abs(float(frames[-1].mean()) - float(frames[0].mean()))
+    drift_after = abs(float(out[-1].mean()) - float(frames[0].mean()))
+    assert drift_after < drift_before * 0.2
+
+
+def test_match_color_ramp_single_frame_noop():
+    import torch
+    frames = torch.rand((1, 4, 4, 3))
+    assert torch.equal(images.match_color_ramp(frames, frames[0:1]), frames)
+
+
 # --- thumbnail_data_uri -------------------------------------------------------
 
 def test_thumbnail_data_uri_returns_valid_png(tmp_path):
