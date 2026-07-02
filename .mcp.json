@@ -1,9 +1,9 @@
 {
   "mcpServers": {
     "comfy:comfyui": {
-      "command": "node",
+      "command": "npx",
       "args": [
-        "/Users/user/Code/andyhite/comfyui-mcp/dist/index.js",
+        "comfyui-mcp",
         "--comfyui-url",
         "http://comfyui.local:8188",
         "--force-remote"
