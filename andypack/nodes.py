@@ -1020,6 +1020,12 @@ class AtlasMetadataWriter:
         output_subdir="atlas",
         animation=None,
     ):
+        name = (name or "").strip()
+        if not name or name != os.path.basename(name) or ".." in name:
+            raise RuntimeError(
+                "AtlasMetadataWriter: 'name' must be a non-empty bare filename "
+                f"(no directory separators), got {name!r}"
+            )
         output_dir = os.path.join(api.output_dir() or "output", output_subdir)
         png_path = os.path.join(output_dir, f"{name}.png")
         images.save_image_png(sheet, png_path)

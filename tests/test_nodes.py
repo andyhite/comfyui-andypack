@@ -584,6 +584,18 @@ def test_atlas_metadata_writer(tmp_path, monkeypatch):
     assert os.path.exists(os.path.join(d, "walk.json"))
 
 
+def test_atlas_writer_rejects_empty_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(nodes.api, "output_dir", lambda: str(tmp_path))
+    atlas = {"sheet_size": [4, 4], "columns": 1,
+             "frames": [{"rect": [0, 0, 4, 4], "source_size": [4, 4],
+                         "offset": [0, 0], "pivot": None, "duration_ms": None}]}
+    with pytest.raises(RuntimeError, match="name"):
+        nodes.AtlasMetadataWriter().export(atlas, _img(4, 4), "json_hash", "")
+    with pytest.raises(RuntimeError, match="name"):
+        nodes.AtlasMetadataWriter().export(atlas, _img(4, 4), "json_hash", "../evil")
+    assert not os.path.exists(os.path.join(str(tmp_path), "atlas", ".png"))
+
+
 # --- CharacterAtlasBuilder -------------------------------------------------- #
 
 def test_pose_sweep_selector_input_shape():
